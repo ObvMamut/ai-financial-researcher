@@ -1,0 +1,148 @@
+// Package quant computes statistically grounded price metrics for the research
+// pipeline. It deliberately avoids classic chart-based technical analysis
+// (moving-average crossovers, RSI, patterns); every metric here has a published
+// empirical basis: return ladders and 12-1 momentum (Jegadeesh & Titman 1993),
+// price-to-52-week-high (George & Hwang 2004), turnover-conditioned short-term
+// reversal (Chen, Stivers & Sun 2024), Yang-Zhang OHLC volatility (Yang & Zhang
+// 2000), and Lo-MacKinlay variance ratios (1988).
+//
+// The package is pure stdlib and has no dependencies on the rest of the app;
+// marketdata imports quant, never the reverse.
+package quant
+
+import (
+	"math"
+	"sort"
+)
+
+// Bar is one daily OHLCV observation. Close should be the adjusted close when
+// available so returns include dividends/splits.
+type Bar struct {
+	Date   string  `json:"date"` // YYYY-MM-DD
+	Open   float64 `json:"open"`
+	High   float64 `json:"high"`
+	Low    float64 `json:"low"`
+	Close  float64 `json:"close"`
+	Volume float64 `json:"volume"`
+}
+
+// Series is a daily price history in ascending date order.
+type Series struct {
+	Symbol string `json:"symbol"`
+	Bars   []Bar  `json:"bars"`
+}
+
+// Sort orders bars ascending by date (ISO dates sort lexically).
+func (s *Series) Sort() {
+	sort.Slice(s.Bars, func(i, j int) bool { return s.Bars[i].Date < s.Bars[j].Date })
+}
+
+// LastClose returns the most recent close, or 0 for an empty series.
+func (s *Series) LastClose() float64 {
+	if len(s.Bars) == 0 {
+		return 0
+	}
+	return s.Bars[len(s.Bars)-1].Close
+}
+
+// AsOf returns the date of the most recent bar, or "".
+func (s *Series) AsOf() string {
+	if len(s.Bars) == 0 {
+		return ""
+	}
+	return s.Bars[len(s.Bars)-1].Date
+}
+
+// LogReturns returns close-to-close daily log returns (length len(Bars)-1).
+func (s *Series) LogReturns() []float64 {
+	if len(s.Bars) < 2 {
+		return nil
+	}
+	out := make([]float64, 0, len(s.Bars)-1)
+	for i := 1; i < len(s.Bars); i++ {
+		p0, p1 := s.Bars[i-1].Close, s.Bars[i].Close
+		if p0 <= 0 || p1 <= 0 {
+			out = append(out, 0)
+			continue
+		}
+		out = append(out, math.Log(p1/p0))
+	}
+	return out
+}
+
+// TotalReturn is the simple return over the trailing n bars (close[last] /
+// close[last-n] - 1). Returns (0, false) when history is insufficient.
+func (s *Series) TotalReturn(n int) (float64, bool) {
+	if n <= 0 || len(s.Bars) < n+1 {
+		return 0, false
+	}
+	p0 := s.Bars[len(s.Bars)-1-n].Close
+	p1 := s.Bars[len(s.Bars)-1].Close
+	if p0 <= 0 {
+		return 0, false
+	}
+	return p1/p0 - 1, true
+}
+
+// AlignedReturns pairs daily log returns of two series by date, for beta and
+// correlation. Only dates present in both series contribute.
+func AlignedReturns(a, b *Series) (ra, rb []float64) {
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	closeByDate := make(map[string]float64, len(b.Bars))
+	for _, bar := range b.Bars {
+		closeByDate[bar.Date] = bar.Close
+	}
+	var prevA, prevB float64
+	havePrev := false
+	for _, bar := range a.Bars {
+		bc, ok := closeByDate[bar.Date]
+		if !ok || bar.Close <= 0 || bc <= 0 {
+			continue
+		}
+		if havePrev {
+			ra = append(ra, math.Log(bar.Close/prevA))
+			rb = append(rb, math.Log(bc/prevB))
+		}
+		prevA, prevB = bar.Close, bc
+		havePrev = true
+	}
+	return ra, rb
+}
+
+// ── small stat helpers (shared within the package) ──────────────────────────
+
+func mean(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, x := range xs {
+		sum += x
+	}
+	return sum / float64(len(xs))
+}
+
+// variance is the unbiased sample variance.
+func variance(xs []float64) float64 {
+	if len(xs) < 2 {
+		return 0
+	}
+	m := mean(xs)
+	var ss float64
+	for _, x := range xs {
+		d := x - m
+		ss += d * d
+	}
+	return ss / float64(len(xs)-1)
+}
+
+func stddev(xs []float64) float64 { return math.Sqrt(variance(xs)) }
+
+func tail(xs []float64, n int) []float64 {
+	if len(xs) <= n {
+		return xs
+	}
+	return xs[len(xs)-n:]
+}

@@ -1,0 +1,67 @@
+# Claude Financial Researcher configuration.
+#
+# Copy to ./cfr.toml (project-local) or ~/.config/cfr/config.toml (global).
+# Precedence, lowest to highest: built-in defaults → ~/.config/cfr/config.toml
+# → ./cfr.toml → environment variables (CFR_*) → command-line flags (headless).
+# Every key is optional; omit anything to keep the default.
+
+# Where run artifacts (reports, ideas.json, prices/, quant.json) are written.
+#runs_dir = "runs"
+
+# Where agent persona prompts live.
+#agents_dir = "agents"
+
+# Cache directory for market data (daily-keyed Yahoo responses).
+#data_dir = ".data"
+
+# How many past run directories to keep (the scoreboard reads this history).
+#keep_runs = 100
+
+# Bounded worker pool size for parallel agent subprocesses.
+#workers = 4
+
+# Default indices screened by independent research (empty/omitted = all four).
+# Valid keys: sp500, nq100, eu50, asia100. The TUI picker overrides this per run.
+#indices = ["sp500", "eu50"]
+
+# Max simultaneous Gemini (agy) subprocesses. Keep at 1 unless your OS keyring
+# tolerates concurrent auth (contention escalates to a browser login).
+#gemini_concurrency = 1
+
+# Domain weights for confluence scoring; they are renormalized, so only the
+# ratios matter.
+#[weights]
+#fundamentals = 0.30
+#quant        = 0.20
+#news         = 0.20
+#macro        = 0.15
+#sentiment    = 0.15
+
+# Per-stage subprocess timeouts (Go duration strings).
+#[timeouts]
+#screening = "5m"
+#analysis  = "8m"
+#synthesis = "10m"
+
+# Subprocess retry policy.
+#[retry]
+#max_attempts = 2
+#base_delay   = "2s"
+#max_delay    = "30s"
+#jitter       = true
+
+# Model names passed to each CLI via --model.
+#[models]
+#claude = "opus"
+#gemini = ""
+
+# CLI executables (same as CFR_CLAUDE_BIN / CFR_GEMINI_BIN).
+#[binaries]
+#claude = "claude"
+#gemini = "agy"
+
+# Optional keyed data providers. Yahoo needs no key; these enrich the packs.
+#[providers]
+#contact_email    = "you@example.com"  # sent to SEC EDGAR as User-Agent contact
+#alphavantage_key = ""
+#fred_key         = ""

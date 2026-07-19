@@ -1,0 +1,12 @@
+# Run artifacts and market-data cache
+/runs/
+/.data/
+
+# Local configuration (copy cfr.toml.example instead)
+/cfr.toml
+
+# Personal Claude Code settings
+.claude/settings.local.json
+
+# Build output
+/cfr

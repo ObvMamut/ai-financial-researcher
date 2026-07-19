@@ -1,0 +1,89 @@
+// Command cfr is the entry point for Claude Financial Researcher.
+//
+//	cfr                  launch the TUI
+//	cfr run [flags]      headless run (JSON/exit-code friendly)
+//	cfr scoreboard       performance of past ideas
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mamut/claude-financial-researcher/internal/config"
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
+	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
+	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
+	"github.com/mamut/claude-financial-researcher/internal/tui"
+)
+
+func main() {
+	settings, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "run":
+			os.Exit(runHeadless(settings, os.Args[2:]))
+		case "scoreboard":
+			os.Exit(runScoreboard(settings, os.Args[2:]))
+		case "-h", "--help", "help":
+			fmt.Println("usage: cfr [run|scoreboard] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr scoreboard  performance of past ideas (see cfr scoreboard -h)")
+			os.Exit(0)
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard)\n", os.Args[1])
+			os.Exit(2)
+		}
+	}
+
+	if _, err := os.Stat(settings.AgentsDir); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: agents directory %q not found — run from repo root\n", settings.AgentsDir)
+		os.Exit(1)
+	}
+
+	runFn := func(req model.RunRequest) <-chan orchestrator.Event {
+		return orchestrator.Run(context.Background(), orchestratorConfig(settings, req))
+	}
+	sbFn := func(ctx context.Context) (*scoreboard.Summary, error) {
+		yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
+		return scoreboard.Build(ctx, settings.RunsDir, yc)
+	}
+
+	app := tui.New(runFn, settings.RunsDir, sbFn)
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// orchestratorConfig maps resolved settings + a run request onto the
+// orchestrator's Config.
+func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.Config {
+	indices := req.Indices
+	if len(indices) == 0 {
+		indices = s.Indices // config-file default selection (may still be empty = all)
+	}
+	return orchestrator.Config{
+		Mode:              req.Mode,
+		Ticker:            req.Ticker,
+		Indices:           indices,
+		AgentsDir:         s.AgentsDir,
+		RunsDir:           s.RunsDir,
+		DataDir:           s.DataDir,
+		Workers:           s.Workers,
+		KeepRuns:          s.KeepRuns,
+		Timeouts:          s.Timeouts,
+		Retry:             s.Retry,
+		Weights:           s.Weights,
+		Providers:         s.Providers,
+		Models:            s.Models,
+		Binaries:          s.Binaries,
+		GeminiConcurrency: s.GeminiConcurrency,
+	}
+}
