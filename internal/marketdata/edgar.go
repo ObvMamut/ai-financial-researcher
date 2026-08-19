@@ -30,7 +30,8 @@ func NewEdgarProvider(contactEmail string) Provider {
 	return p
 }
 
-func (p *edgarProvider) Name() string { return "EDGAR" }
+func (p *edgarProvider) Name() string   { return "EDGAR" }
+func (p *edgarProvider) Source() string { return "https://data.sec.gov" }
 func (p *edgarProvider) Domains() []string { return []string{"fundamentals"} }
 func (p *edgarProvider) Available() bool { return p.contactEmail != "" }
 

@@ -72,7 +72,7 @@ type yahooChartResp struct {
 func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series, error) {
 	var cached quant.Series
 	if y.cache != nil {
-		if found, _ := y.cache.Get("yahoo", "chart"+yahooRange, symbol, &cached); found && len(cached.Bars) > 0 {
+		if found, _ := y.cache.Get(y.baseURL, "yahoo", "chart"+yahooRange, symbol, &cached); found && len(cached.Bars) > 0 {
 			return &cached, nil
 		}
 	}
@@ -148,7 +148,7 @@ func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series
 	series.Sort()
 
 	if y.cache != nil {
-		_ = y.cache.Set("yahoo", "chart"+yahooRange, symbol, series)
+		_ = y.cache.Set(y.baseURL, "yahoo", "chart"+yahooRange, symbol, series)
 	}
 	return series, nil
 }

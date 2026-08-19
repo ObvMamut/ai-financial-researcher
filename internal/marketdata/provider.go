@@ -27,6 +27,10 @@ type TickerData struct {
 // Provider defines the interface for data sources.
 type Provider interface {
 	Name() string
+	// Source identifies the endpoint the provider fetches from. It scopes cache
+	// entries so data from one endpoint is never served to a client pointed at
+	// another (see Cache.key).
+	Source() string
 	Domains() []string
 	Available() bool
 	Fetch(ctx context.Context, domain string, ticker string) (TickerData, error)

@@ -20,7 +20,8 @@ func NewFredProvider(apiKey string) Provider {
 	}
 }
 
-func (p *fredProvider) Name() string { return "FRED" }
+func (p *fredProvider) Name() string   { return "FRED" }
+func (p *fredProvider) Source() string { return "https://api.stlouisfed.org" }
 func (p *fredProvider) Domains() []string { return []string{"macro"} }
 func (p *fredProvider) Available() bool { return p.apiKey != "" }
 

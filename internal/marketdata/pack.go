@@ -90,7 +90,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 		var macro []Fact
 		found := false
 		if s.cache != nil {
-			found, _ = s.cache.Get(prov.Name(), "MacroFetch", "GLOBAL", &macro)
+			found, _ = s.cache.Get(prov.Source(), prov.Name(), "MacroFetch", "GLOBAL", &macro)
 		}
 
 		if !found {
@@ -100,7 +100,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				pack.Errors = append(pack.Errors, fmt.Sprintf("%s macro: %v", prov.Name(), err))
 			}
 			if err == nil && len(macro) > 0 && s.cache != nil {
-				s.cache.Set(prov.Name(), "MacroFetch", "GLOBAL", macro)
+				s.cache.Set(prov.Source(), prov.Name(), "MacroFetch", "GLOBAL", macro)
 			}
 		}
 
@@ -135,7 +135,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			var data TickerData
 			found := false
 			if s.cache != nil {
-				found, _ = s.cache.Get(prov.Name(), domain, t, &data)
+				found, _ = s.cache.Get(prov.Source(), prov.Name(), domain, t, &data)
 			}
 
 			if !found {
@@ -145,7 +145,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 					pack.Errors = append(pack.Errors, fmt.Sprintf("%s %s/%s: %v", prov.Name(), domain, t, err))
 				}
 				if err == nil && len(data.Facts) > 0 && s.cache != nil {
-					s.cache.Set(prov.Name(), domain, t, data)
+					s.cache.Set(prov.Source(), prov.Name(), domain, t, data)
 				}
 			}
 

@@ -23,7 +23,8 @@ func NewAlphaVantageProvider(apiKey string) Provider {
 	}
 }
 
-func (p *alphaVantageProvider) Name() string { return "AlphaVantage" }
+func (p *alphaVantageProvider) Name() string   { return "AlphaVantage" }
+func (p *alphaVantageProvider) Source() string { return "https://www.alphavantage.co" }
 func (p *alphaVantageProvider) Domains() []string {
 	return []string{"technicals", "news", "sentiment"}
 }
