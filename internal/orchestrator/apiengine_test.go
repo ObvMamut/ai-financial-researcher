@@ -52,6 +52,28 @@ func TestCallAPIEngineParsesContentAndSendsAuth(t *testing.T) {
 	}
 }
 
+func TestCallAPIEngineKeylessLocal(t *testing.T) {
+	var hadAuth bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hadAuth = r.Header["Authorization"]
+		_, _ = w.Write([]byte(cannedChatResponse))
+	}))
+	defer srv.Close()
+
+	// No APIKey — a local server (Ollama/llama.cpp) doesn't authenticate.
+	api := model.APIConfig{BaseURL: srv.URL, Model: "qwen2.5:7b-instruct"}
+	out, err := callAPIEngine(context.Background(), api, "screen the EU50")
+	if err != nil {
+		t.Fatalf("keyless callAPIEngine: %v", err)
+	}
+	if out != "ANALYSIS: buy signal" {
+		t.Errorf("content = %q, want the assistant message content", out)
+	}
+	if hadAuth {
+		t.Errorf("Authorization header was sent for a keyless (local) call; want none")
+	}
+}
+
 func TestCallAPIEngineErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

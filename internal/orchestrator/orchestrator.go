@@ -57,17 +57,24 @@ type Config struct {
 	Binaries  map[model.CLI]string // per-CLI executable name; empty CLIGemini defaults to "agy", CLIClaude to "claude"
 
 	// CheapEngine selects the engine for the cheap-research roles (scouts +
-	// specialists). Defaults to CLIGemini (the `agy` CLI). Set to CLIApi to use
-	// the OpenAI-compatible HTTP engine configured in API. Synthesis always uses
-	// the Claude CLI regardless.
+	// specialists): CLIGemini (the `agy` CLI, default), CLIApi (a remote
+	// OpenAI-compatible endpoint, config in API), or CLILocal (a local
+	// OpenAI-compatible server, config in Local). Synthesis always uses the
+	// Claude CLI regardless.
 	CheapEngine model.CLI
-	// API configures the CLIApi engine; required when CheapEngine == CLIApi.
+	// API configures the remote CLIApi engine; required when CheapEngine == CLIApi.
 	API model.APIConfig
+	// Local configures the local OpenAI-compatible server; required when
+	// CheapEngine == CLILocal. The key is optional (local servers don't auth).
+	Local model.APIConfig
 
 	// GeminiConcurrency caps simultaneous Gemini (agy) subprocesses. Concurrent agy
 	// processes contend on the OS keyring during auth and escalate to a browser login;
 	// defaults to 1 when unset.
 	GeminiConcurrency int
+	// LocalConcurrency caps simultaneous local-model calls; one GPU can't run the
+	// 5 specialists at once. Defaults to 1 when unset.
+	LocalConcurrency int
 
 	// KeepRuns is how many run directories CleanupOldRuns retains (default 100;
 	// the scoreboard needs history).
@@ -112,17 +119,27 @@ func (c *Config) applyDefaults() {
 
 	// Cheap-research role defaults to the `agy` CLI engine so a fresh checkout
 	// (and the hermetic fakebin tests) need no API key. Set CheapEngine=CLIApi
-	// in config to route scouts+specialists to the OpenAI-compatible HTTP engine.
+	// (remote) or CLILocal (local server) to route scouts+specialists to the
+	// OpenAI-compatible HTTP engine.
 	if c.CheapEngine == "" {
 		c.CheapEngine = model.CLIGemini
 	}
 	if c.API.Model == "" {
 		c.API.Model = "deepseek-chat"
 	}
+	// Local defaults target a stock Ollama install; the model must be set by the
+	// user (it depends on what they have pulled), so it has no default.
+	if c.Local.BaseURL == "" {
+		c.Local.BaseURL = "http://localhost:11434/v1"
+	}
 
 	// Serialize agy auth by default to avoid keyring contention (see Config.GeminiConcurrency).
 	if c.GeminiConcurrency <= 0 {
 		c.GeminiConcurrency = 1
+	}
+	// Serialize local-model calls by default (one GPU, one generation at a time).
+	if c.LocalConcurrency <= 0 {
+		c.LocalConcurrency = 1
 	}
 
 	if c.KeepRuns <= 0 {
@@ -160,6 +177,32 @@ func (c *Config) applyDefaults() {
 	}
 }
 
+// resolveCheapEngine maps the user-facing CheapEngine selector onto the concrete
+// runner engine, the APIConfig to hand the pool, and the throttle concurrency.
+// It validates required fields and fails fast so a misconfig surfaces before the
+// run rather than as a wave of per-call failures.
+func resolveCheapEngine(cfg Config) (engine model.CLI, api model.APIConfig, conc int, err error) {
+	switch cfg.CheapEngine {
+	case model.CLIGemini:
+		// CLI engine (agy by default, or a cheap binary override) — no extra config.
+		return model.CLIGemini, model.APIConfig{}, cfg.GeminiConcurrency, nil
+	case model.CLIApi:
+		if cfg.API.BaseURL == "" || cfg.API.APIKey == "" || cfg.API.Model == "" {
+			return "", model.APIConfig{}, 0, fmt.Errorf("cheap_engine=api requires api.base_url, api.model, and an API key (set CFR_API_KEY)")
+		}
+		// Remote APIs handle concurrency well; run the specialists in parallel.
+		return model.CLIApi, cfg.API, 0, nil
+	case model.CLILocal:
+		if cfg.Local.BaseURL == "" || cfg.Local.Model == "" {
+			return "", model.APIConfig{}, 0, fmt.Errorf("cheap_engine=local requires local.base_url and local.model (api_key optional)")
+		}
+		// Local runs on the same CLIApi HTTP path, throttled to one GPU generation.
+		return model.CLIApi, cfg.Local, cfg.LocalConcurrency, nil
+	default:
+		return "", model.APIConfig{}, 0, fmt.Errorf("invalid cheap_engine %q (valid: gemini, api, local)", cfg.CheapEngine)
+	}
+}
+
 // Run executes the full pipeline and streams Events. It closes the returned
 // channel when the run completes (success or error). The caller must drain it.
 func Run(ctx context.Context, cfg Config) <-chan Event {
@@ -192,21 +235,16 @@ func agentStatus(ch chan<- Event, role string, status model.AgentStatus, r *mode
 func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	start := time.Now()
 
-	// Validate the cheap-research engine up front. Fail fast on a misconfigured
-	// API engine rather than letting every cheap call fail one-by-one (which would
-	// look like a silent provider outage). Note CLIClaude is intentionally not a
-	// cheap engine: it shares model config with the synthesis role, so routing the
-	// cheap roles to it would silently run them on Opus. To use Claude cheaply,
-	// keep cheap_engine=gemini and override binaries.gemini=claude + models.gemini=haiku.
-	switch cfg.CheapEngine {
-	case model.CLIGemini:
-		// CLI engine (agy by default, or a cheap binary override) — no extra config.
-	case model.CLIApi:
-		if cfg.API.BaseURL == "" || cfg.API.APIKey == "" || cfg.API.Model == "" {
-			return fmt.Errorf("cheap_engine=api requires api.base_url, api.model, and an API key (set CFR_API_KEY)")
-		}
-	default:
-		return fmt.Errorf("invalid cheap_engine %q (valid: gemini, api)", cfg.CheapEngine)
+	// Resolve + validate the cheap-research engine up front. Fail fast on a
+	// misconfigured API/local engine rather than letting every cheap call fail
+	// one-by-one (which would look like a silent provider outage). Note CLIClaude
+	// is intentionally not a cheap engine: it shares model config with the synthesis
+	// role, so routing the cheap roles to it would silently run them on Opus. To use
+	// Claude cheaply, keep cheap_engine=gemini and override binaries.gemini=claude +
+	// models.gemini=haiku.
+	cheapCLI, cheapAPI, cheapConc, err := resolveCheapEngine(cfg)
+	if err != nil {
+		return err
 	}
 
 	// Load agent personas
@@ -230,7 +268,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	_ = store.CleanupOldRuns(cfg.RunsDir, cfg.KeepRuns)
 
 	// Start worker pool
-	p := newPool(cfg.Workers, cfg.Models, cfg.Binaries, cfg.API, cfg.GeminiConcurrency)
+	p := newPool(cfg.Workers, cfg.Models, cfg.Binaries, cheapAPI, cheapCLI, cheapConc)
 	p.start(ctx)
 	defer p.stop()
 
@@ -271,7 +309,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 			role := "scout-" + idx
 			agentStatus(ch, role, model.StatusRunning, nil)
-			resultChans[i] = p.submit(cfg.CheapEngine, role, string(model.StageScreening), prompt, cfg.Timeouts.Screening, cfg.Retry)
+			resultChans[i] = p.submit(cheapCLI, role, string(model.StageScreening), prompt, cfg.Timeouts.Screening, cfg.Retry)
 		}
 
 		for i, idx := range indices {
@@ -335,11 +373,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		role string
 		cli  model.CLI
 	}{
-		{"news", cfg.CheapEngine},
-		{"fundamentals", cfg.CheapEngine},
-		{"quant", cfg.CheapEngine},
-		{"sentiment", cfg.CheapEngine},
-		{"macro", cfg.CheapEngine},
+		{"news", cheapCLI},
+		{"fundamentals", cheapCLI},
+		{"quant", cheapCLI},
+		{"sentiment", cheapCLI},
+		{"macro", cheapCLI},
 	}
 
 	specChans := make([]<-chan model.Report, len(specialists))

@@ -32,10 +32,13 @@ type Settings struct {
 	Binaries          map[model.CLI]string
 
 	// CheapEngine selects the engine for scouts+specialists ("gemini" | "api" |
-	// "claude"); empty defaults to "gemini" (the agy CLI). API configures the
-	// OpenAI-compatible HTTP engine used when CheapEngine == "api".
-	CheapEngine model.CLI
-	API         model.APIConfig
+	// "local"); empty defaults to "gemini" (the agy CLI). API configures the remote
+	// OpenAI-compatible engine ("api"); Local configures a local OpenAI-compatible
+	// server such as Ollama ("local"), throttled by LocalConcurrency.
+	CheapEngine      model.CLI
+	API              model.APIConfig
+	Local            model.APIConfig
+	LocalConcurrency int
 }
 
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
@@ -50,8 +53,11 @@ type fileFormat struct {
 	GeminiConcurrency int `toml:"gemini_concurrency"`
 
 	// CheapEngine routes scouts+specialists: "gemini" (agy CLI, default), "api"
-	// (OpenAI-compatible HTTP), or "claude".
+	// (remote OpenAI-compatible HTTP), or "local" (local OpenAI-compatible server).
 	CheapEngine string `toml:"cheap_engine"`
+
+	// LocalConcurrency caps simultaneous local-model calls (default 1).
+	LocalConcurrency int `toml:"local_concurrency"`
 
 	Weights struct {
 		Fundamentals float64 `toml:"fundamentals"`
@@ -90,13 +96,21 @@ type fileFormat struct {
 		FredKey         string `toml:"fred_key"`
 	} `toml:"providers"`
 
-	// API configures the OpenAI-compatible cheap-research engine. Prefer setting
-	// api_key via the CFR_API_KEY env var rather than committing it to a file.
+	// API configures the remote OpenAI-compatible cheap-research engine. Prefer
+	// setting api_key via the CFR_API_KEY env var rather than committing it to a file.
 	API struct {
 		BaseURL string `toml:"base_url"`
 		Model   string `toml:"model"`
 		APIKey  string `toml:"api_key"`
 	} `toml:"api"`
+
+	// Local configures a local OpenAI-compatible server (Ollama/llama.cpp). The
+	// key is optional — local servers don't authenticate.
+	Local struct {
+		BaseURL string `toml:"base_url"`
+		Model   string `toml:"model"`
+		APIKey  string `toml:"api_key"`
+	} `toml:"local"`
 }
 
 // Load resolves the settings. Missing config files are fine; a malformed file
@@ -219,9 +233,13 @@ func (s *Settings) applyFile(path string) error {
 	if f.CheapEngine != "" {
 		s.CheapEngine = model.CLI(f.CheapEngine)
 	}
+	setInt(&s.LocalConcurrency, f.LocalConcurrency)
 	setStr(&s.API.BaseURL, f.API.BaseURL)
 	setStr(&s.API.Model, f.API.Model)
 	setStr(&s.API.APIKey, f.API.APIKey)
+	setStr(&s.Local.BaseURL, f.Local.BaseURL)
+	setStr(&s.Local.Model, f.Local.Model)
+	setStr(&s.Local.APIKey, f.Local.APIKey)
 	return nil
 }
 
@@ -246,6 +264,16 @@ func (s *Settings) applyEnv() {
 	setStr(&s.API.APIKey, "CFR_API_KEY")
 	if v := os.Getenv("CFR_CHEAP_ENGINE"); v != "" {
 		s.CheapEngine = model.CLI(v)
+	}
+
+	// Local OpenAI-compatible server (Ollama/llama.cpp). Key is optional.
+	setStr(&s.Local.BaseURL, "CFR_LOCAL_BASE_URL")
+	setStr(&s.Local.Model, "CFR_LOCAL_MODEL")
+	setStr(&s.Local.APIKey, "CFR_LOCAL_KEY")
+	if v := os.Getenv("CFR_LOCAL_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			s.LocalConcurrency = n
+		}
 	}
 
 	if v := os.Getenv("CFR_CLAUDE_MODEL"); v != "" {

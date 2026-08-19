@@ -66,7 +66,8 @@ type CLI string
 const (
 	CLIGemini CLI = "gemini"
 	CLIClaude CLI = "claude"
-	CLIApi    CLI = "api" // OpenAI-compatible HTTP endpoint (see APIConfig)
+	CLIApi    CLI = "api"   // OpenAI-compatible HTTP endpoint (see APIConfig)
+	CLILocal  CLI = "local" // config selector: runs on the CLIApi HTTP engine pointed at a local server
 )
 
 // Constituent is one tradeable name in the universe.

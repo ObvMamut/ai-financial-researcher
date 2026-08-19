@@ -18,6 +18,7 @@ func clearEnv(t *testing.T) {
 		"CFR_CONTACT_EMAIL", "CFR_CLAUDE_MODEL", "CFR_GEMINI_MODEL",
 		"CFR_CLAUDE_BIN", "CFR_GEMINI_BIN", "CFR_GEMINI_CONCURRENCY", "CFR_KEEP_RUNS",
 		"CFR_CHEAP_ENGINE", "CFR_API_BASE_URL", "CFR_API_MODEL", "CFR_API_KEY", "DEEPSEEK_API_KEY",
+		"CFR_LOCAL_BASE_URL", "CFR_LOCAL_MODEL", "CFR_LOCAL_KEY", "CFR_LOCAL_CONCURRENCY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -208,6 +209,47 @@ func TestLoadDeepSeekKeyAliasFromEnv(t *testing.T) {
 	}
 	if s.API.APIKey != "sk-alias" {
 		t.Errorf("APIKey = %q, want the DEEPSEEK_API_KEY alias", s.API.APIKey)
+	}
+}
+
+func TestLoadLocalEngineFromFile(t *testing.T) {
+	_, cwd := isolate(t)
+	toml := `
+cheap_engine = "local"
+local_concurrency = 2
+
+[local]
+base_url = "http://localhost:11434/v1"
+model = "qwen2.5:7b-instruct"
+`
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.CheapEngine != model.CLILocal {
+		t.Errorf("CheapEngine = %q, want local", s.CheapEngine)
+	}
+	if s.Local.BaseURL != "http://localhost:11434/v1" || s.Local.Model != "qwen2.5:7b-instruct" {
+		t.Errorf("Local = %+v", s.Local)
+	}
+	if s.LocalConcurrency != 2 {
+		t.Errorf("LocalConcurrency = %d, want 2", s.LocalConcurrency)
+	}
+}
+
+func TestLoadLocalKeyFromEnv(t *testing.T) {
+	isolate(t)
+	t.Setenv("CFR_LOCAL_BASE_URL", "http://127.0.0.1:8000/v1")
+	t.Setenv("CFR_LOCAL_MODEL", "llama3.1:8b")
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Local.BaseURL != "http://127.0.0.1:8000/v1" || s.Local.Model != "llama3.1:8b" {
+		t.Errorf("Local from env = %+v", s.Local)
 	}
 }
 

@@ -22,8 +22,11 @@ import (
 // providers — no model SDK). The caller (runAgent) owns retry and the per-call
 // timeout via ctx, so this function makes exactly one request.
 func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (string, error) {
-	if api.BaseURL == "" || api.APIKey == "" || api.Model == "" {
-		return "", fmt.Errorf("api engine misconfigured: base_url, model, and key are all required")
+	// A key is required for remote providers but omitted for local servers
+	// (Ollama/llama.cpp), which don't authenticate — so only base_url + model
+	// are mandatory here. Callers validate the key where it matters (remote).
+	if api.BaseURL == "" || api.Model == "" {
+		return "", fmt.Errorf("api engine misconfigured: base_url and model are required")
 	}
 
 	reqBody := chatRequest{
@@ -42,7 +45,9 @@ func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (str
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+api.APIKey)
+	if api.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+api.APIKey)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -26,27 +26,30 @@ type pool struct {
 	models   map[model.CLI]string // per-CLI model passed to the subprocess via --model
 	binaries map[model.CLI]string // per-CLI executable name; empty falls back to the CLI constant
 	api      model.APIConfig      // config for the CLIApi (OpenAI-compatible) engine
-	// geminiSem caps how many Gemini (agy) subprocesses run at once. Concurrent agy
-	// processes contend on the OS keyring during auth, which makes silent auth time out
-	// and escalates to an interactive browser login; throttling avoids that. It does
-	// NOT apply to the CLIApi engine, which has no keyring and parallelizes freely.
-	geminiSem chan struct{}
-	wg        sync.WaitGroup
+	// throttleCLI + throttleSem cap how many of the cheap-engine's calls run at once.
+	// For gemini (agy) this avoids OS-keyring auth contention; for a local model server
+	// it avoids overwhelming a single GPU with parallel generations. A nil sem means the
+	// cheap engine runs unthrottled (remote APIs like DeepSeek parallelize freely).
+	// Synthesis (CLIClaude) is never the cheap engine, so it is never throttled.
+	throttleCLI model.CLI
+	throttleSem chan struct{}
+	wg          sync.WaitGroup
 }
 
-func newPool(workers int, models, binaries map[model.CLI]string, api model.APIConfig, geminiConc int) *pool {
+func newPool(workers int, models, binaries map[model.CLI]string, api model.APIConfig, throttleCLI model.CLI, throttleConc int) *pool {
 	if workers <= 0 {
 		workers = 4
 	}
 	p := &pool{
-		workers:  workers,
-		jobs:     make(chan job, workers*2),
-		models:   models,
-		binaries: binaries,
-		api:      api,
+		workers:     workers,
+		jobs:        make(chan job, workers*2),
+		models:      models,
+		binaries:    binaries,
+		api:         api,
+		throttleCLI: throttleCLI,
 	}
-	if geminiConc > 0 {
-		p.geminiSem = make(chan struct{}, geminiConc)
+	if throttleConc > 0 {
+		p.throttleSem = make(chan struct{}, throttleConc)
 	}
 	return p
 }
@@ -67,13 +70,14 @@ func (p *pool) start(ctx context.Context) {
 						Err:    "context cancelled",
 					}
 				default:
-					// Throttle Gemini (agy) subprocesses to avoid keyring auth contention.
-					if j.cli == model.CLIGemini && p.geminiSem != nil {
-						p.geminiSem <- struct{}{}
+					// Throttle the cheap engine (agy keyring contention / single-GPU local).
+					throttled := j.cli == p.throttleCLI && p.throttleSem != nil
+					if throttled {
+						p.throttleSem <- struct{}{}
 					}
 					r := runAgent(ctx, j.cli, j.role, j.stage, j.prompt, j.timeout, j.retry, p.models[j.cli], p.binaries[j.cli], p.api)
-					if j.cli == model.CLIGemini && p.geminiSem != nil {
-						<-p.geminiSem
+					if throttled {
+						<-p.throttleSem
 					}
 					j.result <- r
 				}

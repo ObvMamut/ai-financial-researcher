@@ -31,11 +31,17 @@
 
 # Which engine runs the cheap-research roles (scouts + the 5 specialists):
 #   "gemini" — the `agy` CLI (default; no key needed)
-#   "api"    — an OpenAI-compatible HTTP endpoint (see [api] below). Recommended
-#              if `agy`/Gemini is unreliable for you.
+#   "api"    — a remote OpenAI-compatible HTTP endpoint (see [api] below).
+#              Recommended if `agy`/Gemini is unreliable for you.
+#   "local"  — a local OpenAI-compatible server such as Ollama (see [local] below).
+#              Free and offline; needs a GPU/CPU that can serve the model.
 # The heavy Chief Analyst synthesis always uses the `claude` CLI, so the
-# cheap/heavy split is preserved either way.
+# cheap/heavy split is preserved whichever cheap engine you pick.
 #cheap_engine = "gemini"
+
+# Max simultaneous local-model calls (cheap_engine = "local"). One GPU can't run
+# the 5 specialists at once, so keep this at 1 unless you have plenty of VRAM.
+#local_concurrency = 1
 
 # Domain weights for confluence scoring; they are renormalized, so only the
 # ratios matter.
@@ -82,6 +88,16 @@
 #base_url = "https://api.deepseek.com"   # up to, not including, /chat/completions
 #model    = "deepseek-chat"
 #api_key  = ""                            # prefer CFR_API_KEY / DEEPSEEK_API_KEY env
+
+# Local OpenAI-compatible server (used when cheap_engine = "local"). Same engine
+# as [api], just pointed at your machine — free and offline. Easiest server is
+# Ollama (`ollama serve` → http://localhost:11434/v1); llama.cpp/LM Studio/vLLM
+# work too by changing base_url. No key needed (local servers don't authenticate).
+# On ~4 GB VRAM a Q4 7–8B instruct model is the sweet spot; confirm with nvidia-smi.
+#[local]
+#base_url = "http://localhost:11434/v1"   # Ollama's OpenAI-compatible endpoint
+#model    = "qwen2.5:7b-instruct"         # must match a model you've pulled
+#api_key  = ""                            # optional; ignored by most local servers
 
 # No-API alternative: run the cheap role on the `claude` CLI at a cheap tier.
 # Keep cheap_engine = "gemini" and just swap the "gemini"-role binary+model —

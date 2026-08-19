@@ -33,11 +33,20 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
     Gemini AI Pro subscription lapsed). Configure via `[api]` / `CFR_API_BASE_URL`,
     `CFR_API_MODEL`, `CFR_API_KEY` (or `DEEPSEEK_API_KEY`). The `agy` keyring throttle does
     not apply, so specialists parallelize up to `workers`.
+  - `cheap_engine = "local"` — the *same* `CLIApi` HTTP engine pointed at a local
+    OpenAI-compatible server (Ollama/llama.cpp/vLLM). It is a config selector, not a new
+    runner engine: it resolves to `CLIApi` with the `[local]` config. Key is optional
+    (local servers don't authenticate), and calls are throttled to `local_concurrency`
+    (default 1) because one GPU can't run the 5 specialists at once. Configure via
+    `[local]` / `CFR_LOCAL_BASE_URL`, `CFR_LOCAL_MODEL`, `CFR_LOCAL_KEY`,
+    `CFR_LOCAL_CONCURRENCY`. Engine selection + validation live in `resolveCheapEngine`
+    (`internal/orchestrator/orchestrator.go`); the pool's throttle is generic
+    (`throttleCLI`/`throttleSem` in `pool.go`), covering gemini and local.
   (HTTP to *market-data* sources remains fine and expected — `internal/marketdata` talks to
   the keyless Yahoo Finance chart API, and optionally EDGAR/FRED/AlphaVantage when keyed.)
-- **Cost split:** the **cheap engine** (agy CLI *or* the API engine) does cheap, parallel
-  research (screening + domain reports); **Claude** does the single heavy synthesis/scoring
-  step (Chief Analyst). The split holds whichever cheap engine is selected.
+- **Cost split:** the **cheap engine** (agy CLI, remote API, *or* a local model) does cheap,
+  parallel research (screening + domain reports); **Claude** does the single heavy
+  synthesis/scoring step (Chief Analyst). The split holds whichever cheap engine is selected.
 - Agent personas live in `agents/*.md` and are loaded at runtime — they are *data*, not
   Go source. Editing a persona must not require recompiling.
 
