@@ -15,20 +15,29 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
 
 ## Hard constraints
 
-- **No model API keys.** All model work happens by shelling out to model CLIs in
-  headless/print mode (`-p`). Never add an SDK or HTTP call to a *model provider*.
-  (HTTP to *market-data* sources is fine and expected — `internal/marketdata` talks to
-  the keyless Yahoo Finance chart API, and optionally EDGAR/FRED/AlphaVantage when keys
-  are configured.) The cheap-research role
-  defaults to the `agy` (Antigravity) CLI — Google discontinued the free `gemini` CLI tier
-  ("IneligibleTierError… migrate to Antigravity"); `agy` exposes the same `-p`/`--model`
-  interface. Heavy synthesis still uses `claude`. Each binary is overridable without
-  recompiling via `CFR_GEMINI_BIN` / `CFR_CLAUDE_BIN`. `agy` auth is throttled to 1
-  concurrent process by default — concurrent `agy` launches contend on the OS keyring,
-  time out silent auth, and escalate to an interactive browser login; raise the cap with
-  `CFR_GEMINI_CONCURRENCY` if your keyring tolerates it.
-- **Cost split:** **Gemini** does cheap, parallel research (screening + domain reports);
-  **Claude** does the single heavy synthesis/scoring step (Chief Analyst).
+- **Model access: CLI subprocess by default; a keyed API is allowed for the *cheap-research
+  role only*.** Heavy synthesis (Chief Analyst) MUST stay a `claude` CLI shell-out in
+  headless/print mode (`-p`) — never add an SDK or HTTP call for the synthesis role. The
+  cheap-research role (scouts + specialists) may run on either a CLI or an OpenAI-compatible
+  HTTP endpoint, chosen by `cheap_engine`:
+  - `cheap_engine = "gemini"` (default) — the `agy` (Antigravity) CLI. Google discontinued
+    the free `gemini` CLI tier ("IneligibleTierError… migrate to Antigravity"); `agy`
+    exposes the same `-p`/`--model` interface. Binaries overridable via `CFR_GEMINI_BIN` /
+    `CFR_CLAUDE_BIN`. `agy` auth is throttled to 1 concurrent process by default (concurrent
+    launches contend on the OS keyring, time out silent auth, and escalate to a browser
+    login); raise with `CFR_GEMINI_CONCURRENCY`.
+  - `cheap_engine = "api"` — the native OpenAI-compatible HTTP engine in
+    `internal/orchestrator/apiengine.go` (stdlib only, no SDK). Generic `/chat/completions`
+    (`base_url` + `model` + key), so DeepSeek / OpenRouter / OpenAI / local vLLM all work.
+    Added because `agy`/Gemini's free tier is unreliable (empty specialist outputs once the
+    Gemini AI Pro subscription lapsed). Configure via `[api]` / `CFR_API_BASE_URL`,
+    `CFR_API_MODEL`, `CFR_API_KEY` (or `DEEPSEEK_API_KEY`). The `agy` keyring throttle does
+    not apply, so specialists parallelize up to `workers`.
+  (HTTP to *market-data* sources remains fine and expected — `internal/marketdata` talks to
+  the keyless Yahoo Finance chart API, and optionally EDGAR/FRED/AlphaVantage when keyed.)
+- **Cost split:** the **cheap engine** (agy CLI *or* the API engine) does cheap, parallel
+  research (screening + domain reports); **Claude** does the single heavy synthesis/scoring
+  step (Chief Analyst). The split holds whichever cheap engine is selected.
 - Agent personas live in `agents/*.md` and are loaded at runtime — they are *data*, not
   Go source. Editing a persona must not require recompiling.
 
@@ -39,7 +48,8 @@ cmd/cfr/        entry point + subcommands: bare = TUI, `run` (headless), `scoreb
 internal/
   tui/          Bubble Tea screens: app (router), home, run (status), results,
                 history, reports, scoreboard
-  orchestrator/ pipeline driver, subprocess runner, bounded worker pool
+  orchestrator/ pipeline driver, runner (CLI subprocess + OpenAI-compatible API
+                engine in apiengine.go), bounded worker pool
   agents/       persona registry: load agents/*.md, assemble prompts
   universe/     index constituents (data/*.csv), dedupe/cap, benchmark symbols
   quant/        pure-stdlib statistical metrics (momentum, YZ vol, VR, …) — no TA
@@ -58,11 +68,11 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 
 ## Pipeline (independent research)
 
-1. **Scouts (Gemini):** one subprocess per index → shortlist of ~5–10 names each.
+1. **Scouts (cheap engine):** one call per index → shortlist of ~5–10 names each.
    Orchestrator merges/dedupes (incl. cross-listings) and caps at 12, balanced per index.
 2. **Stage 1.5 (in-process, no model):** fetch 2y daily OHLCV per shortlisted name from
    Yahoo, compute `internal/quant` metrics, persist `prices/` + `quant.json`.
-3. **Specialists (Gemini, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
+3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
 4. **Chief Analyst (Claude):** reads the 5 reports + compact verified quant lines, scores

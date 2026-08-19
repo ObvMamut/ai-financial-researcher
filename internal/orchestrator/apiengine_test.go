@@ -1,0 +1,125 @@
+package orchestrator
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
+)
+
+// canned OpenAI-compatible success body.
+const cannedChatResponse = `{"choices":[{"message":{"role":"assistant","content":"ANALYSIS: buy signal"}}]}`
+
+func TestCallAPIEngineParsesContentAndSendsAuth(t *testing.T) {
+	var gotAuth, gotPath string
+	var gotBody chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(cannedChatResponse))
+	}))
+	defer srv.Close()
+
+	api := model.APIConfig{BaseURL: srv.URL, Model: "deepseek-chat", APIKey: "sk-test"}
+	out, err := callAPIEngine(context.Background(), api, "screen the EU50")
+	if err != nil {
+		t.Fatalf("callAPIEngine: %v", err)
+	}
+	if out != "ANALYSIS: buy signal" {
+		t.Errorf("content = %q, want the assistant message content", out)
+	}
+	if gotAuth != "Bearer sk-test" {
+		t.Errorf("Authorization = %q, want Bearer sk-test", gotAuth)
+	}
+	if gotPath != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", gotPath)
+	}
+	if gotBody.Model != "deepseek-chat" {
+		t.Errorf("request model = %q, want deepseek-chat", gotBody.Model)
+	}
+	if len(gotBody.Messages) != 1 || gotBody.Messages[0].Content != "screen the EU50" {
+		t.Errorf("request messages = %+v, want single user message with the prompt", gotBody.Messages)
+	}
+	if gotBody.Stream {
+		t.Errorf("stream = true, want false")
+	}
+}
+
+func TestCallAPIEngineErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+	}))
+	defer srv.Close()
+
+	api := model.APIConfig{BaseURL: srv.URL, Model: "deepseek-chat", APIKey: "sk-test"}
+	_, err := callAPIEngine(context.Background(), api, "hi")
+	if err == nil {
+		t.Fatal("expected an error on HTTP 429, got nil")
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error %q should mention the status code", err.Error())
+	}
+	// The API key must never leak into an error string.
+	if strings.Contains(err.Error(), "sk-test") {
+		t.Errorf("error text leaked the API key: %q", err.Error())
+	}
+}
+
+func TestCallAPIEngineRequiresConfig(t *testing.T) {
+	_, err := callAPIEngine(context.Background(), model.APIConfig{Model: "m", APIKey: "k"}, "hi")
+	if err == nil {
+		t.Fatal("expected an error when base_url is empty")
+	}
+}
+
+// TestRunAgentAPIEngine exercises the CLIApi branch inside runAgent end-to-end
+// (branch + report contract) with no network and no subprocess.
+func TestRunAgentAPIEngine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(cannedChatResponse))
+	}))
+	defer srv.Close()
+
+	api := model.APIConfig{BaseURL: srv.URL, Model: "deepseek-chat", APIKey: "sk-test"}
+	retry := model.RetryPolicy{MaxAttempts: 1, BaseDelay: time.Millisecond}
+
+	r := runAgent(context.Background(), model.CLIApi, "news", string(model.StageAnalysis),
+		"prompt", 5*time.Second, retry, "", "", api)
+
+	if r.Status != model.StatusDone {
+		t.Fatalf("status = %q (err=%q), want done", r.Status, r.Err)
+	}
+	if r.Stdout != "ANALYSIS: buy signal" {
+		t.Errorf("stdout = %q, want the assistant content", r.Stdout)
+	}
+	if r.CLI != model.CLIApi {
+		t.Errorf("report CLI = %q, want api", r.CLI)
+	}
+}
+
+// TestRunAgentAPIEngineFailsClosed confirms a non-200 drives runAgent's failure
+// path (so the specialist is marked failed rather than hanging).
+func TestRunAgentAPIEngineFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	api := model.APIConfig{BaseURL: srv.URL, Model: "deepseek-chat", APIKey: "sk-test"}
+	retry := model.RetryPolicy{MaxAttempts: 1, BaseDelay: time.Millisecond}
+
+	r := runAgent(context.Background(), model.CLIApi, "news", string(model.StageAnalysis),
+		"prompt", 5*time.Second, retry, "", "", api)
+
+	if r.Status != model.StatusFailed {
+		t.Fatalf("status = %q, want failed", r.Status)
+	}
+}

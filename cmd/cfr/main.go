@@ -84,6 +84,8 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		Providers:         s.Providers,
 		Models:            s.Models,
 		Binaries:          s.Binaries,
+		CheapEngine:       s.CheapEngine,
+		API:               s.API,
 		GeminiConcurrency: s.GeminiConcurrency,
 	}
 }

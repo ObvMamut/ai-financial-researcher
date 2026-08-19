@@ -59,12 +59,14 @@ const (
 	StageSynthesis Stage = "synthesis" // Claude chief analyst
 )
 
-// CLI identifies which subprocess binary runs an agent.
+// CLI identifies which engine runs an agent: a subprocess binary (gemini/claude)
+// or the native OpenAI-compatible HTTP engine (api).
 type CLI string
 
 const (
 	CLIGemini CLI = "gemini"
 	CLIClaude CLI = "claude"
+	CLIApi    CLI = "api" // OpenAI-compatible HTTP endpoint (see APIConfig)
 )
 
 // Constituent is one tradeable name in the universe.
@@ -206,6 +208,15 @@ type ProviderConfig struct {
 	ContactEmail    string
 	AlphaVantageKey string
 	FredKey         string
+}
+
+// APIConfig configures the OpenAI-compatible cheap-research engine (CLIApi).
+// It is used only when the cheap-research role is routed to CLIApi; the heavy
+// synthesis role always stays on the Claude CLI.
+type APIConfig struct {
+	BaseURL string // e.g. https://api.deepseek.com (up to, not incl. /chat/completions)
+	Model   string // e.g. deepseek-chat
+	APIKey  string // Bearer token; sourced from env/TOML, never logged
 }
 
 // DomainStatus tracks the outcome of a specialist research run.

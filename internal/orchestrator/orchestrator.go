@@ -56,6 +56,14 @@ type Config struct {
 	Models    map[model.CLI]string // per-CLI model passed via --model; empty CLIClaude defaults to "opus"
 	Binaries  map[model.CLI]string // per-CLI executable name; empty CLIGemini defaults to "agy", CLIClaude to "claude"
 
+	// CheapEngine selects the engine for the cheap-research roles (scouts +
+	// specialists). Defaults to CLIGemini (the `agy` CLI). Set to CLIApi to use
+	// the OpenAI-compatible HTTP engine configured in API. Synthesis always uses
+	// the Claude CLI regardless.
+	CheapEngine model.CLI
+	// API configures the CLIApi engine; required when CheapEngine == CLIApi.
+	API model.APIConfig
+
 	// GeminiConcurrency caps simultaneous Gemini (agy) subprocesses. Concurrent agy
 	// processes contend on the OS keyring during auth and escalate to a browser login;
 	// defaults to 1 when unset.
@@ -100,6 +108,16 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Binaries[model.CLIClaude] == "" {
 		c.Binaries[model.CLIClaude] = "claude"
+	}
+
+	// Cheap-research role defaults to the `agy` CLI engine so a fresh checkout
+	// (and the hermetic fakebin tests) need no API key. Set CheapEngine=CLIApi
+	// in config to route scouts+specialists to the OpenAI-compatible HTTP engine.
+	if c.CheapEngine == "" {
+		c.CheapEngine = model.CLIGemini
+	}
+	if c.API.Model == "" {
+		c.API.Model = "deepseek-chat"
 	}
 
 	// Serialize agy auth by default to avoid keyring contention (see Config.GeminiConcurrency).
@@ -173,6 +191,24 @@ func agentStatus(ch chan<- Event, role string, status model.AgentStatus, r *mode
 
 func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	start := time.Now()
+
+	// Validate the cheap-research engine up front. Fail fast on a misconfigured
+	// API engine rather than letting every cheap call fail one-by-one (which would
+	// look like a silent provider outage). Note CLIClaude is intentionally not a
+	// cheap engine: it shares model config with the synthesis role, so routing the
+	// cheap roles to it would silently run them on Opus. To use Claude cheaply,
+	// keep cheap_engine=gemini and override binaries.gemini=claude + models.gemini=haiku.
+	switch cfg.CheapEngine {
+	case model.CLIGemini:
+		// CLI engine (agy by default, or a cheap binary override) — no extra config.
+	case model.CLIApi:
+		if cfg.API.BaseURL == "" || cfg.API.APIKey == "" || cfg.API.Model == "" {
+			return fmt.Errorf("cheap_engine=api requires api.base_url, api.model, and an API key (set CFR_API_KEY)")
+		}
+	default:
+		return fmt.Errorf("invalid cheap_engine %q (valid: gemini, api)", cfg.CheapEngine)
+	}
+
 	// Load agent personas
 	reg, err := agents.Load(cfg.AgentsDir)
 	if err != nil {
@@ -194,7 +230,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	_ = store.CleanupOldRuns(cfg.RunsDir, cfg.KeepRuns)
 
 	// Start worker pool
-	p := newPool(cfg.Workers, cfg.Models, cfg.Binaries, cfg.GeminiConcurrency)
+	p := newPool(cfg.Workers, cfg.Models, cfg.Binaries, cfg.API, cfg.GeminiConcurrency)
 	p.start(ctx)
 	defer p.stop()
 
@@ -235,7 +271,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 			role := "scout-" + idx
 			agentStatus(ch, role, model.StatusRunning, nil)
-			resultChans[i] = p.submit(model.CLIGemini, role, string(model.StageScreening), prompt, cfg.Timeouts.Screening, cfg.Retry)
+			resultChans[i] = p.submit(cfg.CheapEngine, role, string(model.StageScreening), prompt, cfg.Timeouts.Screening, cfg.Retry)
 		}
 
 		for i, idx := range indices {
@@ -299,11 +335,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		role string
 		cli  model.CLI
 	}{
-		{"news", model.CLIGemini},
-		{"fundamentals", model.CLIGemini},
-		{"quant", model.CLIGemini},
-		{"sentiment", model.CLIGemini},
-		{"macro", model.CLIGemini},
+		{"news", cfg.CheapEngine},
+		{"fundamentals", cfg.CheapEngine},
+		{"quant", cfg.CheapEngine},
+		{"sentiment", cfg.CheapEngine},
+		{"macro", cfg.CheapEngine},
 	}
 
 	specChans := make([]<-chan model.Report, len(specialists))
@@ -415,7 +451,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	agentStatus(ch, "chief-analyst", model.StatusRunning, nil)
-	r := runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), prompt, cfg.Timeouts.Synthesis, cfg.Retry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude])
+	r := runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), prompt, cfg.Timeouts.Synthesis, cfg.Retry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
 	r.Path = fmt.Sprintf("%s/chief-analyst.md", run.Dir)
 	if err := run.WriteReport("chief-analyst", r.Stdout); err != nil {
 		log(ch, fmt.Sprintf("warn: write chief-analyst report: %v", err))
@@ -453,7 +489,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			if len(repromptReasons) > 0 {
 				log(ch, "Validation failed — attempting corrective re-prompt…")
 				reprompt := prompt + "\n\nCRITICAL: Your previous output failed validation. " + strings.Join(repromptReasons, "; ") + ". Re-emit the full JSON block with these problems fixed."
-				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, cfg.Retry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude])
+				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, cfg.Retry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
 				if r.Status != model.StatusFailed {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas

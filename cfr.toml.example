@@ -25,8 +25,17 @@
 #indices = ["sp500", "eu50"]
 
 # Max simultaneous Gemini (agy) subprocesses. Keep at 1 unless your OS keyring
-# tolerates concurrent auth (contention escalates to a browser login).
+# tolerates concurrent auth (contention escalates to a browser login). Ignored
+# when cheap_engine = "api" (the HTTP engine has no keyring and parallelizes freely).
 #gemini_concurrency = 1
+
+# Which engine runs the cheap-research roles (scouts + the 5 specialists):
+#   "gemini" — the `agy` CLI (default; no key needed)
+#   "api"    — an OpenAI-compatible HTTP endpoint (see [api] below). Recommended
+#              if `agy`/Gemini is unreliable for you.
+# The heavy Chief Analyst synthesis always uses the `claude` CLI, so the
+# cheap/heavy split is preserved either way.
+#cheap_engine = "gemini"
 
 # Domain weights for confluence scoring; they are renormalized, so only the
 # ratios matter.
@@ -59,6 +68,30 @@
 #[binaries]
 #claude = "claude"
 #gemini = "agy"
+
+# OpenAI-compatible cheap-research engine (used when cheap_engine = "api"). This
+# is the recommended replacement if `agy`/Gemini stops working. It speaks the
+# standard /chat/completions protocol, so it works with DeepSeek, OpenRouter,
+# OpenAI, or a local vLLM/Ollama gateway — just change base_url + model. Only the
+# cheap roles use it; the Chief Analyst still synthesises via the `claude` CLI.
+# The agy keyring throttle does NOT apply here, so the 5 specialists run in
+# parallel — set workers >= 5 to run them all at once.
+# Put the key in the CFR_API_KEY env var (or DEEPSEEK_API_KEY); avoid committing
+# it to this file.
+#[api]
+#base_url = "https://api.deepseek.com"   # up to, not including, /chat/completions
+#model    = "deepseek-chat"
+#api_key  = ""                            # prefer CFR_API_KEY / DEEPSEEK_API_KEY env
+
+# No-API alternative: run the cheap role on the `claude` CLI at a cheap tier.
+# Keep cheap_engine = "gemini" and just swap the "gemini"-role binary+model —
+# this preserves the cheap/heavy split (Haiku for the parallel research calls,
+# Opus for the single Chief Analyst synthesis):
+#   [binaries]
+#   gemini = "claude"
+#   [models]
+#   gemini = "haiku"
+# The agy keyring-contention reason is then gone, so raise gemini_concurrency > 1.
 
 # Optional keyed data providers. Yahoo needs no key; these enrich the packs.
 #[providers]

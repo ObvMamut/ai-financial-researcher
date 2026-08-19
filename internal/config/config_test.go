@@ -17,6 +17,7 @@ func clearEnv(t *testing.T) {
 		"CFR_RUNS_DIR", "CFR_AGENTS_DIR", "ALPHAVANTAGE_API_KEY", "FRED_API_KEY",
 		"CFR_CONTACT_EMAIL", "CFR_CLAUDE_MODEL", "CFR_GEMINI_MODEL",
 		"CFR_CLAUDE_BIN", "CFR_GEMINI_BIN", "CFR_GEMINI_CONCURRENCY", "CFR_KEEP_RUNS",
+		"CFR_CHEAP_ENGINE", "CFR_API_BASE_URL", "CFR_API_MODEL", "CFR_API_KEY", "DEEPSEEK_API_KEY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -152,6 +153,61 @@ func TestLoadEnvBeatsFiles(t *testing.T) {
 	}
 	if s.RunsDir != "env-runs" || s.KeepRuns != 9 || s.Binaries[model.CLIGemini] != "env-agy" {
 		t.Errorf("env did not win: RunsDir=%q KeepRuns=%d Binaries=%v", s.RunsDir, s.KeepRuns, s.Binaries)
+	}
+}
+
+func TestLoadCheapEngineAPIFromFile(t *testing.T) {
+	_, cwd := isolate(t)
+	toml := `
+cheap_engine = "api"
+
+[api]
+base_url = "https://api.deepseek.com"
+model = "deepseek-chat"
+`
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.CheapEngine != model.CLIApi {
+		t.Errorf("CheapEngine = %q, want api", s.CheapEngine)
+	}
+	if s.API.BaseURL != "https://api.deepseek.com" || s.API.Model != "deepseek-chat" {
+		t.Errorf("API = %+v", s.API)
+	}
+}
+
+func TestLoadAPIKeyFromEnv(t *testing.T) {
+	isolate(t)
+	// CFR_API_KEY takes precedence over the DEEPSEEK_API_KEY alias.
+	t.Setenv("DEEPSEEK_API_KEY", "sk-alias")
+	t.Setenv("CFR_API_KEY", "sk-primary")
+	t.Setenv("CFR_CHEAP_ENGINE", "api")
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.API.APIKey != "sk-primary" {
+		t.Errorf("APIKey = %q, want CFR_API_KEY to win over DEEPSEEK_API_KEY", s.API.APIKey)
+	}
+	if s.CheapEngine != model.CLIApi {
+		t.Errorf("CheapEngine = %q, want api", s.CheapEngine)
+	}
+}
+
+func TestLoadDeepSeekKeyAliasFromEnv(t *testing.T) {
+	isolate(t)
+	// With only DEEPSEEK_API_KEY set, it fills the key.
+	t.Setenv("DEEPSEEK_API_KEY", "sk-alias")
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.API.APIKey != "sk-alias" {
+		t.Errorf("APIKey = %q, want the DEEPSEEK_API_KEY alias", s.API.APIKey)
 	}
 }
 

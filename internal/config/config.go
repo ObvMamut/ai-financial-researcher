@@ -30,6 +30,12 @@ type Settings struct {
 	Providers         model.ProviderConfig
 	Models            map[model.CLI]string
 	Binaries          map[model.CLI]string
+
+	// CheapEngine selects the engine for scouts+specialists ("gemini" | "api" |
+	// "claude"); empty defaults to "gemini" (the agy CLI). API configures the
+	// OpenAI-compatible HTTP engine used when CheapEngine == "api".
+	CheapEngine model.CLI
+	API         model.APIConfig
 }
 
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
@@ -42,6 +48,10 @@ type fileFormat struct {
 	Indices   []string `toml:"indices"`
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
+
+	// CheapEngine routes scouts+specialists: "gemini" (agy CLI, default), "api"
+	// (OpenAI-compatible HTTP), or "claude".
+	CheapEngine string `toml:"cheap_engine"`
 
 	Weights struct {
 		Fundamentals float64 `toml:"fundamentals"`
@@ -79,6 +89,14 @@ type fileFormat struct {
 		AlphaVantageKey string `toml:"alphavantage_key"`
 		FredKey         string `toml:"fred_key"`
 	} `toml:"providers"`
+
+	// API configures the OpenAI-compatible cheap-research engine. Prefer setting
+	// api_key via the CFR_API_KEY env var rather than committing it to a file.
+	API struct {
+		BaseURL string `toml:"base_url"`
+		Model   string `toml:"model"`
+		APIKey  string `toml:"api_key"`
+	} `toml:"api"`
 }
 
 // Load resolves the settings. Missing config files are fine; a malformed file
@@ -197,6 +215,13 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.Providers.ContactEmail, f.Providers.ContactEmail)
 	setStr(&s.Providers.AlphaVantageKey, f.Providers.AlphaVantageKey)
 	setStr(&s.Providers.FredKey, f.Providers.FredKey)
+
+	if f.CheapEngine != "" {
+		s.CheapEngine = model.CLI(f.CheapEngine)
+	}
+	setStr(&s.API.BaseURL, f.API.BaseURL)
+	setStr(&s.API.Model, f.API.Model)
+	setStr(&s.API.APIKey, f.API.APIKey)
 	return nil
 }
 
@@ -212,6 +237,16 @@ func (s *Settings) applyEnv() {
 	setStr(&s.Providers.AlphaVantageKey, "ALPHAVANTAGE_API_KEY")
 	setStr(&s.Providers.FredKey, "FRED_API_KEY")
 	setStr(&s.Providers.ContactEmail, "CFR_CONTACT_EMAIL")
+
+	// Cheap-research API engine. CFR_API_KEY is preferred; DEEPSEEK_API_KEY is
+	// accepted as an alias so a DeepSeek key already in the environment just works.
+	setStr(&s.API.BaseURL, "CFR_API_BASE_URL")
+	setStr(&s.API.Model, "CFR_API_MODEL")
+	setStr(&s.API.APIKey, "DEEPSEEK_API_KEY")
+	setStr(&s.API.APIKey, "CFR_API_KEY")
+	if v := os.Getenv("CFR_CHEAP_ENGINE"); v != "" {
+		s.CheapEngine = model.CLI(v)
+	}
 
 	if v := os.Getenv("CFR_CLAUDE_MODEL"); v != "" {
 		s.Models[model.CLIClaude] = v
