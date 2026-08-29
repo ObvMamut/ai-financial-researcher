@@ -10,6 +10,9 @@
 #   chief-fail  - chief-analyst exits non-zero (synthesis-failed fallback)
 #   scout-empty - scouts print nothing (retry, then empty-shortlist error path)
 #   spec-fail   - specialists exit non-zero (missing-domain / <2-reports gate)
+#   overclaim   - specialists score an off-shortlist ticker and claim missing:[]
+#                 (coverage enforcement: scores stripped, CorrectedScores recorded)
+#   no-tail     - specialists emit prose with no JSON tail (domain must fail)
 prompt="$2"
 mode="${CFR_FAKE_MODE:-ok}"
 
@@ -158,6 +161,35 @@ fi
 
 # ── Specialists ─────────────────────────────────────────────────────────────
 [ "$mode" = "spec-fail" ] && { echo "fake specialist crashed" >&2; exit 1; }
+if [ "$mode" = "no-tail" ]; then
+  # A refusal or a truncated response: prose, no structured tail. This used to
+  # pass as "done" on non-empty stdout alone and flow into synthesis unnoticed.
+  echo "I am unable to complete this analysis without additional data."
+  exit 0
+fi
+if [ "$mode" = "overclaim" ]; then
+  # The 2026-08-28 failure mode: score everything, including a ticker that was
+  # never on the shortlist, and declare full coverage.
+  cat <<EOF
+Fake report asserting coverage it does not have.
+
+\`\`\`json
+{"domain": "$(
+  case "$prompt" in
+    *"# Agent: News Analyst"*)         echo news ;;
+    *"# Agent: Fundamentals Analyst"*) echo fundamentals ;;
+    *"# Agent: Quant Analyst"*)        echo quant ;;
+    *"# Agent: Sentiment Analyst"*)    echo sentiment ;;
+    *)                                 echo macro ;;
+  esac
+)", "scores": [
+  {"ticker": "NVDA", "bias": "bullish", "strength": 8, "note": "strong"},
+  {"ticker": "ZZZZ", "bias": "bullish", "strength": 9, "note": "never on the shortlist"}
+], "missing": []}
+\`\`\`
+EOF
+  exit 0
+fi
 
 spec_scores() {
   # $1 = domain name for the JSON tail

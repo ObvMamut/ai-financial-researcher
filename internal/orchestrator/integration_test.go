@@ -453,3 +453,83 @@ func TestAllSpecialistsFailErrors(t *testing.T) {
 		t.Fatal("unexpected EventComplete alongside specialist failure")
 	}
 }
+
+// End to end: a specialist that scores an off-shortlist ticker and claims
+// `"missing": []` must reach synthesis with those scores gone and the
+// correction recorded. This is the 2026-08-28 failure mode — every specialist
+// declared full coverage against near-zero real coverage and the run shipped as
+// `outcome: complete` with the highest confidence of any recent run.
+func TestIndependentRunEnforcesCoverage(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "overclaim")
+	cfg := testConfig(t, model.ModeIndependent)
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("run error: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no completion event")
+	}
+
+	dir := runDir(t, cfg.RunsDir)
+	meta := readMeta(t, dir)
+
+	sawCorrection, sawOffShortlist := false, false
+	for _, d := range meta.Domains {
+		if len(d.CorrectedScores) > 0 {
+			sawCorrection = true
+		}
+		for _, tk := range d.OffShortlistScores {
+			if tk == "ZZZZ" {
+				sawOffShortlist = true
+			}
+		}
+	}
+	if !sawOffShortlist {
+		t.Errorf("ZZZZ was never on the shortlist and must be recorded as an off-shortlist score: %+v", meta.Domains)
+	}
+	if !sawCorrection {
+		t.Errorf("no domain recorded a corrected score, but every domain was ungrounded: %+v", meta.Domains)
+	}
+
+	// The artifact on disk must be what the Chief Analyst read, so the report
+	// itself carries the corrected tail — not just the metadata.
+	report, err := os.ReadFile(filepath.Join(dir, "news.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(report), `"ZZZZ"`) {
+		t.Errorf("news.md still scores ZZZZ:\n%s", report)
+	}
+
+	if !containsLog(logs, "not on the shortlist") {
+		t.Errorf("the run log should say a ticker was scored off-shortlist: %v", logs)
+	}
+}
+
+// A report with no parseable JSON tail is a refusal or a truncation. It used to
+// pass as "done" on non-empty stdout alone and flow silently into synthesis.
+func TestIndependentRunFailsDomainWithNoJSONTail(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "no-tail")
+	cfg := testConfig(t, model.ModeIndependent)
+
+	_, runErr, _ := drain(t, Run(context.Background(), cfg))
+
+	// All five specialists produce untailed prose, so fewer than two usable
+	// reports survive and the run refuses to synthesise from nothing.
+	if runErr == nil {
+		t.Fatal("a run whose every specialist returned untailed prose must not synthesise")
+	}
+	if !strings.Contains(runErr.Message, "fewer than 2 specialist reports") {
+		t.Errorf("run error = %q, want the too-few-reports gate", runErr.Message)
+	}
+}
+
+func containsLog(logs []string, sub string) bool {
+	for _, l := range logs {
+		if strings.Contains(l, sub) {
+			return true
+		}
+	}
+	return false
+}

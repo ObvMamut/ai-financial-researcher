@@ -90,12 +90,31 @@ runs/2026-06-01T14-30-05/
   shortlist.json
   prices/<ticker>.json    # raw daily OHLCV per shortlisted ticker (Yahoo, '^' → '_')
   quant.json              # computed quant metrics pack (Stage 1.5)
-  data/<domain>.json      # provider data packs (EDGAR/FRED/AV, when keys are set)
+  data/<domain>.json      # provider data packs (EDGAR/FRED/AV, when keys are set).
+                          # No data/quant.json: no provider serves that domain, so
+                          # the file was a relabelled copy of macro.json with an
+                          # empty ByTicker — it misrepresented what quant saw.
   news.md  fundamentals.md  quant.md  sentiment.md  macro.md
   chief-analyst.md        # full synthesis (human-readable)
   ideas.json              # parsed []TradeIdea incl. entry/stop/target (machine-readable)
-  metadata.json           # run outcome, domain statuses, warnings, weights
+  metadata.json           # run outcome, domain statuses, warnings, weights, provenance
 ```
+
+### metadata.json
+
+Beyond the outcome and per-domain statuses:
+
+| Field | What it records |
+|---|---|
+| `engine`, `engine_model` | which cheap-research engine and model ran the scouts and specialists |
+| `synthesis_model` | the Claude model the Chief Analyst used |
+| `stages` | wall-clock ms per stage: `screening`, `quant`, `analysis`, `synthesis`. Only per-agent durations were kept before, leaving the in-process stages — most of a run's wall time — unaccounted for |
+| `data_errors` | every provider failure from every pack, prefixed by domain. These previously lived only in `data/<domain>.json`, so a run that lost eight tickers to rate limiting read like one that lost none |
+| `persona_sha` | short hash per persona file. Personas are runtime data, editable with no code change, so nothing else makes a run's outcome attributable to the prompts that produced it |
+
+Each `domains[]` row also carries `corrected_scores` and `off_shortlist_scores`
+(see the enforcement section above), and every model call gets a row — the four
+scouts and the Chief Analyst included, not just the five specialists.
 
 ## Progress reporting to the TUI
 
