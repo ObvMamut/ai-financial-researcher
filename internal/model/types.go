@@ -248,7 +248,12 @@ type RunMeta struct {
 	Shortlist   []Candidate    `json:"shortlist"`
 	Domains     []DomainStatus `json:"domains"`
 	Weights     DomainWeights  `json:"weights"`
-	Warnings    []string       `json:"warnings"`
-	Outcome     string         `json:"outcome"` // complete | degraded | failed
-	Duration    int64          `json:"total_duration_ms"`
+	// QuantOnly names the shortlisted tickers no per-ticker provider can reach:
+	// SEC EDGAR and AlphaVantage are US-only, so a non-US listing is graded on
+	// quant alone. This is a known structural limit, deliberately kept out of
+	// Warnings — an expected limit is not a warning.
+	QuantOnly []string `json:"quant_only,omitempty"`
+	Warnings  []string `json:"warnings"`
+	Outcome   string   `json:"outcome"` // complete | degraded | failed
+	Duration  int64    `json:"total_duration_ms"`
 }

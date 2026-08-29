@@ -377,6 +377,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		log(ch, fmt.Sprintf("Single-stock mode: analysing %s", c.Ticker))
 	}
 
+	// SEC and AlphaVantage are both US-only, so the non-US half of a balanced
+	// shortlist can only ever be graded on quant. Say so once, plainly: nothing
+	// in the run said it, and three domains reporting gaps for those names read
+	// as three domains failing.
+	quantOnly := quantOnlyNames(shortlist)
+	if len(quantOnly) > 0 {
+		log(ch, fmt.Sprintf("%d of %d shortlisted names are non-US listings (%s): US filings, news and sentiment do not cover them, so they are graded on quant alone.",
+			len(quantOnly), len(shortlist), strings.Join(quantOnly, ", ")))
+	}
+
 	// ── Stage 1.5: price history + quant metrics (in-process, no model) ───────
 	log(ch, "Stage 1.5: fetching price history and computing quant metrics…")
 	agentStatus(ch, "quant-data", model.StatusRunning, nil)
@@ -651,6 +661,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Shortlist:   shortlist,
 		Domains:     domainStatuses,
 		Weights:     cfg.Weights,
+		QuantOnly:   quantOnly,
 		Warnings:    warnMsgs,
 		Outcome:     outcome,
 		Duration:    time.Since(start).Milliseconds(),

@@ -99,6 +99,12 @@ func (p *DataPack) URLs() []string {
 // the shortlist or none of them, so it is never "missing for AAPL".
 func IsRegimeDomain(domain string) bool { return domain == "macro" }
 
+// IsUSListing reports whether a ticker can be reached by this pipeline's
+// per-ticker providers at all. SEC EDGAR and AlphaVantage are both US-only, so a
+// foreign-suffixed symbol is not a fetch failure — it is structurally
+// uncoverable, and the shortlist carries ~6 such names on an all-indices run.
+func IsUSListing(ticker string) bool { return !isForeignListing(ticker) }
+
 // Ungrounded lists the requested tickers the pack found no data for, sorted.
 // A regime domain has no per-ticker gap to report, so it returns nil: macro's
 // Coverage map is seeded all-false and never written true, and reporting that
@@ -171,9 +177,27 @@ func (p *DataPack) Markdown() string {
 	// "Verified Market Data" heading and says nothing about the tickers it holds
 	// no data for — which is precisely the silence agents fill by inventing.
 	if len(ungrounded) > 0 {
+		// Separate the names no provider here can ever reach from the ones a
+		// fetch genuinely failed for. Listing them together read as three
+		// domains failing when half the shortlist was simply out of scope.
+		var us, foreign []string
+		for _, t := range ungrounded {
+			if IsUSListing(t) {
+				us = append(us, t)
+			} else {
+				foreign = append(foreign, t)
+			}
+		}
 		sb.WriteString("#### No verified data for\n\n")
-		sb.WriteString(strings.Join(ungrounded, ", "))
-		sb.WriteString("\n\nThese tickers have **no** verified ")
+		if len(us) > 0 {
+			sb.WriteString(strings.Join(us, ", "))
+			sb.WriteString("\n\n")
+		}
+		if len(foreign) > 0 {
+			sb.WriteString(strings.Join(foreign, ", "))
+			sb.WriteString(" (non-US listings — no US filings or news coverage). This is a known limit of this run's data sources, not a fetch failure: they are graded on quant alone.\n\n")
+		}
+		sb.WriteString("These tickers have **no** verified ")
 		sb.WriteString(p.Domain)
 		sb.WriteString(" data in this run. Say so, score them low, and list every one of them in your `missing` array. Do not substitute recollection or inference for the missing figures.\n\n")
 	}

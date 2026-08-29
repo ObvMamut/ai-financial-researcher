@@ -119,3 +119,18 @@ func zeroCoverage(statuses []model.DomainStatus) []string {
 	sort.Strings(out)
 	return out
 }
+
+// quantOnlyNames lists the shortlisted tickers no per-ticker provider can reach,
+// sorted. SEC EDGAR and AlphaVantage are US-only, so news, fundamentals and
+// sentiment are structurally unable to cover a foreign listing — that is a known
+// limit of this run's sources, not a fetch failure, and the run should say so.
+func quantOnlyNames(shortlist []model.Candidate) []string {
+	var out []string
+	for _, c := range shortlist {
+		if !marketdata.IsUSListing(c.Ticker) {
+			out = append(out, strings.ToUpper(c.Ticker))
+		}
+	}
+	sort.Strings(out)
+	return out
+}

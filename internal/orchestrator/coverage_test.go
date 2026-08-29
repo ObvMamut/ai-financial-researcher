@@ -102,3 +102,18 @@ func TestZeroCoverageDegradesTheRun(t *testing.T) {
 		t.Errorf("zeroCoverage = %v on a fully grounded run, want none", got)
 	}
 }
+
+func TestQuantOnlyNames(t *testing.T) {
+	shortlist := []model.Candidate{
+		{Ticker: "NVDA"}, {Ticker: "AIR.PA"}, {Ticker: "GE"},
+		{Ticker: "2330.TW"}, {Ticker: "hdfcbank.ns"},
+	}
+	got := quantOnlyNames(shortlist)
+	if want := []string{"2330.TW", "AIR.PA", "HDFCBANK.NS"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("quantOnlyNames = %v, want %v", got, want)
+	}
+
+	if got := quantOnlyNames([]model.Candidate{{Ticker: "NVDA"}}); len(got) != 0 {
+		t.Errorf("quantOnlyNames = %v on an all-US shortlist, want none", got)
+	}
+}

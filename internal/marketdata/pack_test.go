@@ -237,3 +237,38 @@ func TestPerTickerPackStillListsGaps(t *testing.T) {
 		}
 	}
 }
+
+// SEC and AlphaVantage are US-only, so half a balanced shortlist can never be
+// covered. Listed as a plain gap it read as a fetch failure; it is a known limit.
+func TestGapBlockMarksNonUSListingsAsStructural(t *testing.T) {
+	svc := NewService(nil, newsProvider())
+	pack := svc.BuildPack(context.Background(), "news", []string{"AAPL", "GE", "AIR.PA", "2330.TW"})
+
+	md := pack.Markdown()
+	if !strings.Contains(md, "GE") {
+		t.Errorf("a US name with no data is still a plain gap:\n%s", md)
+	}
+	if !strings.Contains(md, "2330.TW, AIR.PA (non-US listings — no US filings or news coverage)") {
+		t.Errorf("non-US gaps should be annotated as structural:\n%s", md)
+	}
+	if !strings.Contains(md, "not a fetch failure") {
+		t.Errorf("the annotation should say the gap is expected:\n%s", md)
+	}
+	// The annotation must not swallow the US name into the same clause.
+	if strings.Contains(md, "GE, 2330.TW") {
+		t.Errorf("US and non-US gaps must be listed separately:\n%s", md)
+	}
+}
+
+func TestIsUSListing(t *testing.T) {
+	for _, tk := range []string{"AAPL", "NVDA", "BRK.B"} {
+		if !IsUSListing(tk) {
+			t.Errorf("IsUSListing(%q) = false, want true", tk)
+		}
+	}
+	for _, tk := range []string{"AIR.PA", "2330.TW", "000660.KS", "HDFCBANK.NS", "dte.de"} {
+		if IsUSListing(tk) {
+			t.Errorf("IsUSListing(%q) = true, want false", tk)
+		}
+	}
+}
