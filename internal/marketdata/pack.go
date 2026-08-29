@@ -94,8 +94,19 @@ func (p *DataPack) URLs() []string {
 	return out
 }
 
+// IsRegimeDomain reports whether a domain's evidence is market-wide rather than
+// per-ticker. Macro is the only one: the 10-year yield describes every name on
+// the shortlist or none of them, so it is never "missing for AAPL".
+func IsRegimeDomain(domain string) bool { return domain == "macro" }
+
 // Ungrounded lists the requested tickers the pack found no data for, sorted.
+// A regime domain has no per-ticker gap to report, so it returns nil: macro's
+// Coverage map is seeded all-false and never written true, and reporting that
+// as a gap told the macro specialist its four real FRED series covered nobody.
 func (p *DataPack) Ungrounded() []string {
+	if IsRegimeDomain(p.Domain) {
+		return nil
+	}
 	var out []string
 	for t, ok := range p.Coverage {
 		if !ok {
@@ -108,7 +119,9 @@ func (p *DataPack) Ungrounded() []string {
 
 func (p *DataPack) Markdown() string {
 	ungrounded := p.Ungrounded()
-	if len(p.ByTicker) == 0 && len(p.MacroFacts) == 0 && len(ungrounded) == 0 {
+	// A regime pack always renders: with facts it states the regime, without
+	// them it must say so at the domain level (see the regime branch below).
+	if !IsRegimeDomain(p.Domain) && len(p.ByTicker) == 0 && len(p.MacroFacts) == 0 && len(ungrounded) == 0 {
 		return ""
 	}
 
@@ -141,6 +154,17 @@ func (p *DataPack) Markdown() string {
 				f.Label, f.Value, f.AsOf.Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
 		}
 		sb.WriteString("\n")
+	}
+
+	// A regime domain's gap is domain-level, never per-ticker. Rendering it as a
+	// ticker list is what made the macro specialist score all twelve names
+	// strength 1 while its prompt carried four real FRED series.
+	if IsRegimeDomain(p.Domain) {
+		if len(p.MacroFacts) == 0 {
+			sb.WriteString("#### No verified macro data\n\n")
+			sb.WriteString("This run fetched **no** verified macro series at all — no rates, spreads, inflation or employment figures. Say so, keep your conviction low, and record the gap at the run level. Do not substitute recollection or inference for the missing figures.\n\n")
+		}
+		return sb.String()
 	}
 
 	// State the gaps explicitly. Without this the block renders a confident

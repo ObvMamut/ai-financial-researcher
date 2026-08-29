@@ -18,20 +18,19 @@ import (
 // Macro is the exception — its evidence is the regime (rates, spreads, CPI),
 // which is not per-ticker at all, so macro facts ground every name or none.
 func coveredBy(role string, pack *marketdata.DataPack, quantPack *quant.Pack, ticker string) bool {
+	if marketdata.IsRegimeDomain(role) {
+		return len(pack.MacroFacts) > 0
+	}
 	t := strings.ToUpper(ticker)
-	switch role {
-	case "quant":
+	if role == "quant" {
 		if quantPack != nil {
 			if _, ok := quantPack.ByTicker[t]; ok {
 				return true
 			}
 		}
 		return false
-	case "macro":
-		return len(pack.MacroFacts) > 0
-	default:
-		return pack.Coverage[t]
 	}
+	return pack.Coverage[t]
 }
 
 // groundedFor reports whether a role had verified evidence for at least one
@@ -46,7 +45,7 @@ func groundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack) 
 	}
 	// Macro's evidence is not keyed by ticker, and the quant pack is built
 	// outside the provider pack; check both directly.
-	if role == "macro" {
+	if marketdata.IsRegimeDomain(role) {
 		return len(pack.MacroFacts) > 0
 	}
 	if role == "quant" && quantPack != nil {
@@ -112,7 +111,7 @@ func overclaimedCoverage(report string, ungrounded []string) []string {
 func zeroCoverage(statuses []model.DomainStatus) []string {
 	var out []string
 	for _, s := range statuses {
-		if s.Domain == "macro" || s.Grounded {
+		if marketdata.IsRegimeDomain(s.Domain) || s.Grounded {
 			continue
 		}
 		out = append(out, s.Domain)
