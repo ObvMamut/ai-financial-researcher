@@ -42,20 +42,34 @@ func Load(agentsDir string) (*Registry, error) {
 	return r, nil
 }
 
+// Capabilities declares what the engine running this agent can actually do.
+// The personas were written for a search-capable CLI; the OpenAI-compatible HTTP
+// engine sends only model+messages and has no tools at all. Stating the truth in
+// the prompt is what stops an agent from "complying" with an impossible
+// instruction by inventing sources.
+type Capabilities struct {
+	// WebSearch reports whether the agent can search the web during this call.
+	// The zero value is false: an engine whose capabilities were never declared
+	// is treated as search-less, which is the safe direction — it suppresses
+	// citations rather than inviting them.
+	WebSearch bool
+}
+
 // PromptParams holds all inputs needed to assemble a prompt for one agent run.
 type PromptParams struct {
-	Role       string           // e.g. "scout", "quant", "chief-analyst"
-	Mode       model.Mode       // independent | single
-	RunTS      time.Time        // run timestamp (for context)
-	Shortlist  []model.Candidate // current shortlist (empty for scouts)
-	IndexKey   string           // scout only: which index to screen
-	Ticker     string           // single-stock mode: the ticker
-	Reports    []ReportContext  // chief-analyst only: specialist reports to inline
-	Missing    []string         // chief-analyst: domains that failed
-	DataBlock  string           // verified market data block (full quant pack for the quant role)
-	QuantBlock string           // chief-analyst: compact verified quant lines per ticker
-	Weights    model.DomainWeights // structured weights
-	IndexConstituentList string // scout only: formatted constituent list
+	Role                 string              // e.g. "scout", "quant", "chief-analyst"
+	Mode                 model.Mode          // independent | single
+	RunTS                time.Time           // run timestamp (for context)
+	Shortlist            []model.Candidate   // current shortlist (empty for scouts)
+	IndexKey             string              // scout only: which index to screen
+	Ticker               string              // single-stock mode: the ticker
+	Reports              []ReportContext     // chief-analyst only: specialist reports to inline
+	Missing              []string            // chief-analyst: domains that failed
+	DataBlock            string              // verified market data block (full quant pack for the quant role)
+	QuantBlock           string              // chief-analyst: compact verified quant lines per ticker
+	Weights              model.DomainWeights // structured weights
+	IndexConstituentList string              // scout only: formatted constituent list
+	Caps                 Capabilities        // what the engine running this agent can do
 }
 
 // ReportContext wraps a specialist's saved markdown for inclusion in the chief-analyst prompt.
@@ -77,6 +91,13 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 	// Persona block
 	sb.WriteString(persona)
 	sb.WriteString("\n\n")
+
+	// Capability block. It follows the persona because it corrects it: the
+	// personas assume a search-capable engine, and on the HTTP engine that
+	// assumption is what produced fabricated citations.
+	if p.Role != "chief-analyst" {
+		sb.WriteString(capabilityBlock(p.Caps))
+	}
 
 	// Task context
 	sb.WriteString("## Task context\n\n")
@@ -138,6 +159,42 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+// capabilityBlock states the engine's real capabilities and the citation rule
+// that follows from them. On a search-less engine the rule is absolute: no
+// `[source:]` tags at all, because there is no source the agent could have read.
+func capabilityBlock(c Capabilities) string {
+	if c.WebSearch {
+		return `## Engine capabilities (authoritative — overrides the persona above)
+
+- **Web search: AVAILABLE.** Use it for anything the verified-data block below
+  does not cover.
+- Tag every web-sourced claim ` + "`[source:domain.com YYYY-MM-DD]`" + `. No tag, no claim.
+- Numbers in a "Verified Market Data" or "Verified price context" block are
+  ground truth: cite them as ` + "`[verified]`" + ` and surface any conflict with what
+  you find.
+
+`
+	}
+	return `## Engine capabilities (authoritative — overrides the persona above)
+
+- **Web search: NOT AVAILABLE.** This engine sends your prompt and nothing else.
+  You have no search tool, no browser, and no way to fetch a URL. Anything not
+  written in this prompt is unknown to you. Where the persona above says web
+  search is your external capability, it is wrong for this run.
+- **You MUST NOT emit ` + "`[source:domain.com YYYY-MM-DD]`" + ` tags.** There is no page you
+  could have read, so any such tag would be fabricated. Fabricated citations are
+  the single worst failure mode here — worse than saying nothing.
+- Cite only what is in this prompt: quote figures from the verified-data block as
+  ` + "`[verified]`" + `, and reference a headline by the exact URL given with it.
+- Where the verified data does not cover a ticker, **say so plainly and list that
+  ticker in the ` + "`missing`" + ` array**, with a low strength score. An acknowledged gap
+  is a correct answer; a confident guess is not. Do not describe short interest,
+  options skew, analyst counts, earnings dates, or any other figure that is not
+  in this prompt.
+
+`
 }
 
 func capitalize(s string) string {

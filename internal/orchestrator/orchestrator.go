@@ -31,10 +31,10 @@ const (
 // Event is the unit emitted on the progress channel.
 type Event struct {
 	Type    EventType
-	Agent   string            // role name, relevant for EventStatus
-	Status  model.AgentStatus // relevant for EventStatus
-	Message string            // log text or error message
-	Report  *model.Report     // set on EventStatus when done/failed
+	Agent   string             // role name, relevant for EventStatus
+	Status  model.AgentStatus  // relevant for EventStatus
+	Message string             // log text or error message
+	Report  *model.Report      // set on EventStatus when done/failed
 	Ideas   *model.IdeasResult // set on EventComplete
 	Meta    *model.RunMeta     // set on EventComplete
 }
@@ -45,9 +45,9 @@ type Config struct {
 	Ticker    string   // single-stock mode only
 	Indices   []string // independent mode: index keys to screen; empty = all
 	AgentsDir string   // path to agents/*.md
-	RunsDir   string // base directory for run artifacts (default "runs")
-	DataDir   string // path for cached market data
-	Workers   int    // bounded pool size (default 4)
+	RunsDir   string   // base directory for run artifacts (default "runs")
+	DataDir   string   // path for cached market data
+	Workers   int      // bounded pool size (default 4)
 
 	Timeouts  model.StageTimeouts
 	Retry     model.RetryPolicy
@@ -246,6 +246,13 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if err != nil {
 		return err
 	}
+	// What the cheap engine can actually do. Every scout/specialist prompt states
+	// this, and reports are checked against it afterwards — the personas assume a
+	// search-capable CLI, which is false on the HTTP engine.
+	cheapCaps := agents.Capabilities{WebSearch: engineWebSearch(cheapCLI)}
+	if !cheapCaps.WebSearch {
+		log(ch, "Cheap engine has no web search: agents are told not to cite sources, and any [source:] tag they emit anyway will be stripped.")
+	}
 
 	// Load agent personas
 	reg, err := agents.Load(cfg.AgentsDir)
@@ -276,8 +283,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	cache := marketdata.NewCache(cfg.DataDir)
 	dataSvc := marketdata.NewService(
 		cache,
-		marketdata.NewEdgarProvider(cfg.Providers.ContactEmail),
-		marketdata.NewAlphaVantageProvider(cfg.Providers.AlphaVantageKey),
+		marketdata.NewEdgarProvider(cfg.Providers.ContactEmail, cache),
+		marketdata.NewAlphaVantageProvider(cfg.Providers.AlphaVantageKey, cfg.DataDir),
 		marketdata.NewFredProvider(cfg.Providers.FredKey),
 	)
 
@@ -296,12 +303,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 		for i, idx := range indices {
 			cs := uni.Constituents(idx)
+			// Say how many names are really on the table. The universe files
+			// are curated samples, not full index memberships, and logging
+			// "screening sp500" invited the belief that all 500 were screened.
+			log(ch, fmt.Sprintf("screening %d of %s", len(cs), idx))
 			prompt, err := reg.AssemblePrompt(agents.PromptParams{
 				Role:                 "scout",
 				Mode:                 cfg.Mode,
 				RunTS:                run.TS,
 				IndexKey:             idx,
 				IndexConstituentList: universe.ConstituentList(cs),
+				Caps:                 cheapCaps,
 			})
 			if err != nil {
 				log(ch, fmt.Sprintf("warn: assemble scout-%s prompt: %v", idx, err))
@@ -318,6 +330,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 			role := "scout-" + idx
 			r := <-resultChans[i]
+			// A scout gets no data pack, so on a search-less engine every
+			// [source:] tag it emits is invented — and the shortlist itself
+			// would otherwise be selected on that invented evidence.
+			if !cheapCaps.WebSearch {
+				cleaned, fabricated := scrubCitations(r.Stdout, nil)
+				r.Stdout = cleaned
+				if len(fabricated) > 0 {
+					log(ch, fmt.Sprintf("warn: %s cited %d fabricated source(s) on a search-less engine (%s) — tags stripped",
+						role, len(fabricated), strings.Join(fabricated, ", ")))
+				}
+			}
 			r.Path = fmt.Sprintf("%s/%s.md", run.Dir, role)
 			if err := run.WriteReport(role, r.Stdout); err != nil {
 				log(ch, fmt.Sprintf("warn: write %s report: %v", role, err))
@@ -382,16 +405,19 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	specChans := make([]<-chan model.Report, len(specialists))
 	grounded := make([]bool, len(specialists))
+	ungrounded := make([][]string, len(specialists))
+	citable := make([]map[string]bool, len(specialists))
+	tickers := make([]string, len(shortlist))
+	for j, c := range shortlist {
+		tickers[j] = c.Ticker
+	}
 	for i, sp := range specialists {
-		tickers := make([]string, len(shortlist))
-		for j, c := range shortlist {
-			tickers[j] = c.Ticker
-		}
 		pack := dataSvc.BuildPack(ctx, sp.role, tickers)
 		logPackErrors(ch, sp.role, pack.Errors)
 		if err := run.WriteDataPack(sp.role, pack); err != nil {
 			log(ch, fmt.Sprintf("warn: write %s data pack: %v", sp.role, err))
 		}
+		citable[i] = pack.Citable
 
 		// Assemble the verified-data block per role: the quant specialist gets
 		// the full computed pack; news/sentiment get compact price context so
@@ -407,7 +433,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				dataBlock += "\n### Verified price context (computed from daily OHLCV)\n\n" + cb
 			}
 		}
-		grounded[i] = dataBlock != ""
+
+		// Grounded means we injected *per-ticker* verified data for this domain.
+		// Judging it from dataBlock != "" was misleading: macro facts and the
+		// shared price context are appended to every role, so a sentiment pack
+		// with an empty ByTicker still counted as grounded.
+		grounded[i] = groundedFor(sp.role, pack, quantPack)
+		ungrounded[i] = ungroundedFor(sp.role, pack, quantPack, tickers)
+		if len(ungrounded[i]) > 0 {
+			log(ch, fmt.Sprintf("data[%s]: no verified data for %d/%d tickers: %s",
+				sp.role, len(ungrounded[i]), len(tickers), strings.Join(ungrounded[i], ", ")))
+		}
 
 		prompt, err := reg.AssemblePrompt(agents.PromptParams{
 			Role:      sp.role,
@@ -416,6 +452,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			Shortlist: shortlist,
 			Ticker:    cfg.Ticker,
 			DataBlock: dataBlock,
+			Caps:      cheapCaps,
 		})
 		if err != nil {
 			log(ch, fmt.Sprintf("warn: assemble %s prompt: %v", sp.role, err))
@@ -435,20 +472,44 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			continue
 		}
 		r := <-specChans[i]
+
+		// Enforce the capability rule the prompt declared: on a search-less
+		// engine, strip any [source:] tag whose domain the run's own data does
+		// not vouch for. Do it before the report is written or handed on, so
+		// neither the artifact nor the Chief Analyst ever sees a fake citation.
+		var fabricated []string
+		if !cheapCaps.WebSearch {
+			r.Stdout, fabricated = scrubCitations(r.Stdout, citable[i])
+			if len(fabricated) > 0 {
+				log(ch, fmt.Sprintf("warn: %s cited %d fabricated source(s) on a search-less engine (%s) — tags stripped",
+					sp.role, len(fabricated), strings.Join(fabricated, ", ")))
+			}
+		}
+
 		r.Path = fmt.Sprintf("%s/%s.md", run.Dir, sp.role)
 		if err := run.WriteReport(sp.role, r.Stdout); err != nil {
 			log(ch, fmt.Sprintf("warn: write %s report: %v", sp.role, err))
 		}
-		
+
+		// Check the agent's own `missing` array against the tickers we know it
+		// had nothing for. Claiming coverage it demonstrably lacked is the
+		// confabulation this pipeline exists to catch.
+		if overclaimed := overclaimedCoverage(r.Stdout, ungrounded[i]); len(overclaimed) > 0 {
+			log(ch, fmt.Sprintf("warn: %s omitted %d ungrounded ticker(s) from its `missing` array (%s) — it had no verified data for them",
+				sp.role, len(overclaimed), strings.Join(overclaimed, ", ")))
+		}
+
 		// Grounded means we actually injected verified data into the prompt —
 		// judged from the data we assembled, never from the model's own output.
 		status := model.DomainStatus{
-			Domain:   sp.role,
-			Status:   r.Status,
-			Err:      r.Err,
-			Duration: r.Duration,
-			Attempts: r.Attempts,
-			Grounded: grounded[i],
+			Domain:              sp.role,
+			Status:              r.Status,
+			Err:                 r.Err,
+			Duration:            r.Duration,
+			Attempts:            r.Attempts,
+			Grounded:            grounded[i],
+			Ungrounded:          ungrounded[i],
+			FabricatedCitations: fabricated,
 		}
 
 		if r.Status == model.StatusFailed {
@@ -463,6 +524,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			})
 		}
 		domainStatuses = append(domainStatuses, status)
+	}
+
+	// A specialist that had verified data for nothing wrote its report from
+	// recollection alone. That is a degraded run whatever the agent's exit code
+	// said, so carry it through to the outcome below.
+	zeroCov := zeroCoverage(domainStatuses)
+	for _, d := range zeroCov {
+		log(ch, fmt.Sprintf("warn: %s had no verified data for any shortlisted ticker — its report is ungrounded", d))
 	}
 
 	// Minimum check
@@ -498,6 +567,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	var ideas *model.IdeasResult
 	var warnings []warning
 	outcome := "complete"
+	if len(zeroCov) > 0 {
+		outcome = "degraded"
+	}
 
 	if r.Status == model.StatusFailed {
 		agentStatus(ch, "chief-analyst", model.StatusFailed, &r)
@@ -553,6 +625,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// Final persistence and metadata
 	if err := run.WriteIdeas(ideas); err != nil {
 		log(ch, fmt.Sprintf("warn: write ideas.json: %v", err))
+	}
+
+	for _, d := range zeroCov {
+		warnings = append(warnings, warning{
+			Message: fmt.Sprintf("%s: no verified data for any shortlisted ticker — report is ungrounded", d),
+		})
 	}
 
 	warnMsgs := []string{} // serialize as [] rather than null in metadata.json

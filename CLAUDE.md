@@ -8,8 +8,12 @@ separate concern from building the app.)
 
 A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two modes:
 
-1. **Independent research** — agents screen the SP500, NQ100, EU50, and Asia100, then
-   deep-analyze a shortlist and return **5 ranked trade ideas**.
+1. **Independent research** — agents screen four curated index samples, then deep-analyze
+   a shortlist and return **5 ranked trade ideas**. The universe files are *representative
+   samples*, not full index memberships: `sp500.csv` holds 98 names, `nq100.csv` 59,
+   `asia100.csv` 67, `eu50.csv` 50. Scouts see exactly those names and the run log says
+   how many ("screening 98 of sp500"). Widening coverage means adding rows to
+   `internal/universe/data/*.csv`.
 2. **Input a stock** — same deep-analysis agents run on one user-supplied ticker
    (screening skipped), returning a single verdict.
 

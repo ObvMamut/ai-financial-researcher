@@ -72,7 +72,7 @@ const (
 
 // Constituent is one tradeable name in the universe.
 type Constituent struct {
-	Ticker   string `json:"ticker"`   // canonical symbol (e.g. AAPL, ASML.AS, 7203.T)
+	Ticker   string `json:"ticker"` // canonical symbol (e.g. AAPL, ASML.AS, 7203.T)
 	Name     string `json:"name"`
 	Exchange string `json:"exchange"`
 	Country  string `json:"country"`
@@ -225,21 +225,30 @@ type DomainStatus struct {
 	Domain   string      `json:"domain"`
 	Status   AgentStatus `json:"status"`
 	Err      string      `json:"err,omitempty"`
-	Grounded bool        `json:"grounded"` // true if verified data was used
+	Grounded bool        `json:"grounded"` // true if per-ticker verified data was used
 	Attempts int         `json:"attempts"`
 	Duration int64       `json:"duration_ms"`
+
+	// Ungrounded lists the shortlisted tickers this domain found no verified
+	// data for. A domain whose whole shortlist is ungrounded is a degraded run,
+	// however confident the report reads.
+	Ungrounded []string `json:"ungrounded,omitempty"`
+	// FabricatedCitations lists [source:] domains the agent cited on a
+	// search-less engine. Non-empty means the report's sourcing was invented and
+	// the orchestrator has rewritten those tags to [unverified].
+	FabricatedCitations []string `json:"fabricated_citations,omitempty"`
 }
 
 // RunMeta captures all parameters and outcomes of a run for audit.
 type RunMeta struct {
-	Mode        string          `json:"mode"`
-	Ticker      string          `json:"ticker,omitempty"`
-	Indices     []string        `json:"indices,omitempty"` // indices screened (independent mode)
-	GeneratedAt string          `json:"generated_at"`
-	Shortlist   []Candidate     `json:"shortlist"`
-	Domains     []DomainStatus  `json:"domains"`
-	Weights     DomainWeights   `json:"weights"`
-	Warnings    []string        `json:"warnings"`
-	Outcome     string          `json:"outcome"` // complete | degraded | failed
-	Duration    int64           `json:"total_duration_ms"`
+	Mode        string         `json:"mode"`
+	Ticker      string         `json:"ticker,omitempty"`
+	Indices     []string       `json:"indices,omitempty"` // indices screened (independent mode)
+	GeneratedAt string         `json:"generated_at"`
+	Shortlist   []Candidate    `json:"shortlist"`
+	Domains     []DomainStatus `json:"domains"`
+	Weights     DomainWeights  `json:"weights"`
+	Warnings    []string       `json:"warnings"`
+	Outcome     string         `json:"outcome"` // complete | degraded | failed
+	Duration    int64          `json:"total_duration_ms"`
 }

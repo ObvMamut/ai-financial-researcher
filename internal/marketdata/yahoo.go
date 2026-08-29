@@ -37,7 +37,7 @@ func NewYahooClient(cache *Cache) *YahooClient {
 	return &YahooClient{
 		client:  &http.Client{Timeout: 20 * time.Second},
 		baseURL: base,
-		limiter: NewLimiter(2000, 240), // ~4 req/s sustained; a full run needs ~16 requests
+		limiter: NewLimiter(2000, 240, 5), // ~4 req/s sustained, burst 5; a full run needs ~16 requests
 		cache:   cache,
 	}
 }

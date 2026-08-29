@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,11 +230,27 @@ func TestIndependentRun(t *testing.T) {
 	}
 
 	meta := readMeta(t, dir)
-	if meta.Outcome != "complete" {
-		t.Errorf("outcome = %q, want complete", meta.Outcome)
+	// The hermetic config configures no provider keys, so news, fundamentals
+	// and sentiment have verified data for nothing. That is a degraded run: a
+	// specialist writing from recollection alone must not be signed off as
+	// complete just because its process exited 0.
+	if meta.Outcome != "degraded" {
+		t.Errorf("outcome = %q, want degraded (three domains have zero coverage)", meta.Outcome)
 	}
 	if meta.Warnings == nil {
 		t.Error("metadata warnings is null, want []")
+	}
+	for _, d := range []string{"news", "fundamentals", "sentiment"} {
+		want := d + ": no verified data for any shortlisted ticker"
+		found := false
+		for _, w := range meta.Warnings {
+			if strings.Contains(w, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("metadata warnings missing the zero-coverage reason for %s: %v", d, meta.Warnings)
+		}
 	}
 	if len(meta.Domains) != 5 {
 		t.Errorf("want 5 domain statuses, got %d", len(meta.Domains))
@@ -245,11 +262,20 @@ func TestIndependentRun(t *testing.T) {
 		if d.Attempts < 1 {
 			t.Errorf("domain %s attempts = %d, want ≥ 1", d.Domain, d.Attempts)
 		}
-		// The quant specialist always gets the computed pack when price data
-		// is available; news/sentiment get the compact price context.
-		if d.Domain == "quant" || d.Domain == "news" || d.Domain == "sentiment" {
-			if !d.Grounded {
-				t.Errorf("domain %s should be grounded via the quant pack", d.Domain)
+		// Grounded now means the domain had its own verified evidence. The
+		// quant specialist gets the computed metrics pack, so it qualifies.
+		if d.Domain == "quant" && !d.Grounded {
+			t.Errorf("domain quant should be grounded via the computed metrics pack")
+		}
+		// News/sentiment/fundamentals have no provider keys in the hermetic
+		// config, so they must report themselves ungrounded rather than
+		// borrowing the shared price context's credibility.
+		if d.Domain == "news" || d.Domain == "sentiment" || d.Domain == "fundamentals" {
+			if d.Grounded {
+				t.Errorf("domain %s reported grounded with no provider data", d.Domain)
+			}
+			if len(d.Ungrounded) == 0 {
+				t.Errorf("domain %s should list its ungrounded tickers", d.Domain)
 			}
 		}
 	}
@@ -310,8 +336,10 @@ func TestSingleStockRun(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "scout-sp500.md")); err == nil {
 		t.Error("scout report present in single-stock mode")
 	}
-	if readMeta(t, dir).Outcome != "complete" {
-		t.Error("outcome != complete")
+	// Same as the independent run: no provider keys means no verified news,
+	// fundamentals or sentiment, so the run is honest about being degraded.
+	if got := readMeta(t, dir).Outcome; got != "degraded" {
+		t.Errorf("outcome = %q, want degraded (domains with zero coverage)", got)
 	}
 }
 
