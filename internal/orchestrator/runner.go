@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/rand"
 	"os/exec"
 	"strings"
@@ -61,6 +62,17 @@ func runAgent(ctx context.Context, cli model.CLI, role, stage string, prompt str
 		if runErr == nil && strings.TrimSpace(out) != "" {
 			report.Stdout = out
 			report.Status = model.StatusDone
+			report.Duration = time.Since(start).Milliseconds()
+			return report
+		}
+
+		// A permanent failure — a malformed request, a bad key, an unknown
+		// model — will fail identically on every retry. Stop immediately rather
+		// than spending the wall clock and, on a metered endpoint, the money.
+		var perm permanentError
+		if errors.As(runErr, &perm) {
+			report.Status = model.StatusFailed
+			report.Err = runErr.Error()
 			report.Duration = time.Since(start).Milliseconds()
 			return report
 		}

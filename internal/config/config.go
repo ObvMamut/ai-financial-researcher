@@ -112,17 +112,19 @@ type fileFormat struct {
 	// API configures the remote OpenAI-compatible cheap-research engine. Prefer
 	// setting api_key via the CFR_API_KEY env var rather than committing it to a file.
 	API struct {
-		BaseURL string `toml:"base_url"`
-		Model   string `toml:"model"`
-		APIKey  string `toml:"api_key"`
+		BaseURL   string `toml:"base_url"`
+		Model     string `toml:"model"`
+		APIKey    string `toml:"api_key"`
+		MaxTokens int    `toml:"max_tokens"`
 	} `toml:"api"`
 
 	// Local configures a local OpenAI-compatible server (Ollama/llama.cpp). The
 	// key is optional — local servers don't authenticate.
 	Local struct {
-		BaseURL string `toml:"base_url"`
-		Model   string `toml:"model"`
-		APIKey  string `toml:"api_key"`
+		BaseURL   string `toml:"base_url"`
+		Model     string `toml:"model"`
+		APIKey    string `toml:"api_key"`
+		MaxTokens int    `toml:"max_tokens"`
 	} `toml:"local"`
 }
 
@@ -259,9 +261,11 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.API.BaseURL, f.API.BaseURL)
 	setStr(&s.API.Model, f.API.Model)
 	setStr(&s.API.APIKey, f.API.APIKey)
+	setInt(&s.API.MaxTokens, f.API.MaxTokens)
 	setStr(&s.Local.BaseURL, f.Local.BaseURL)
 	setStr(&s.Local.Model, f.Local.Model)
 	setStr(&s.Local.APIKey, f.Local.APIKey)
+	setInt(&s.Local.MaxTokens, f.Local.MaxTokens)
 	return nil
 }
 
@@ -292,6 +296,11 @@ func (s *Settings) applyEnv() {
 	setStr(&s.Local.BaseURL, "CFR_LOCAL_BASE_URL")
 	setStr(&s.Local.Model, "CFR_LOCAL_MODEL")
 	setStr(&s.Local.APIKey, "CFR_LOCAL_KEY")
+	if v := os.Getenv("CFR_API_MAX_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			s.API.MaxTokens = n
+		}
+	}
 	if v := os.Getenv("CFR_LOCAL_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.LocalConcurrency = n

@@ -218,6 +218,11 @@ type APIConfig struct {
 	BaseURL string // e.g. https://api.deepseek.com (up to, not incl. /chat/completions)
 	Model   string // e.g. deepseek-chat
 	APIKey  string // Bearer token; sourced from env/TOML, never logged
+	// MaxTokens bounds the completion. Sending none left the limit to the
+	// provider's default, and a report cut off at that limit arrived as ordinary
+	// text with its JSON tail missing — which the pipeline read as a domain that
+	// scored nobody rather than as a failure. 0 means the engine's default.
+	MaxTokens int
 }
 
 // DomainStatus tracks the outcome of a specialist research run.
@@ -228,6 +233,9 @@ type DomainStatus struct {
 	Grounded bool        `json:"grounded"` // true if per-ticker verified data was used
 	Attempts int         `json:"attempts"`
 	Duration int64       `json:"duration_ms"`
+	// Tokens counts the completion tokens the engine reported for this call,
+	// when it reported any (the CLI engines do not).
+	Tokens int `json:"tokens,omitempty"`
 
 	// Ungrounded lists the shortlisted tickers this domain found no verified
 	// data for. A domain whose whole shortlist is ungrounded is a degraded run,
@@ -264,4 +272,31 @@ type RunMeta struct {
 	Warnings  []string `json:"warnings"`
 	Outcome   string   `json:"outcome"` // complete | degraded | failed
 	Duration  int64    `json:"total_duration_ms"`
+
+	// Engine names the cheap-research engine the scouts and specialists ran on
+	// ("gemini" | "api"), and EngineModel the model it was pointed at.
+	// SynthesisModel is the Claude model the Chief Analyst used. Without these,
+	// a run's artifacts do not record what produced them: two runs five hours
+	// apart with wildly different macro reads were indistinguishable in
+	// metadata.json.
+	Engine         string `json:"engine,omitempty"`
+	EngineModel    string `json:"engine_model,omitempty"`
+	SynthesisModel string `json:"synthesis_model,omitempty"`
+
+	// Stages records wall-clock milliseconds per pipeline stage (screening,
+	// quant, analysis, synthesis). 79% of one run's 298s was unattributed
+	// because only per-agent durations were kept and the in-process stages had
+	// none at all.
+	Stages map[string]int64 `json:"stages,omitempty"`
+
+	// DataErrors collects every provider failure encountered while assembling
+	// the packs. These previously lived only in data/<domain>.json, so a run
+	// that lost eight tickers to rate limiting read the same as one that lost
+	// none.
+	DataErrors []string `json:"data_errors,omitempty"`
+
+	// PersonaSHA maps each agent role to a short hash of the persona file used.
+	// Personas are runtime data, editable without a code change, so this is what
+	// makes a run's outcome attributable to the prompts that produced it.
+	PersonaSHA map[string]string `json:"persona_sha,omitempty"`
 }

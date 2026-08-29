@@ -252,8 +252,34 @@ func TestIndependentRun(t *testing.T) {
 			t.Errorf("metadata warnings missing the zero-coverage reason for %s: %v", d, meta.Warnings)
 		}
 	}
-	if len(meta.Domains) != 5 {
-		t.Errorf("want 5 domain statuses, got %d", len(meta.Domains))
+	// Five specialists, four scouts and the chief analyst: every model call in
+	// the run gets a row, so no wall time is unattributed.
+	if len(meta.Domains) != 10 {
+		t.Errorf("want 10 domain statuses (5 specialists + 4 scouts + chief), got %d", len(meta.Domains))
+	}
+	for _, want := range []string{"scout-sp500", "scout-nq100", "scout-eu50", "scout-asia100", "chief-analyst"} {
+		found := false
+		for _, d := range meta.Domains {
+			if d.Domain == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no domain status row for %s", want)
+		}
+	}
+	// Every stage's wall clock is recorded; 79% of a real run's time used to be
+	// unattributed because the in-process stages had no timings at all.
+	for _, want := range []string{"screening", "quant", "analysis", "synthesis"} {
+		if _, ok := meta.Stages[want]; !ok {
+			t.Errorf("no wall-clock entry for stage %s: %v", want, meta.Stages)
+		}
+	}
+	if meta.Engine == "" {
+		t.Error("metadata does not record which engine produced the run")
+	}
+	if len(meta.PersonaSHA) == 0 {
+		t.Error("metadata does not record the persona hashes the run used")
 	}
 	for _, d := range meta.Domains {
 		if d.Status != model.StatusDone {

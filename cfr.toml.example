@@ -98,6 +98,10 @@
 #base_url = "https://api.deepseek.com"   # up to, not including, /chat/completions
 #model    = "deepseek-chat"
 #api_key  = ""                            # prefer CFR_API_KEY / DEEPSEEK_API_KEY env
+# Completion cap. A response cut off at the provider's default limit loses its
+# structured tail, which the pipeline read as "this domain scored nobody"; the
+# engine now treats finish_reason=length as a failure and retries.
+#max_tokens = 8192
 
 # Local OpenAI-compatible server (used when cheap_engine = "local"). Same engine
 # as [api], just pointed at your machine — free and offline. Easiest server is

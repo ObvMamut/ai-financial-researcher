@@ -2,6 +2,8 @@
 package agents
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 // Registry holds loaded persona text keyed by role name.
 type Registry struct {
 	personas map[string]string // role → markdown content
+	shas     map[string]string // role → sha256 of the persona file
 	dir      string
 }
 
@@ -26,6 +29,7 @@ func Load(agentsDir string) (*Registry, error) {
 	}
 	r := &Registry{
 		personas: make(map[string]string),
+		shas:     make(map[string]string),
 		dir:      agentsDir,
 	}
 	for _, e := range entries {
@@ -38,8 +42,24 @@ func Load(agentsDir string) (*Registry, error) {
 			return nil, fmt.Errorf("agents: read %q: %w", e.Name(), err)
 		}
 		r.personas[role] = string(data)
+		// A persona is runtime data that can change between runs without any
+		// code change, so a run's outcome is only attributable if the exact
+		// prompt text it used is identifiable. The hash goes into metadata.json.
+		sum := sha256.Sum256(data)
+		r.shas[role] = hex.EncodeToString(sum[:])[:12]
 	}
 	return r, nil
+}
+
+// PersonaSHA maps each loaded role to a short hash of its persona file, for
+// recording in run metadata. Two runs with the same hashes used the same
+// prompts; two with different hashes are not comparable on outcome alone.
+func (r *Registry) PersonaSHA() map[string]string {
+	out := make(map[string]string, len(r.shas))
+	for k, v := range r.shas {
+		out[k] = v
+	}
+	return out
 }
 
 // Capabilities declares what the engine running this agent can actually do.

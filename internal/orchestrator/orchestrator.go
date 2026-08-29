@@ -315,7 +315,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	var shortlist []model.Candidate
 	var domainStatuses []model.DomainStatus
 
+	// Per-stage wall clock and every provider failure, for metadata.json. Only
+	// per-agent durations were kept before, so the in-process stages — which are
+	// most of a run's wall time — were entirely unattributed, and provider
+	// errors lived only in data/<domain>.json.
+	stageMS := map[string]int64{}
+	var dataErrors []string
+	stage := func(name string, t time.Time) { stageMS[name] = time.Since(t).Milliseconds() }
+
 	// ── Stage 1: Scouts (independent research only) ────────────────────────────
+	scoutStart := time.Now()
 	var indices []string
 	if cfg.Mode == model.ModeIndependent {
 		indices = selectIndices(cfg.Indices)
@@ -369,6 +378,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			if err := run.WriteReport(role, r.Stdout); err != nil {
 				log(ch, fmt.Sprintf("warn: write %s report: %v", role, err))
 			}
+			// Scouts had no status row of their own, so the whole screening
+			// stage was missing from the run's own accounting.
+			domainStatuses = append(domainStatuses, model.DomainStatus{
+				Domain: role, Status: r.Status, Err: r.Err,
+				Duration: r.Duration, Attempts: r.Attempts,
+			})
 			if r.Status == model.StatusFailed {
 				agentStatus(ch, role, model.StatusFailed, &r)
 				log(ch, fmt.Sprintf("Scout %s failed (%s) — continuing", idx, r.Err))
@@ -411,7 +426,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			len(quantOnly), len(shortlist), strings.Join(quantOnly, ", ")))
 	}
 
+	stage("screening", scoutStart)
+
 	// ── Stage 1.5: price history + quant metrics (in-process, no model) ───────
+	quantStart := time.Now()
 	log(ch, "Stage 1.5: fetching price history and computing quant metrics…")
 	agentStatus(ch, "quant-data", model.StatusRunning, nil)
 	yc := marketdata.NewYahooClient(cache)
@@ -419,6 +437,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, shortlist)
 	_ = quantSeries // consumed by the risk gate
 	logPackErrors(ch, "quant", quantPack.Errors)
+	dataErrors = append(dataErrors, prefixed("quant", quantPack.Errors)...)
 	if len(quantPack.ByTicker) > 0 {
 		agentStatus(ch, "quant-data", model.StatusDone, nil)
 		log(ch, fmt.Sprintf("Quant metrics computed for %d/%d tickers", len(quantPack.ByTicker), len(shortlist)))
@@ -427,7 +446,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		log(ch, "warn: no price data available — specialists will run ungrounded")
 	}
 
+	stage("quant", quantStart)
+
 	// ── Stage 2: Specialists (parallel) ────────────────────────────────────────
+	analysisStart := time.Now()
 	log(ch, "Stage 2: running 5 specialist agents…")
 	specialists := []struct {
 		role string
@@ -451,8 +473,15 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	for i, sp := range specialists {
 		pack := dataSvc.BuildPack(ctx, sp.role, tickers)
 		logPackErrors(ch, sp.role, pack.Errors)
-		if err := run.WriteDataPack(sp.role, pack); err != nil {
-			log(ch, fmt.Sprintf("warn: write %s data pack: %v", sp.role, err))
+		dataErrors = append(dataErrors, prefixed(sp.role, pack.Errors)...)
+		// No provider serves the quant domain — its evidence is the computed
+		// metrics pack — so data/quant.json was written byte-identical to
+		// data/macro.json but for the label, with an empty ByTicker. That
+		// artifact misrepresented what the quant agent actually saw.
+		if sp.role != "quant" {
+			if err := run.WriteDataPack(sp.role, pack); err != nil {
+				log(ch, fmt.Sprintf("warn: write %s data pack: %v", sp.role, err))
+			}
 		}
 		citable[i] = pack.Citable
 
@@ -463,7 +492,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		switch sp.role {
 		case "quant":
 			if qmd := quantPack.Markdown(); qmd != "" {
+				// Append rather than replace: replacing made quant the only
+				// specialist that lost the macro backdrop every other role got.
 				dataBlock = qmd
+				if mm := pack.MacroMarkdown(); mm != "" {
+					dataBlock += "\n### Verified macro backdrop\n\n" + mm
+				}
 			}
 		case "news", "sentiment":
 			if cb := quantPack.CompactBlock(); cb != "" {
@@ -598,7 +632,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		return fmt.Errorf("fewer than 2 specialist reports succeeded — cannot synthesise")
 	}
 
+	stage("analysis", analysisStart)
+
 	// ── Stage 3: Chief Analyst (Claude) ───────────────────────────────────────
+	synthStart := time.Now()
 	log(ch, "Stage 3: Chief Analyst synthesising results…")
 
 	prompt, err := reg.AssemblePrompt(agents.PromptParams{
@@ -622,6 +659,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if err := run.WriteReport("chief-analyst", r.Stdout); err != nil {
 		log(ch, fmt.Sprintf("warn: write chief-analyst report: %v", err))
 	}
+	// The synthesis call is the single most expensive step in the run and had
+	// no row of its own; only the five specialists were accounted for.
+	domainStatuses = append(domainStatuses, model.DomainStatus{
+		Domain: "chief-analyst", Status: r.Status, Err: r.Err,
+		Duration: r.Duration, Attempts: r.Attempts,
+	})
 
 	var ideas *model.IdeasResult
 	var warnings []warning
@@ -641,7 +684,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		var parseErr error
 		ideas, parseErr = parseIdeas(r.Stdout)
 		if parseErr == nil {
-			warnings = validateIdeas(ideas, cfg, uni, quantPack)
+			warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist)
 
 			// Corrective re-prompt for violations worth a second model call:
 			// concentration and inverted stop/target levels.
@@ -662,7 +705,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				if r.Status != model.StatusFailed {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas
-						warnings = validateIdeas(ideas, cfg, uni, quantPack)
+						warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist)
 					}
 				}
 			}
@@ -702,6 +745,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		warnMsgs = append(warnMsgs, msg)
 	}
 
+	stage("synthesis", synthStart)
+
 	meta := model.RunMeta{
 		Mode:        string(cfg.Mode),
 		Ticker:      cfg.Ticker,
@@ -714,6 +759,13 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Warnings:    warnMsgs,
 		Outcome:     outcome,
 		Duration:    time.Since(start).Milliseconds(),
+
+		Engine:         string(cfg.CheapEngine),
+		EngineModel:    cheapModelName(cfg),
+		SynthesisModel: cfg.Models[model.CLIClaude],
+		Stages:         stageMS,
+		DataErrors:     dataErrors,
+		PersonaSHA:     reg.PersonaSHA(),
 	}
 	if err := run.WriteMeta(meta); err != nil {
 		log(ch, fmt.Sprintf("warn: write metadata.json: %v", err))
@@ -803,4 +855,31 @@ func parseScoutResult(stdout, index string) []model.Candidate {
 		out = append(out, c)
 	}
 	return out
+}
+
+// prefixed labels a domain's provider errors so they stay attributable once
+// merged into the run-level list.
+func prefixed(domain string, errs []string) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(errs))
+	for _, e := range errs {
+		out = append(out, domain+": "+e)
+	}
+	return out
+}
+
+// cheapModelName is the model the cheap-research roles actually ran on, which
+// differs by engine: the CLI engines take it from Models, the HTTP engines from
+// whichever APIConfig the selector resolved to.
+func cheapModelName(cfg Config) string {
+	switch cfg.CheapEngine {
+	case model.CLIApi:
+		return cfg.API.Model
+	case model.CLILocal:
+		return cfg.Local.Model
+	default:
+		return cfg.Models[model.CLIGemini]
+	}
 }

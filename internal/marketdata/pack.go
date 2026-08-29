@@ -123,6 +123,23 @@ func (p *DataPack) Ungrounded() []string {
 	return out
 }
 
+// MacroMarkdown renders just the regime indicators. The quant role's data block
+// is the computed metrics pack, which used to *replace* the provider pack's
+// markdown wholesale — so quant was the only specialist that lost the macro
+// backdrop every other role received.
+func (p *DataPack) MacroMarkdown() string {
+	if len(p.MacroFacts) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("#### Macro Indicators\n")
+	for _, f := range p.MacroFacts {
+		sb.WriteString(fmt.Sprintf("- **%s**: %s (as of %s, source: %s)%s\n",
+			f.Label, f.Value, f.AsOf.Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
+	}
+	return sb.String()
+}
+
 func (p *DataPack) Markdown() string {
 	ungrounded := p.Ungrounded()
 	// A regime pack always renders: with facts it states the regime, without

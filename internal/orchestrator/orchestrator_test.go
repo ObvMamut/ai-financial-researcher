@@ -1,10 +1,13 @@
 package orchestrator
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
 func TestConfigApplyDefaults(t *testing.T) {
@@ -82,5 +85,57 @@ func TestConfigApplyDefaults(t *testing.T) {
 			tt.input.applyDefaults()
 			tt.validate(t, tt.input)
 		})
+	}
+}
+
+// ideas.json labelled NVDA and MU nq100 while shortlist.json had them as sp500:
+// validateIdeas only ever *backfilled* an empty index, never corrected a wrong
+// one, so per-index attribution in the scoreboard was quietly wrong.
+func TestValidateIdeasCorrectsIndexAttribution(t *testing.T) {
+	uni, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortlist := []model.Candidate{{Ticker: "NVDA", Name: "NVIDIA", Index: "sp500"}}
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{
+		{Ticker: "NVDA", Direction: "BUY", Index: "nq100"},
+		{Ticker: "MU", Direction: "BUY"}, // not shortlisted: falls back to the universe
+	}}
+
+	ws := validateIdeas(res, Config{Mode: model.ModeIndependent}, uni, nil, shortlist)
+
+	if got := res.Ideas[0].Index; got != "sp500" {
+		t.Errorf("NVDA index = %q, want sp500 — the shortlist is authoritative", got)
+	}
+	if res.Ideas[0].Name != "NVIDIA" {
+		t.Errorf("NVDA name = %q, want it backfilled from the shortlist", res.Ideas[0].Name)
+	}
+	found := false
+	for _, w := range ws {
+		if w.Ticker == "NVDA" && strings.Contains(w.Message, "index") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("correcting an index silently hides a model error: %+v", ws)
+	}
+}
+
+// The persona permits a limit entry within 5% of the last close; the validator
+// said nothing until 10%, so the whole permitted band was unpoliced.
+func TestValidateLevelsFlagsEntryBeyondThePersonaBand(t *testing.T) {
+	qp := &quant.Pack{ByTicker: map[string]quant.Metrics{
+		"AAPL": {LastClose: 100, AsOf: "2026-08-28"},
+	}}
+	idea := &model.TradeIdea{Ticker: "AAPL", Direction: model.DirectionBuy, Entry: 107, Stop: 100, Target: 121}
+
+	var got string
+	for _, w := range validateLevels(idea, qp) {
+		if strings.Contains(w.Message, "away from verified last close") {
+			got = w.Message
+		}
+	}
+	if got == "" {
+		t.Errorf("a 7%% entry deviation must be flagged: %+v", validateLevels(idea, qp))
 	}
 }

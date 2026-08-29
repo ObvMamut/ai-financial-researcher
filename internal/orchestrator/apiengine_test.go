@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,5 +144,63 @@ func TestRunAgentAPIEngineFailsClosed(t *testing.T) {
 
 	if r.Status != model.StatusFailed {
 		t.Fatalf("status = %q, want failed", r.Status)
+	}
+}
+
+// The engine sent no max_tokens and never looked at finish_reason, so a
+// response cut off mid-report arrived as ordinary text. Its JSON tail was gone,
+// which the pipeline then read as "this domain scored nobody".
+func TestAPIEngineRejectsTruncatedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"half a rep"}}]}`)
+	}))
+	defer srv.Close()
+
+	_, err := callAPIEngine(context.Background(),
+		model.APIConfig{BaseURL: srv.URL, Model: "m", APIKey: "k"}, "prompt")
+	if err == nil {
+		t.Fatal("a length-truncated response must be an error, not a short report")
+	}
+	if !strings.Contains(err.Error(), "truncated") {
+		t.Errorf("err = %v, want it to name truncation", err)
+	}
+}
+
+func TestAPIEngineSendsMaxTokens(t *testing.T) {
+	var got chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":11,"completion_tokens":22}}`)
+	}))
+	defer srv.Close()
+
+	out, err := callAPIEngine(context.Background(),
+		model.APIConfig{BaseURL: srv.URL, Model: "m", APIKey: "k", MaxTokens: 4096}, "prompt")
+	if err != nil {
+		t.Fatalf("callAPIEngine: %v", err)
+	}
+	if out != "ok" {
+		t.Errorf("content = %q, want ok", out)
+	}
+	if got.MaxTokens != 4096 {
+		t.Errorf("max_tokens = %d, want 4096", got.MaxTokens)
+	}
+}
+
+// A missing finish_reason must not be treated as truncation: not every
+// OpenAI-compatible server sends one.
+func TestAPIEngineAcceptsMissingFinishReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"fine"}}]}`)
+	}))
+	defer srv.Close()
+
+	out, err := callAPIEngine(context.Background(),
+		model.APIConfig{BaseURL: srv.URL, Model: "m"}, "prompt")
+	if err != nil {
+		t.Fatalf("callAPIEngine: %v", err)
+	}
+	if out != "fine" {
+		t.Errorf("content = %q, want fine", out)
 	}
 }

@@ -16,8 +16,20 @@ type warning struct {
 	Message string
 }
 
-func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, qp *quant.Pack) []warning {
+// validateIdeas normalises and checks the Chief Analyst's ideas against the
+// shortlist the run actually analysed and the verified price data it computed.
+//
+// shortlist is the authority on a name's index and full name. Enrichment used
+// to come from the universe files and only ever filled an *empty* field, so an
+// idea the Chief labelled nq100 for a name the run screened out of sp500 kept
+// the wrong label all the way into the scoreboard's per-index attribution.
+func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, qp *quant.Pack, shortlist []model.Candidate) []warning {
 	var warnings []warning
+
+	byTicker := make(map[string]model.Candidate, len(shortlist))
+	for _, c := range shortlist {
+		byTicker[strings.ToUpper(strings.TrimSpace(c.Ticker))] = c
+	}
 
 	// Fix GeneratedAt if missing
 	if res.GeneratedAt == "" {
@@ -55,7 +67,21 @@ func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, q
 			continue
 		}
 
-		// 3. Schema defaults / Enrichment from universe
+		// 3. Schema defaults / enrichment. The shortlist wins over the universe
+		// files: it records which index this run screened the name out of, and
+		// a cross-listed name sits in more than one.
+		if c, ok := byTicker[strings.ToUpper(strings.TrimSpace(idea.Ticker))]; ok {
+			if idea.Name == "" {
+				idea.Name = c.Name
+			}
+			if c.Index != "" && idea.Index != c.Index {
+				if idea.Index != "" {
+					warnings = append(warnings, warning{Ticker: idea.Ticker,
+						Message: fmt.Sprintf("index %q corrected to %q (the index this run screened it from)", idea.Index, c.Index)})
+				}
+				idea.Index = c.Index
+			}
+		}
 		if c, ok := uni.Lookup(idea.Ticker); ok {
 			if idea.Name == "" {
 				idea.Name = c.Name
@@ -139,7 +165,10 @@ func validateLevels(idea *model.TradeIdea, qp *quant.Pack) []warning {
 	if !ok || m.LastClose <= 0 {
 		return ws
 	}
-	if dev := math.Abs(idea.Entry/m.LastClose - 1); dev > 0.10 {
+	// chief-analyst.md permits a limit entry within ~5% of the last close, so
+	// anything beyond that is the model exceeding its own brief. The threshold
+	// used to be 10%, leaving the whole permitted band unpoliced.
+	if dev := math.Abs(idea.Entry/m.LastClose - 1); dev > 0.05 {
 		warn("entry %.2f is %.0f%% away from verified last close %.2f (%s)", idea.Entry, dev*100, m.LastClose, m.AsOf)
 	}
 	if m.SigmaDaily > 0 {
