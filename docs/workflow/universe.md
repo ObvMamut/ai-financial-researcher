@@ -47,3 +47,30 @@ keep the exchange/country so agents can disambiguate:
 Constituent lists drift over time. They are static CSVs checked into the repo; refreshing
 them is a manual/periodic task (out of scope for the core app). Document the source used
 when updating a CSV in a comment header line (`# source: ... as of YYYY-MM-DD`).
+
+## Foreign listings and US lines
+
+Half of an all-indices shortlist is non-US by construction, and every per-ticker
+provider here is US-only: SEC EDGAR has no filings for a Taipei listing, and
+AlphaVantage rejects a dotted symbol outright ("Invalid ticker format:
+000660.KS") — a rejection that still costs one of the 25 daily requests.
+
+`internal/marketdata/data/adr_map.csv` maps a foreign primary listing to the US
+symbol that trades the same company, and the providers ask under that symbol.
+2330.TW is fetched as TSM, 9988.HK as BABA, LIN.DE as LIN (a genuine 10-K filer).
+Facts stay keyed to the ticker the run asked about and carry a "US line: TSM"
+note, so an agent never mistakes ADR coverage for local-market coverage.
+
+Only **major-exchange (NYSE/NASDAQ)** lines are mapped. The OTC pink-sheet ADRs
+covering most of the remainder — ENLAY, TCEHY, BASFY, SFTBY — are deliberately
+excluded: their news coverage is thin and intermittent, and a mapping that
+returns two stale headlines is worse than an honest gap, because the pipeline
+would then count the name as grounded. Names with no US line at all (Samsung, SK
+Hynix, TCS, the .BK and .SI rows) stay quant-only and the run says so.
+
+`marketdata.Reachable(ticker)` is the single question the coverage bookkeeping
+asks — "can any per-ticker provider get anything for this name" — and
+`marketdata.IsForeignSuffix` is the one suffix table, shared with this package's
+cross-listing dedupe. Macro is the exception: FRED's series describe the US
+economy, and there is no ADR equivalent for a backdrop, so macro grounds US
+listings only.

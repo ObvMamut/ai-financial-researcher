@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
@@ -76,22 +77,20 @@ func BenchmarkSymbol(indexKey string) string {
 	return "^GSPC"
 }
 
-// exchangeSuffixes are the Yahoo-style exchange suffixes present in the universe
-// data. Only these are treated as suffixes: class-share dots (BRK.B) are not.
-var exchangeSuffixes = map[string]bool{
-	"AS": true, "PA": true, "DE": true, "MI": true, "MC": true, "HE": true,
-	"L": true, "T": true, "HK": true, "TW": true, "KS": true, "NS": true,
-	"AX": true, "SI": true, "BK": true, "SW": true, "ST": true, "OL": true,
-}
-
 // splitSuffix returns the ticker stem and whether a known exchange suffix was
 // stripped (ASML.AS → "ASML", true; BRK.B → "BRK.B", false).
+//
+// The suffix set lives in marketdata, which owns the question of whether a
+// symbol is a foreign listing. This package used to keep its own 18-entry copy
+// beside marketdata's 56-entry one; the two agreed on today's data by luck, and
+// the first universe row added with a .TO or .SS suffix would have been rejected
+// by the providers while still failing to dedupe against its US cross-listing.
 func splitSuffix(ticker string) (string, bool) {
 	i := strings.LastIndex(ticker, ".")
 	if i <= 0 {
 		return ticker, false
 	}
-	if exchangeSuffixes[strings.ToUpper(ticker[i+1:])] {
+	if marketdata.IsForeignSuffix(ticker[i+1:]) {
 		return ticker[:i], true
 	}
 	return ticker, false

@@ -182,7 +182,7 @@ func (p *DataPack) Markdown() string {
 		// domains failing when half the shortlist was simply out of scope.
 		var us, foreign []string
 		for _, t := range ungrounded {
-			if IsUSListing(t) {
+			if Reachable(t) {
 				us = append(us, t)
 			} else {
 				foreign = append(foreign, t)
@@ -195,7 +195,7 @@ func (p *DataPack) Markdown() string {
 		}
 		if len(foreign) > 0 {
 			sb.WriteString(strings.Join(foreign, ", "))
-			sb.WriteString(" (non-US listings — no US filings or news coverage). This is a known limit of this run's data sources, not a fetch failure: they are graded on quant alone.\n\n")
+			sb.WriteString(" (non-US listings with no US line — no US filings or news coverage, and no ADR to read instead). This is a known limit of this run's data sources, not a fetch failure: they are graded on quant alone.\n\n")
 		}
 		sb.WriteString("These tickers have **no** verified ")
 		sb.WriteString(p.Domain)

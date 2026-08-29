@@ -70,13 +70,21 @@ func ungroundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack
 // groundableBy reports whether a domain could, in principle, have covered a
 // ticker. Yahoo's chart API — which feeds the quant pack — is global, so every
 // shortlisted name is groundable for quant. SEC EDGAR and AlphaVantage, which
-// feed news, fundamentals and sentiment, are US-only, and so is FRED, which
-// feeds macro.
+// feed news, fundamentals and sentiment, are US-only — but they reach a foreign
+// listing through its US line where one exists (2330.TW via TSM), so those
+// domains are measured against Reachable, not against the listing's own country.
+//
+// FRED is different: its series describe the US economy itself, not a company,
+// and there is no ADR equivalent for a macro backdrop. Macro stays US-listing
+// only.
 func groundableBy(domain, ticker string) bool {
 	if domain == "quant" {
 		return true
 	}
-	return marketdata.IsUSListing(ticker)
+	if marketdata.IsRegimeDomain(domain) {
+		return marketdata.IsUSListing(ticker)
+	}
+	return marketdata.Reachable(ticker)
 }
 
 // domainGap records the groundable tickers one per-ticker domain finished the
@@ -122,12 +130,14 @@ func coverageGaps(statuses []model.DomainStatus) []domainGap {
 
 // quantOnlyNames lists the shortlisted tickers no per-ticker provider can reach,
 // sorted. SEC EDGAR and AlphaVantage are US-only, so news, fundamentals and
-// sentiment are structurally unable to cover a foreign listing — that is a known
-// limit of this run's sources, not a fetch failure, and the run should say so.
+// sentiment are structurally unable to cover a foreign listing with no US line —
+// that is a known limit of this run's sources, not a fetch failure, and the run
+// should say so. A name that resolves to a US line (2330.TW → TSM) is reachable
+// and does not belong on this list.
 func quantOnlyNames(shortlist []model.Candidate) []string {
 	var out []string
 	for _, c := range shortlist {
-		if !marketdata.IsUSListing(c.Ticker) {
+		if !marketdata.Reachable(c.Ticker) {
 			out = append(out, strings.ToUpper(c.Ticker))
 		}
 	}

@@ -122,8 +122,12 @@ func TestEdgarFallsBackToEmbeddedStub(t *testing.T) {
 // Reporting "not in CIK map" once per European and Asian name was 8 of the 11
 // fundamentals errors in the baseline run, and told the reader nothing.
 func TestEdgarSkipsForeignListingsQuietly(t *testing.T) {
+	// Names with no US line. SAP.DE, 2330.TW, 7203.T and ASML.AS are absent
+	// deliberately: they resolve to a US symbol and are looked up under it
+	// (LIN.DE is the one that yields real us-gaap facts; the IFRS filers
+	// resolve but report nothing, which is honest).
 	p := NewEdgarProvider("cfr@example.com", nil)
-	for _, ticker := range []string{"MC.PA", "SAP.DE", "2330.TW", "005930.KS", "7203.T", "ASML.AS", "0700.HK"} {
+	for _, ticker := range []string{"MC.PA", "005930.KS", "0700.HK", "2317.TW", "PTT.BK"} {
 		_, err := p.Fetch(context.Background(), "fundamentals", ticker)
 		if err == nil {
 			t.Errorf("%s: expected a skip, got data", ticker)

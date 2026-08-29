@@ -145,8 +145,10 @@ func TestNewsSentimentSkipsForeignListingsWithoutSpendingBudget(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("CFR_AV_BASE", srv.URL)
 
+	// Names with no major-exchange US line. 2330.TW and HDFCBANK.NS are absent
+	// deliberately: they now resolve to TSM and HDB and are fetched.
 	p := NewAlphaVantageProvider("testkey", t.TempDir())
-	for _, ticker := range []string{"2330.TW", "DTE.DE", "AIR.PA", "000660.KS", "HDFCBANK.NS"} {
+	for _, ticker := range []string{"DTE.DE", "AIR.PA", "000660.KS", "005930.KS", "2317.TW"} {
 		if _, err := p.Fetch(context.Background(), "news", ticker); err == nil {
 			t.Errorf("%s: expected a skip", ticker)
 		}

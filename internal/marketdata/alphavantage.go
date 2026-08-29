@@ -182,11 +182,14 @@ type article struct {
 }
 
 func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker string) (TickerData, error) {
-	if isForeignListing(ticker) {
-		// AlphaVantage rejects a dotted foreign symbol ("Invalid ticker format:
-		// 2330.TW"). Spending one of 25 daily requests to be told so wastes half
-		// the budget on a shortlist with European and Asian names in it.
-		return TickerData{}, fmt.Errorf("%w: %s is not a US listing", ErrNotApplicable, ticker)
+	// AlphaVantage rejects a dotted foreign symbol ("Invalid ticker format:
+	// 2330.TW"). Spending one of 25 daily requests to be told so wastes half the
+	// budget on a shortlist with European and Asian names in it. But most of
+	// those names trade a US line, and TSM's news is TSMC's news — so ask under
+	// the US symbol when there is one, and skip only when there is not.
+	symbol, ok := providerSymbol(ticker)
+	if !ok {
+		return TickerData{}, fmt.Errorf("%w: %s is not a US listing and has no US line", ErrNotApplicable, ticker)
 	}
 	if err := p.limiter.Wait(ctx); err != nil {
 		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %v", ErrUnavailable, err)
@@ -194,7 +197,7 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 
 	v := url.Values{}
 	v.Set("function", "NEWS_SENTIMENT")
-	v.Set("tickers", avSymbol(ticker))
+	v.Set("tickers", avSymbol(symbol))
 	v.Set("limit", strconv.Itoa(newsFeedLimit))
 	v.Set("apikey", p.apiKey)
 
@@ -217,7 +220,7 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %s", ErrUnavailable, msg)
 	}
 
-	arts := articlesFor(&data, ticker)
+	arts := articlesFor(&data, symbol)
 	if len(arts) == 0 {
 		return TickerData{Ticker: ticker}, nil
 	}
@@ -232,6 +235,18 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 	})
 
 	td := TickerData{Ticker: ticker}
+
+	// When the facts describe a different listing from the one asked about, say
+	// so in the pack. An agent reading "Headline 1 … TSMC" under 2330.TW must
+	// know it is reading US-line coverage, not Taipei coverage.
+	if symbol != ticker {
+		td.Facts = append(td.Facts, Fact{
+			Label:  "US line",
+			Value:  fmt.Sprintf("%s — news below is coverage of %s, the US listing of this company (%s)", symbol, symbol, USLineNote(ticker)),
+			AsOf:   arts[0].published,
+			Source: "AlphaVantage",
+		})
+	}
 
 	// Aggregate first: a relevance-weighted mean of the per-ticker sentiment
 	// scores, not the article-level "overall" score, which mixes in every other

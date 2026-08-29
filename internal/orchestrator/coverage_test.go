@@ -116,7 +116,7 @@ func TestCoverageGapsDegradeTheRun(t *testing.T) {
 		{Domain: "quant", Grounded: true},
 		{Domain: "news", Grounded: true, Ungrounded: []string{"GE", "AIR.PA"}},
 		{Domain: "fundamentals", Grounded: false, Ungrounded: []string{"NVDA", "GE", "AIR.PA"}},
-		{Domain: "sentiment", Grounded: true, Ungrounded: []string{"AIR.PA", "2330.TW"}},
+		{Domain: "sentiment", Grounded: true, Ungrounded: []string{"AIR.PA", "000660.KS"}},
 		{Domain: "macro", Grounded: false, Ungrounded: []string{"NVDA", "GE"}},
 	}
 	got := coverageGaps(statuses)
@@ -128,7 +128,7 @@ func TestCoverageGapsDegradeTheRun(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("coverageGaps = %v, want %v", got, want)
 	}
-	// sentiment missed only non-US names — it got everything it could get.
+	// sentiment missed only names with no US line — it got everything it could get.
 	for _, g := range got {
 		if g.Domain == "sentiment" {
 			t.Errorf("%s should not be a gap: %v", g.Domain, g.Missing)
@@ -141,7 +141,7 @@ func TestCoverageGapsDegradeTheRun(t *testing.T) {
 // 6 groundable — because two US names were lost to AlphaVantage rate limiting.
 func TestCoverageGapsMeasureTheAchievableSubset(t *testing.T) {
 	allAchievable := []model.DomainStatus{
-		{Domain: "news", Ungrounded: []string{"AIR.PA", "2330.TW", "000660.KS"}},
+		{Domain: "news", Ungrounded: []string{"AIR.PA", "005930.KS", "000660.KS"}},
 		{Domain: "macro"},
 	}
 	if got := coverageGaps(allAchievable); len(got) != 0 {
@@ -159,10 +159,12 @@ func TestCoverageGapsMeasureTheAchievableSubset(t *testing.T) {
 func TestQuantOnlyNames(t *testing.T) {
 	shortlist := []model.Candidate{
 		{Ticker: "NVDA"}, {Ticker: "AIR.PA"}, {Ticker: "GE"},
-		{Ticker: "2330.TW"}, {Ticker: "hdfcbank.ns"},
+		{Ticker: "2330.TW"}, {Ticker: "hdfcbank.ns"}, {Ticker: "000660.KS"},
 	}
+	// 2330.TW and HDFCBANK.NS trade as TSM and HDB, so the US-only providers
+	// reach them; AIR.PA and 000660.KS have no US line and are quant-only.
 	got := quantOnlyNames(shortlist)
-	if want := []string{"2330.TW", "AIR.PA", "HDFCBANK.NS"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"000660.KS", "AIR.PA"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("quantOnlyNames = %v, want %v", got, want)
 	}
 

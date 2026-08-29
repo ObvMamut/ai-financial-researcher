@@ -208,14 +208,19 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 	if domain != "fundamentals" {
 		return TickerData{}, ErrNotApplicable
 	}
-	if isForeignListing(ticker) {
-		return TickerData{}, fmt.Errorf("%w: %s is not a US listing", ErrNotApplicable, ticker)
+	// Some foreign listings file with SEC under a US line — Linde plc trades as
+	// LIN and files a full 10-K. Ask under that symbol rather than skipping the
+	// name outright. IFRS filers (ASML, TSM) resolve too but carry no us-gaap
+	// facts, so they return empty and stay honestly uncovered.
+	symbol, ok := providerSymbol(ticker)
+	if !ok {
+		return TickerData{}, fmt.Errorf("%w: %s is not a US listing and has no US line", ErrNotApplicable, ticker)
 	}
 
 	p.ensureCIKMap(ctx)
-	cik, ok := p.lookupCIK(ticker)
+	cik, ok := p.lookupCIK(symbol)
 	if !ok {
-		return TickerData{}, fmt.Errorf("%w: ticker %s not in SEC CIK map", ErrUnavailable, ticker)
+		return TickerData{}, fmt.Errorf("%w: ticker %s not in SEC CIK map", ErrUnavailable, symbol)
 	}
 
 	url := fmt.Sprintf("%s/api/xbrl/companyfacts/CIK%s.json", p.factsBase, cik)
