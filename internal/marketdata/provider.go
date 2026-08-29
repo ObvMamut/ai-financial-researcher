@@ -33,9 +33,16 @@ type Fact struct {
 }
 
 // TickerData is the set of facts collected for one ticker in one domain.
+//
+// Warnings records data the provider deliberately withheld, and why — a figure
+// too stale to sit beside the others, a field it could not reconcile. BuildPack
+// carries them into the pack's error list so they reach metadata.json instead of
+// disappearing. A withheld fact is not a fetch failure, but the reader still has
+// to know the provider had something and chose not to print it.
 type TickerData struct {
-	Ticker string `json:"ticker"`
-	Facts  []Fact `json:"facts"`
+	Ticker   string   `json:"ticker"`
+	Facts    []Fact   `json:"facts"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Provider defines the interface for data sources.

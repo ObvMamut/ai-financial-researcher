@@ -169,10 +169,7 @@ func TestEdgarPicksLatestObservationAndModernRevenueTag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	byLabel := map[string]Fact{}
-	for _, f := range td.Facts {
-		byLabel[f.Label] = f
-	}
+	byLabel := factsByLabel(td)
 
 	assets, ok := byLabel["Total Assets"]
 	if !ok {
@@ -217,4 +214,139 @@ func TestEdgarPicksLatestObservationAndModernRevenueTag(t *testing.T) {
 
 func isNotApplicable(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "not covered by this provider")
+}
+
+// nvdaLikeServer reproduces the shape that drove the rank-1 idea on
+// 2026-08-29: the modern revenue tag stops in FY2022 while net income carries a
+// current annual frame, so "annual always beats quarterly" pinned revenue four
+// years stale beside a fresh net income. The specialist noticed the staleness,
+// divided anyway, and reported a "37% net margin" whose actual quotient is 438%.
+func nvdaLikeServer(t *testing.T, facts string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == secTickersPath:
+			json.NewEncoder(w).Encode(map[string]secTickerEntry{
+				"0": {CIK: "1045810", Ticker: "NVDA", Title: "NVIDIA"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/api/xbrl/companyfacts/"):
+			fmt.Fprint(w, facts)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// factsByLabel keys on the base label; the frame suffix EDGAR appends
+// ("Revenue (quarterly)") stays on the Fact for assertions about it.
+func factsByLabel(td TickerData) map[string]Fact {
+	m := map[string]Fact{}
+	for _, f := range td.Facts {
+		m[strings.TrimSuffix(f.Label, " (quarterly)")] = f
+	}
+	return m
+}
+
+// A stale annual frame must lose to a current quarterly one. Four years of
+// staleness is not worth the tidiness of a matching period.
+func TestEdgarPrefersFreshQuarterlyOverStaleAnnual(t *testing.T) {
+	srv := nvdaLikeServer(t, `{"facts":{"us-gaap":{
+		"NetIncomeLoss":{"units":{"USD":[{"val":118000,"fp":"FY","end":"2026-01-25"}]}},
+		"RevenueFromContractWithCustomerExcludingAssessedTax":{"units":{"USD":[
+			{"val":26900,"fp":"FY","end":"2022-01-30"},
+			{"val":130500,"fp":"Q3","end":"2025-10-26"}]}}
+	}}}`)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	td, err := NewEdgarProvider("cfr@example.com", nil).
+		Fetch(context.Background(), "fundamentals", "NVDA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := factsByLabel(td)
+
+	rev, ok := by["Revenue"]
+	if !ok {
+		t.Fatal("no Revenue fact")
+	}
+	if got := rev.AsOf.Format("2006-01-02"); got != "2025-10-26" {
+		t.Errorf("Revenue as-of = %s, want the current quarterly frame 2025-10-26 "+
+			"— a FY2022 figure beside a FY2026 net income is the mixed-date bug", got)
+	}
+	if !strings.Contains(rev.Label, "quarterly") {
+		t.Errorf("Revenue label = %q, want it to say the frame is quarterly", rev.Label)
+	}
+}
+
+// A recent annual frame still wins: the point is freshness, not frame type.
+func TestEdgarKeepsAnnualWhenItIsRecent(t *testing.T) {
+	srv := nvdaLikeServer(t, `{"facts":{"us-gaap":{
+		"Assets":{"units":{"USD":[
+			{"val":100,"fp":"FY","end":"2026-01-25"},
+			{"val":110,"fp":"Q1","end":"2026-04-26"}]}}
+	}}}`)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	td, err := NewEdgarProvider("cfr@example.com", nil).
+		Fetch(context.Background(), "fundamentals", "NVDA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := factsByLabel(td)["Total Assets"]
+	if assets.Value != "100.00" {
+		t.Errorf("Total Assets = %s, want the annual frame (100.00) — it is only a quarter old", assets.Value)
+	}
+	if strings.Contains(assets.Label, "quarterly") {
+		t.Errorf("Total Assets label = %q, an annual frame must not be labelled quarterly", assets.Label)
+	}
+}
+
+// Figures more than a year apart cannot be divided into a margin or a ratio.
+// Shipping them side by side without saying so is what invited the invention.
+func TestEdgarDropsFactsInconsistentWithTheFreshest(t *testing.T) {
+	srv := nvdaLikeServer(t, `{"facts":{"us-gaap":{
+		"NetIncomeLoss":{"units":{"USD":[{"val":118000,"fp":"FY","end":"2026-01-25"}]}},
+		"Assets":{"units":{"USD":[{"val":111600,"fp":"FY","end":"2026-01-25"}]}},
+		"RevenueFromContractWithCustomerExcludingAssessedTax":{"units":{"USD":[
+			{"val":26900,"fp":"FY","end":"2022-01-30"}]}}
+	}}}`)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	td, err := NewEdgarProvider("cfr@example.com", nil).
+		Fetch(context.Background(), "fundamentals", "NVDA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := factsByLabel(td)["Revenue"]; ok {
+		t.Error("a FY2022 revenue must not ship beside FY2026 net income — it reads as a 438% margin")
+	}
+	if len(td.Facts) != 2 {
+		t.Errorf("kept %d facts, want the two consistent ones", len(td.Facts))
+	}
+	if len(td.Warnings) == 0 {
+		t.Fatal("dropping a stale figure must be recorded, not silent")
+	}
+	if !strings.Contains(strings.Join(td.Warnings, " "), "Revenue") {
+		t.Errorf("warnings = %v, want the dropped label named", td.Warnings)
+	}
+}
+
+// The pack carries the provider's warnings into the run's error list, so a
+// dropped figure shows up in metadata.json rather than only in a log line.
+func TestBuildPackSurfacesTickerWarnings(t *testing.T) {
+	srv := nvdaLikeServer(t, `{"facts":{"us-gaap":{
+		"NetIncomeLoss":{"units":{"USD":[{"val":118000,"fp":"FY","end":"2026-01-25"}]}},
+		"Assets":{"units":{"USD":[{"val":111600,"fp":"FY","end":"2026-01-25"}]}},
+		"RevenueFromContractWithCustomerExcludingAssessedTax":{"units":{"USD":[
+			{"val":26900,"fp":"FY","end":"2022-01-30"}]}}
+	}}}`)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	pack := NewService(nil, NewEdgarProvider("cfr@example.com", nil)).
+		BuildPack(context.Background(), "fundamentals", []string{"NVDA"})
+	if !strings.Contains(strings.Join(pack.Errors, " "), "Revenue") {
+		t.Errorf("pack.Errors = %v, want the dropped stale figure named", pack.Errors)
+	}
 }

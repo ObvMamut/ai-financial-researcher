@@ -254,54 +254,68 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 	td := TickerData{Ticker: ticker}
 	filingURL := fmt.Sprintf("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=%s&type=10-K", cik)
 
-	// extract emits one fact per label, choosing the freshest full-year USD
-	// observation across all the GAAP tags that could carry it.
+	// extract emits one fact per label, choosing the best USD observation across
+	// all the GAAP tags that could carry it.
 	//
-	// Two traps live here. Filers migrate between tags — NVDA's ASC 606 revenue
-	// tag stops in FY2022 and continues under another — so taking the first tag
-	// that has *any* data pins a figure four years stale. And one tag's slice
-	// mixes annual with quarterly frames in no particular order, so a quarterly
-	// revenue printed beside an annual net income reads as a company earning
-	// four times its sales.
+	// Three traps live here. Filers migrate between tags — NVDA's ASC 606
+	// revenue tag stops in FY2022 and continues under another — so taking the
+	// first tag that has *any* data pins a figure four years stale. One tag's
+	// slice mixes annual with quarterly frames in no particular order, so a
+	// quarterly revenue printed beside an annual net income reads as a company
+	// earning four times its sales. And preferring annual frames unconditionally
+	// — the previous rule — reintroduces the first trap through the back door:
+	// on 2026-08-29 it printed NVDA's FY2022 revenue ($26.9B) beside its FY2026
+	// net income ($118.0B), and the specialist reported a "37% net margin" whose
+	// actual quotient is 438%.
+	//
+	// The rule is freshness first, tidiness second: prefer the latest annual
+	// frame, but only while it is within annualGracePeriod of the latest
+	// observation of any kind. Past that, take the freshest figure and say in
+	// the label that the frame is quarterly.
 	extract := func(label string, gaapKeys ...string) {
 		gaap, ok := data.Facts["us-gaap"]
 		if !ok {
 			return
 		}
 		var (
-			bestVal    float64
-			bestEnd    time.Time
-			bestAnnual bool
-			found      bool
+			latest, latestAnnual         xbrlObs
+			haveLatest, haveLatestAnnual bool
 		)
 		for _, key := range gaapKeys {
 			fact, ok := gaap[key]
 			if !ok {
 				continue
 			}
-			for _, obs := range fact.Units["USD"] {
-				end, err := time.Parse("2006-01-02", obs.End)
+			for _, o := range fact.Units["USD"] {
+				end, err := time.Parse("2006-01-02", o.End)
 				if err != nil {
 					continue
 				}
-				annual := obs.FP == "FY"
-				// An annual frame always beats a quarterly one; within the same
-				// kind, the later period wins.
-				better := !found ||
-					(annual && !bestAnnual) ||
-					(annual == bestAnnual && end.After(bestEnd))
-				if better {
-					bestVal, bestEnd, bestAnnual, found = obs.Val, end, annual, true
+				cur := xbrlObs{val: o.Val, end: end, annual: o.FP == "FY"}
+				if !haveLatest || cur.end.After(latest.end) {
+					latest, haveLatest = cur, true
+				}
+				if cur.annual && (!haveLatestAnnual || cur.end.After(latestAnnual.end)) {
+					latestAnnual, haveLatestAnnual = cur, true
 				}
 			}
 		}
-		if !found {
+		if !haveLatest {
 			return
 		}
+
+		chosen := latest
+		if haveLatestAnnual && !latestAnnual.end.Before(latest.end.Add(-annualGracePeriod)) {
+			chosen = latestAnnual
+		}
+		shown := label
+		if !chosen.annual {
+			shown = label + " (quarterly)"
+		}
 		td.Facts = append(td.Facts, Fact{
-			Label:  label,
-			Value:  fmt.Sprintf("%.2f", bestVal),
-			AsOf:   bestEnd,
+			Label:  shown,
+			Value:  fmt.Sprintf("%.2f", chosen.val),
+			AsOf:   chosen.end,
 			Source: "SEC EDGAR",
 			URL:    filingURL,
 		})
@@ -316,7 +330,60 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 		"SalesRevenueNet")
 	extract("Stockholders Equity", "StockholdersEquity")
 
+	td.Facts, td.Warnings = dropInconsistentDates(td.Facts)
 	return td, nil
+}
+
+// xbrlObs is one XBRL observation reduced to what the choice depends on.
+type xbrlObs struct {
+	val    float64
+	end    time.Time
+	annual bool
+}
+
+const (
+	// annualGracePeriod is how stale the latest annual frame may be, relative to
+	// the freshest observation of any kind, before a quarterly figure is
+	// preferred instead. Fifteen months clears a normal annual reporting gap
+	// (12 months plus filing lag) without tolerating a migrated-away tag.
+	annualGracePeriod = 15 * 30 * 24 * time.Hour
+	// dateSpreadLimit is how far a figure may trail the freshest figure for the
+	// same company and still be printed beside it. Figures more than a year
+	// apart cannot be divided into a margin, a ratio or a growth rate, and
+	// shipping them side by side without saying so is what invites the
+	// invention.
+	dateSpreadLimit = 370 * 24 * time.Hour
+)
+
+// dropInconsistentDates keeps the facts clustered around the freshest one and
+// withholds the stragglers, returning the survivors and a note naming what went.
+func dropInconsistentDates(facts []Fact) ([]Fact, []string) {
+	if len(facts) < 2 {
+		return facts, nil
+	}
+	var newest time.Time
+	for _, f := range facts {
+		if f.AsOf.After(newest) {
+			newest = f.AsOf
+		}
+	}
+	cutoff := newest.Add(-dateSpreadLimit)
+
+	kept := make([]Fact, 0, len(facts))
+	var dropped []string
+	for _, f := range facts {
+		if f.AsOf.Before(cutoff) {
+			dropped = append(dropped, fmt.Sprintf("%s (%s)", f.Label, f.AsOf.Format("2006-01-02")))
+			continue
+		}
+		kept = append(kept, f)
+	}
+	if len(dropped) == 0 {
+		return facts, nil
+	}
+	return kept, []string{fmt.Sprintf(
+		"withheld %s: more than a year older than the freshest figure (%s), so no ratio across them is meaningful",
+		strings.Join(dropped, ", "), newest.Format("2006-01-02"))}
 }
 
 func (p *edgarProvider) MacroFetch(ctx context.Context) ([]Fact, error) {

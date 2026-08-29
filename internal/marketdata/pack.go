@@ -316,6 +316,12 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				}
 			}
 
+			// A provider that withheld a figure has to say so where the run's
+			// reader will see it, whether or not it also returned usable facts.
+			for _, w := range data.Warnings {
+				pack.Errors = append(pack.Errors, fmt.Sprintf("%s %s/%s: %s", prov.Name(), domain, t, w))
+			}
+
 			if len(data.Facts) > 0 {
 				pack.ByTicker[t] = data
 				pack.Coverage[t] = true
