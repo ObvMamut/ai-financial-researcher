@@ -26,7 +26,16 @@ type YahooClient struct {
 	baseURL string // overridable in tests
 	limiter *Limiter
 	cache   *Cache
+	// ttl is how long a cached series may be served before a refetch. The cache
+	// was scoped to the UTC calendar day and nothing finer, so an entry written
+	// at 04:00 answered every read until midnight; a Saturday run priced 8 of 12
+	// names off Thursday closes.
+	ttl time.Duration
 }
+
+// DefaultPriceTTL is how long a cached daily series is served before refetching.
+// Short enough that a run started after the close sees the close.
+const DefaultPriceTTL = 4 * time.Hour
 
 func NewYahooClient(cache *Cache) *YahooClient {
 	base := "https://query1.finance.yahoo.com"
@@ -39,6 +48,14 @@ func NewYahooClient(cache *Cache) *YahooClient {
 		baseURL: base,
 		limiter: NewLimiter(2000, 240, 5), // ~4 req/s sustained, burst 5; a full run needs ~16 requests
 		cache:   cache,
+		ttl:     DefaultPriceTTL,
+	}
+}
+
+// SetPriceTTL overrides how long a cached series is served (config price_ttl).
+func (y *YahooClient) SetPriceTTL(d time.Duration) {
+	if d > 0 {
+		y.ttl = d
 	}
 }
 
@@ -68,11 +85,24 @@ type yahooChartResp struct {
 	} `json:"chart"`
 }
 
-// History returns up to 2 years of daily bars for symbol, cached per day.
+// History returns up to 2 years of daily bars for symbol, served from cache
+// while the entry is younger than the client's TTL.
 func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series, error) {
+	return y.history(ctx, symbol, y.ttl)
+}
+
+// HistoryFresh refetches symbol unconditionally, bypassing the cache. Stage 1.5
+// uses it for the one retry on a name whose last bar trails the rest of the
+// shortlist, which is how a genuinely stale cache entry gets corrected rather
+// than merely flagged.
+func (y *YahooClient) HistoryFresh(ctx context.Context, symbol string) (*quant.Series, error) {
+	return y.history(ctx, symbol, 0)
+}
+
+func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Duration) (*quant.Series, error) {
 	var cached quant.Series
-	if y.cache != nil {
-		if found, _ := y.cache.Get(y.baseURL, "yahoo", "chart"+yahooRange, symbol, &cached); found && len(cached.Bars) > 0 {
+	if y.cache != nil && ttl > 0 {
+		if found, _ := y.cache.GetTTL(y.baseURL, "yahoo", "chart"+yahooRange, symbol, ttl, &cached); found && len(cached.Bars) > 0 {
 			return &cached, nil
 		}
 	}
@@ -148,7 +178,7 @@ func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series
 	series.Sort()
 
 	if y.cache != nil {
-		_ = y.cache.Set(y.baseURL, "yahoo", "chart"+yahooRange, symbol, series)
+		_ = y.cache.SetTTL(y.baseURL, "yahoo", "chart"+yahooRange, symbol, series)
 	}
 	return series, nil
 }

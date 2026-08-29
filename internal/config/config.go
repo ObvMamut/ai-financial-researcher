@@ -23,6 +23,16 @@ type Settings struct {
 	Workers   int
 	Indices   []string
 
+	// PriceTTL is how long a cached daily price series is served before being
+	// refetched. The cache used to be scoped to the UTC calendar day and nothing
+	// finer, so a run started at 21:00 priced its ideas off an entry written at
+	// 04:00. Zero means the marketdata default (4h).
+	PriceTTL time.Duration
+	// DataCacheDays is how long cached provider responses are kept on disk before
+	// the run-start janitor removes them. Keys are date-scoped, so older entries
+	// can never be read again — they merely accumulate. Zero disables pruning.
+	DataCacheDays int
+
 	GeminiConcurrency int
 	Weights           model.DomainWeights
 	Timeouts          model.StageTimeouts
@@ -49,6 +59,9 @@ type fileFormat struct {
 	KeepRuns  int      `toml:"keep_runs"`
 	Workers   int      `toml:"workers"`
 	Indices   []string `toml:"indices"`
+
+	PriceTTL      string `toml:"price_ttl"`       // Go duration, e.g. "4h"
+	DataCacheDays int    `toml:"data_cache_days"` // 0 disables pruning
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
 
@@ -121,8 +134,13 @@ func Load() (*Settings, error) {
 		RunsDir:   "runs",
 		DataDir:   ".data",
 		KeepRuns:  100,
-		Models:    map[model.CLI]string{},
-		Binaries:  map[model.CLI]string{},
+		PriceTTL:  4 * time.Hour,
+
+		// A week keeps a few days of runs re-runnable offline without letting a
+		// universe-wide pre-screen's few hundred files a day pile up forever.
+		DataCacheDays: 7,
+		Models:        map[model.CLI]string{},
+		Binaries:      map[model.CLI]string{},
 	}
 
 	var paths []string
@@ -168,6 +186,7 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.DataDir, f.DataDir)
 	setInt(&s.KeepRuns, f.KeepRuns)
 	setInt(&s.Workers, f.Workers)
+	setInt(&s.DataCacheDays, f.DataCacheDays)
 	setInt(&s.GeminiConcurrency, f.GeminiConcurrency)
 	if len(f.Indices) > 0 {
 		s.Indices = f.Indices
@@ -208,6 +227,9 @@ func (s *Settings) applyFile(path string) error {
 		return err
 	}
 	if err := parseDur(&s.Retry.MaxDelay, f.Retry.MaxDelay, "retry.max_delay"); err != nil {
+		return err
+	}
+	if err := parseDur(&s.PriceTTL, f.PriceTTL, "price_ttl"); err != nil {
 		return err
 	}
 	if f.Retry.Jitter {
@@ -296,6 +318,16 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_KEEP_RUNS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.KeepRuns = n
+		}
+	}
+	if v := os.Getenv("CFR_PRICE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			s.PriceTTL = d
+		}
+	}
+	if v := os.Getenv("CFR_DATA_CACHE_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			s.DataCacheDays = n
 		}
 	}
 }

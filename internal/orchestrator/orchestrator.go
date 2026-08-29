@@ -79,6 +79,14 @@ type Config struct {
 	// KeepRuns is how many run directories CleanupOldRuns retains (default 100;
 	// the scoreboard needs history).
 	KeepRuns int
+
+	// PriceTTL bounds how stale a cached daily price series may be before it is
+	// refetched. Every level in every idea is computed off the last close, so a
+	// day-scoped cache priced a Saturday run off Thursday. Zero means 4h.
+	PriceTTL time.Duration
+	// DataCacheDays is how long cached provider responses survive the run-start
+	// janitor. Zero disables pruning.
+	DataCacheDays int
 }
 
 func (c *Config) applyDefaults() {
@@ -144,6 +152,12 @@ func (c *Config) applyDefaults() {
 
 	if c.KeepRuns <= 0 {
 		c.KeepRuns = 100
+	}
+	if c.PriceTTL <= 0 {
+		c.PriceTTL = marketdata.DefaultPriceTTL
+	}
+	if c.DataCacheDays < 0 {
+		c.DataCacheDays = 0
 	}
 
 	// Default Timeouts
@@ -281,6 +295,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	// Initialize market data service
 	cache := marketdata.NewCache(cfg.DataDir)
+	// Cache keys are date-scoped, so yesterday's entries can never be read
+	// again — but nothing removed them, and a universe-wide pre-screen writes a
+	// few hundred files a day.
+	if cfg.DataCacheDays > 0 {
+		if n, err := cache.Prune(time.Duration(cfg.DataCacheDays) * 24 * time.Hour); err != nil {
+			log(ch, fmt.Sprintf("warn: prune data cache: %v", err))
+		} else if n > 0 {
+			log(ch, fmt.Sprintf("Pruned %d cached data file(s) older than %d days", n, cfg.DataCacheDays))
+		}
+	}
 	dataSvc := marketdata.NewService(
 		cache,
 		marketdata.NewEdgarProvider(cfg.Providers.ContactEmail, cache),
@@ -390,7 +414,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// ── Stage 1.5: price history + quant metrics (in-process, no model) ───────
 	log(ch, "Stage 1.5: fetching price history and computing quant metrics…")
 	agentStatus(ch, "quant-data", model.StatusRunning, nil)
-	quantPack := buildQuantPack(ctx, ch, run, marketdata.NewYahooClient(cache), shortlist)
+	yc := marketdata.NewYahooClient(cache)
+	yc.SetPriceTTL(cfg.PriceTTL)
+	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, shortlist)
+	_ = quantSeries // consumed by the risk gate
 	logPackErrors(ch, "quant", quantPack.Errors)
 	if len(quantPack.ByTicker) > 0 {
 		agentStatus(ch, "quant-data", model.StatusDone, nil)

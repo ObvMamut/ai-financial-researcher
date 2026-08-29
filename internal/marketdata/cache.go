@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -52,4 +53,101 @@ func (c *Cache) Set(source, provider, fn, ticker string, val interface{}) error 
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// envelope wraps a cached payload with the time it was fetched. Entries written
+// by Set carry no envelope; GetTTL treats those as misses rather than guessing
+// an age, so nothing already on disk is read back as infinitely fresh.
+type envelope struct {
+	FetchedAt time.Time       `json:"fetched_at"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+// ttlKey namespaces TTL entries away from the date-scoped ones written by Set,
+// so the two encodings never collide on one path.
+func (c *Cache) ttlKey(source, provider, fn, ticker string) string {
+	return c.key(source, provider, "ttl:"+fn, ticker)
+}
+
+// GetTTL reads an entry only while it is younger than ttl.
+//
+// Cache.Get is scoped to the UTC calendar day and nothing more, so an entry
+// written at 04:00 served every read until midnight. In a Saturday run that
+// meant precise entry prices computed off Thursday closes for 8 of 12 names —
+// the idea shipped with "re-price before entering" in a note as the only
+// mitigation. A ttl of zero or less is always a miss, which is how a caller
+// forces a refetch.
+func (c *Cache) GetTTL(source, provider, fn, ticker string, ttl time.Duration, out interface{}) (bool, error) {
+	if ttl <= 0 {
+		return false, nil
+	}
+	path := filepath.Join(c.baseDir, c.ttlKey(source, provider, fn, ticker)+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var env envelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return false, err
+	}
+	if env.FetchedAt.IsZero() || time.Since(env.FetchedAt) > ttl {
+		return false, nil
+	}
+	if err := json.Unmarshal(env.Payload, out); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// SetTTL writes an entry stamped with the current time, for reading via GetTTL.
+func (c *Cache) SetTTL(source, provider, fn, ticker string, val interface{}) error {
+	if err := os.MkdirAll(c.baseDir, 0755); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(val)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(envelope{FetchedAt: time.Now(), Payload: payload})
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(c.baseDir, c.ttlKey(source, provider, fn, ticker)+".json")
+	return os.WriteFile(path, data, 0644)
+}
+
+// Prune deletes cache files not modified within maxAge and reports how many
+// went. Keys are date-scoped, so yesterday's entries can never be read again —
+// but nothing removed them, and a universe-wide pre-screen writes a few hundred
+// files a day. Returns the count removed; a maxAge of zero or less prunes
+// nothing.
+func (c *Cache) Prune(maxAge time.Duration) (int, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(c.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	cutoff := time.Now().Add(-maxAge)
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if os.Remove(filepath.Join(c.baseDir, e.Name())) == nil {
+			removed++
+		}
+	}
+	return removed, nil
 }

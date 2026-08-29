@@ -78,6 +78,8 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		DataDir:           s.DataDir,
 		Workers:           s.Workers,
 		KeepRuns:          s.KeepRuns,
+		PriceTTL:          s.PriceTTL,
+		DataCacheDays:     s.DataCacheDays,
 		Timeouts:          s.Timeouts,
 		Retry:             s.Retry,
 		Weights:           s.Weights,
