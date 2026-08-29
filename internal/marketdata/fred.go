@@ -20,13 +20,13 @@ func NewFredProvider(apiKey string) Provider {
 	}
 }
 
-func (p *fredProvider) Name() string   { return "FRED" }
-func (p *fredProvider) Source() string { return "https://api.stlouisfed.org" }
+func (p *fredProvider) Name() string      { return "FRED" }
+func (p *fredProvider) Source() string    { return "https://api.stlouisfed.org" }
 func (p *fredProvider) Domains() []string { return []string{"macro"} }
-func (p *fredProvider) Available() bool { return p.apiKey != "" }
+func (p *fredProvider) Available() bool   { return p.apiKey != "" }
 
 func (p *fredProvider) Fetch(ctx context.Context, domain string, ticker string) (TickerData, error) {
-	return TickerData{}, ErrUnavailable
+	return TickerData{}, ErrNotApplicable // FRED carries macro series only
 }
 
 func (p *fredProvider) MacroFetch(ctx context.Context) ([]Fact, error) {

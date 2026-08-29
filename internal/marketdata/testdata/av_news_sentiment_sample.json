@@ -1,0 +1,1591 @@
+{
+ "items": "50",
+ "sentiment_score_definition": "x <= -0.35: Bearish; \u2026",
+ "relevance_score_definition": "0 < x <= 1",
+ "feed": [
+  {
+   "title": "Nvidia headline number 1",
+   "url": "https://reuters.com/markets/nvidia-story-1",
+   "time_published": "20260820T093000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 1.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.950000",
+     "ticker_sentiment_score": "0.400000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 2",
+   "url": "https://bloomberg.com/markets/nvidia-story-2",
+   "time_published": "20260821T103000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 2.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.935000",
+     "ticker_sentiment_score": "0.388000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 3",
+   "url": "https://cnbc.com/markets/nvidia-story-3",
+   "time_published": "20260822T113000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 3.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.920000",
+     "ticker_sentiment_score": "0.376000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 4",
+   "url": "https://benzinga.com/markets/nvidia-story-4",
+   "time_published": "20260823T123000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 4.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.905000",
+     "ticker_sentiment_score": "0.364000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 5",
+   "url": "https://zacks.com/markets/nvidia-story-5",
+   "time_published": "20260824T133000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 5.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.890000",
+     "ticker_sentiment_score": "0.352000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 6",
+   "url": "https://reuters.com/markets/nvidia-story-6",
+   "time_published": "20260825T143000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 6.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.875000",
+     "ticker_sentiment_score": "0.340000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 7",
+   "url": "https://bloomberg.com/markets/nvidia-story-7",
+   "time_published": "20260826T153000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 7.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.860000",
+     "ticker_sentiment_score": "0.328000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 8",
+   "url": "https://cnbc.com/markets/nvidia-story-8",
+   "time_published": "20260827T163000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 8.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.845000",
+     "ticker_sentiment_score": "0.316000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 9",
+   "url": "https://benzinga.com/markets/nvidia-story-9",
+   "time_published": "20260828T173000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 9.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.830000",
+     "ticker_sentiment_score": "0.304000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 10",
+   "url": "https://zacks.com/markets/nvidia-story-10",
+   "time_published": "20260820T183000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 10.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.815000",
+     "ticker_sentiment_score": "0.292000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 11",
+   "url": "https://reuters.com/markets/nvidia-story-11",
+   "time_published": "20260821T193000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 11.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.800000",
+     "ticker_sentiment_score": "0.280000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 12",
+   "url": "https://bloomberg.com/markets/nvidia-story-12",
+   "time_published": "20260822T203000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 12.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.785000",
+     "ticker_sentiment_score": "0.268000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 13",
+   "url": "https://cnbc.com/markets/nvidia-story-13",
+   "time_published": "20260823T093000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 13.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.770000",
+     "ticker_sentiment_score": "0.256000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 14",
+   "url": "https://benzinga.com/markets/nvidia-story-14",
+   "time_published": "20260824T103000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 14.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.755000",
+     "ticker_sentiment_score": "0.244000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 15",
+   "url": "https://zacks.com/markets/nvidia-story-15",
+   "time_published": "20260825T113000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 15.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.740000",
+     "ticker_sentiment_score": "0.232000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 16",
+   "url": "https://reuters.com/markets/nvidia-story-16",
+   "time_published": "20260826T123000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 16.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.725000",
+     "ticker_sentiment_score": "0.220000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 17",
+   "url": "https://bloomberg.com/markets/nvidia-story-17",
+   "time_published": "20260827T133000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 17.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.710000",
+     "ticker_sentiment_score": "0.208000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 18",
+   "url": "https://cnbc.com/markets/nvidia-story-18",
+   "time_published": "20260828T143000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 18.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.695000",
+     "ticker_sentiment_score": "0.196000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 19",
+   "url": "https://benzinga.com/markets/nvidia-story-19",
+   "time_published": "20260820T153000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 19.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.680000",
+     "ticker_sentiment_score": "0.184000",
+     "ticker_sentiment_label": "Bullish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 20",
+   "url": "https://zacks.com/markets/nvidia-story-20",
+   "time_published": "20260821T163000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 20.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.665000",
+     "ticker_sentiment_score": "0.172000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 21",
+   "url": "https://reuters.com/markets/nvidia-story-21",
+   "time_published": "20260822T173000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 21.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.650000",
+     "ticker_sentiment_score": "0.160000",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 22",
+   "url": "https://bloomberg.com/markets/nvidia-story-22",
+   "time_published": "20260823T183000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 22.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.635000",
+     "ticker_sentiment_score": "0.148000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 23",
+   "url": "https://cnbc.com/markets/nvidia-story-23",
+   "time_published": "20260824T193000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 23.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.620000",
+     "ticker_sentiment_score": "0.136000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 24",
+   "url": "https://benzinga.com/markets/nvidia-story-24",
+   "time_published": "20260825T203000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 24.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.605000",
+     "ticker_sentiment_score": "0.124000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 25",
+   "url": "https://zacks.com/markets/nvidia-story-25",
+   "time_published": "20260826T093000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 25.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.590000",
+     "ticker_sentiment_score": "0.112000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 26",
+   "url": "https://reuters.com/markets/nvidia-story-26",
+   "time_published": "20260827T103000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 26.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.575000",
+     "ticker_sentiment_score": "0.100000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 27",
+   "url": "https://bloomberg.com/markets/nvidia-story-27",
+   "time_published": "20260828T113000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 27.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.560000",
+     "ticker_sentiment_score": "0.088000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 28",
+   "url": "https://cnbc.com/markets/nvidia-story-28",
+   "time_published": "20260820T123000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 28.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.545000",
+     "ticker_sentiment_score": "0.076000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 29",
+   "url": "https://benzinga.com/markets/nvidia-story-29",
+   "time_published": "20260821T133000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 29.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.530000",
+     "ticker_sentiment_score": "0.064000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 30",
+   "url": "https://zacks.com/markets/nvidia-story-30",
+   "time_published": "20260822T143000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 30.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.515000",
+     "ticker_sentiment_score": "0.052000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 31",
+   "url": "https://reuters.com/markets/nvidia-story-31",
+   "time_published": "20260823T153000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 31.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.500000",
+     "ticker_sentiment_score": "0.040000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 32",
+   "url": "https://bloomberg.com/markets/nvidia-story-32",
+   "time_published": "20260824T163000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 32.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.485000",
+     "ticker_sentiment_score": "0.028000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 33",
+   "url": "https://cnbc.com/markets/nvidia-story-33",
+   "time_published": "20260825T173000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 33.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.470000",
+     "ticker_sentiment_score": "0.016000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 34",
+   "url": "https://benzinga.com/markets/nvidia-story-34",
+   "time_published": "20260826T183000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 34.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.455000",
+     "ticker_sentiment_score": "0.004000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 35",
+   "url": "https://zacks.com/markets/nvidia-story-35",
+   "time_published": "20260827T193000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 35.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.440000",
+     "ticker_sentiment_score": "-0.008000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 36",
+   "url": "https://reuters.com/markets/nvidia-story-36",
+   "time_published": "20260828T203000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 36.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.425000",
+     "ticker_sentiment_score": "-0.020000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 37",
+   "url": "https://bloomberg.com/markets/nvidia-story-37",
+   "time_published": "20260820T093000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 37.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.410000",
+     "ticker_sentiment_score": "-0.032000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 38",
+   "url": "https://cnbc.com/markets/nvidia-story-38",
+   "time_published": "20260821T103000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 38.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.395000",
+     "ticker_sentiment_score": "-0.044000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 39",
+   "url": "https://benzinga.com/markets/nvidia-story-39",
+   "time_published": "20260822T113000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 39.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.380000",
+     "ticker_sentiment_score": "-0.056000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 40",
+   "url": "https://zacks.com/markets/nvidia-story-40",
+   "time_published": "20260823T123000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 40.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.365000",
+     "ticker_sentiment_score": "-0.068000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 41",
+   "url": "https://reuters.com/markets/nvidia-story-41",
+   "time_published": "20260824T133000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 41.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.350000",
+     "ticker_sentiment_score": "-0.080000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 42",
+   "url": "https://bloomberg.com/markets/nvidia-story-42",
+   "time_published": "20260825T143000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 42.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.335000",
+     "ticker_sentiment_score": "-0.092000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 43",
+   "url": "https://cnbc.com/markets/nvidia-story-43",
+   "time_published": "20260826T153000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 43.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.320000",
+     "ticker_sentiment_score": "-0.104000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 44",
+   "url": "https://benzinga.com/markets/nvidia-story-44",
+   "time_published": "20260827T163000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 44.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.305000",
+     "ticker_sentiment_score": "-0.116000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 45",
+   "url": "https://zacks.com/markets/nvidia-story-45",
+   "time_published": "20260828T173000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 45.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.290000",
+     "ticker_sentiment_score": "-0.128000",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 46",
+   "url": "https://reuters.com/markets/nvidia-story-46",
+   "time_published": "20260820T183000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 46.",
+   "banner_image": null,
+   "source": "Reuters",
+   "category_within_source": "n/a",
+   "source_domain": "reuters.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.275000",
+     "ticker_sentiment_score": "-0.140000",
+     "ticker_sentiment_label": "Neutral"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 47",
+   "url": "https://bloomberg.com/markets/nvidia-story-47",
+   "time_published": "20260821T193000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 47.",
+   "banner_image": null,
+   "source": "Bloomberg",
+   "category_within_source": "n/a",
+   "source_domain": "bloomberg.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.260000",
+     "ticker_sentiment_score": "-0.152000",
+     "ticker_sentiment_label": "Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 48",
+   "url": "https://cnbc.com/markets/nvidia-story-48",
+   "time_published": "20260822T203000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 48.",
+   "banner_image": null,
+   "source": "CNBC",
+   "category_within_source": "n/a",
+   "source_domain": "cnbc.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.245000",
+     "ticker_sentiment_score": "-0.164000",
+     "ticker_sentiment_label": "Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 49",
+   "url": "https://benzinga.com/markets/nvidia-story-49",
+   "time_published": "20260823T093000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 49.",
+   "banner_image": null,
+   "source": "Benzinga",
+   "category_within_source": "n/a",
+   "source_domain": "benzinga.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.230000",
+     "ticker_sentiment_score": "-0.176000",
+     "ticker_sentiment_label": "Bearish"
+    },
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.900000",
+     "ticker_sentiment_score": "-0.300000",
+     "ticker_sentiment_label": "Somewhat-Bearish"
+    }
+   ]
+  },
+  {
+   "title": "Nvidia headline number 50",
+   "url": "https://zacks.com/markets/nvidia-story-50",
+   "time_published": "20260824T103000",
+   "authors": [
+    "Staff"
+   ],
+   "summary": "Summary of Nvidia story 50.",
+   "banner_image": null,
+   "source": "Zacks Commentary",
+   "category_within_source": "n/a",
+   "source_domain": "zacks.com",
+   "topics": [
+    {
+     "topic": "Technology",
+     "relevance_score": "0.9"
+    }
+   ],
+   "overall_sentiment_score": 0.1,
+   "overall_sentiment_label": "Neutral",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.215000",
+     "ticker_sentiment_score": "-0.188000",
+     "ticker_sentiment_label": "Bearish"
+    }
+   ]
+  },
+  {
+   "title": "AMD-only story",
+   "url": "https://reuters.com/markets/amd-only",
+   "time_published": "20260828T120000",
+   "source": "Reuters",
+   "source_domain": "reuters.com",
+   "summary": "AMD only.",
+   "ticker_sentiment": [
+    {
+     "ticker": "AMD",
+     "relevance_score": "0.8",
+     "ticker_sentiment_score": "0.1",
+     "ticker_sentiment_label": "Neutral"
+    }
+   ]
+  },
+  {
+   "title": "",
+   "url": "",
+   "time_published": "20260828T120000",
+   "source": "",
+   "source_domain": "",
+   "summary": "",
+   "ticker_sentiment": [
+    {
+     "ticker": "NVDA",
+     "relevance_score": "0.99",
+     "ticker_sentiment_score": "0.9",
+     "ticker_sentiment_label": "Bullish"
+    }
+   ]
+  }
+ ]
+}

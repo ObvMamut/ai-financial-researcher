@@ -1,7 +1,9 @@
 # Claude Financial Researcher
 
-A terminal dashboard that orchestrates AI agents to propose **swing trades** across the
-**S&P 500, Nasdaq 100, EuroStoxx 50, and a broad Asia 100** universe.
+A terminal dashboard that orchestrates AI agents to propose **swing trades** across curated
+large-cap samples of the **S&P 500, Nasdaq 100, EuroStoxx 50, and Asia** (98 / 59 / 50 / 67
+names respectively — representative samples, not full index memberships; add rows to
+`internal/universe/data/*.csv` to widen them).
 
 It runs the `claude` and `agy` (Antigravity/Gemini) CLIs as subprocesses — **no model API
 keys required**. Gemini does the cheap, parallel research; Claude does the heavy synthesis
@@ -11,7 +13,7 @@ volatility, variance ratios — no chart TA).
 
 ## What it does
 
-- **Independent research** — pick which indices to screen, agents shortlist the most
+- **Independent research** — pick which index samples to screen, agents shortlist the most
   promising setups (capped at 12, cross-listings deduped), a quant stage computes verified
   statistics from real price history, specialists analyze news / fundamentals / quant /
   sentiment / macro, and the Chief Analyst returns **5 ranked trade ideas** — each with a
