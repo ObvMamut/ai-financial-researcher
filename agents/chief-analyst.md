@@ -63,8 +63,11 @@ Derive levels from the verified quant data, not from remembered chart lore:
     neutral (a base/pullback is a valid swing entry).
   - Note: **price near the 52-week high is continuation evidence** (George & Hwang), not
     an extension penalty by itself.
-- **Missing Data Caps:** max **65** confidence if any domain is missing; max **55** if ≥2
-  domains are missing.
+- **Missing Data Caps — applied *per ticker*, never run-wide:** count, for the ticker you
+  are scoring, the domains whose report lists it in their `missing` array (plus any domain
+  that failed for the whole run). Max **65** confidence if that count is 1; max **55** if it
+  is ≥2. A gap in one name's coverage says nothing about another's — never cap a whole run
+  because some other ticker was short a domain.
 - **Catalyst Penalties:** subtract **10** if an adverse catalyst (e.g. same-window
   earnings) is flagged in the news report and unhedged by the position note.
 - **Verification:** include a one-line "Confluence Math" sentence per idea in your
