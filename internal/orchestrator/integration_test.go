@@ -241,7 +241,7 @@ func TestIndependentRun(t *testing.T) {
 		t.Error("metadata warnings is null, want []")
 	}
 	for _, d := range []string{"news", "fundamentals", "sentiment"} {
-		want := d + ": no verified data for any shortlisted ticker"
+		want := d + ": no verified data for"
 		found := false
 		for _, w := range meta.Warnings {
 			if strings.Contains(w, want) {

@@ -536,12 +536,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		domainStatuses = append(domainStatuses, status)
 	}
 
-	// A specialist that had verified data for nothing wrote its report from
-	// recollection alone. That is a degraded run whatever the agent's exit code
-	// said, so carry it through to the outcome below.
-	zeroCov := zeroCoverage(domainStatuses)
-	for _, d := range zeroCov {
-		log(ch, fmt.Sprintf("warn: %s had no verified data for any shortlisted ticker — its report is ungrounded", d))
+	// A specialist that missed a name it could have grounded wrote that part of
+	// its report from recollection alone. That is a degraded run whatever the
+	// agent's exit code said, so carry it through to the outcome below.
+	covGaps := coverageGaps(domainStatuses)
+	for _, g := range covGaps {
+		log(ch, fmt.Sprintf("warn: %s has no verified data for %s — names it could have covered", g.Domain, strings.Join(g.Missing, ", ")))
 	}
 
 	// Minimum check
@@ -577,7 +577,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	var ideas *model.IdeasResult
 	var warnings []warning
 	outcome := "complete"
-	if len(zeroCov) > 0 {
+	if len(covGaps) > 0 {
 		outcome = "degraded"
 	}
 
@@ -637,9 +637,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		log(ch, fmt.Sprintf("warn: write ideas.json: %v", err))
 	}
 
-	for _, d := range zeroCov {
+	for _, g := range covGaps {
 		warnings = append(warnings, warning{
-			Message: fmt.Sprintf("%s: no verified data for any shortlisted ticker — report is ungrounded", d),
+			Message: fmt.Sprintf("%s: no verified data for %s — names it could have covered", g.Domain, strings.Join(g.Missing, ", ")),
 		})
 	}
 

@@ -99,24 +99,56 @@ func overclaimedCoverage(report string, ungrounded []string) []string {
 	return out
 }
 
-// zeroCoverage lists the per-ticker domains that finished the run with no
-// verified data for a single shortlisted name. Their reports are written
-// entirely from model recollection, however confident they read — so a run
-// containing one is degraded. Before this, only an outright agent failure could
-// stop a run claiming `complete`: the first full DeepSeek run reported
-// `complete` on 0/12 sentiment coverage and 1/12 news coverage.
+// groundableBy reports whether a domain could, in principle, have covered a
+// ticker. Yahoo's chart API — which feeds the quant pack — is global, so every
+// shortlisted name is groundable for quant. SEC EDGAR and AlphaVantage, which
+// feed news, fundamentals and sentiment, are US-only.
+func groundableBy(domain, ticker string) bool {
+	if domain == "quant" {
+		return true
+	}
+	return marketdata.IsUSListing(ticker)
+}
+
+// domainGap records the groundable tickers one per-ticker domain finished the
+// run without covering.
+type domainGap struct {
+	Domain  string
+	Missing []string
+}
+
+// coverageGaps lists the per-ticker domains that did not cover every ticker they
+// *could* have covered, with the names they missed.
+//
+// The rule used to be "zero coverage degrades the run", which only fires when a
+// domain covers nothing at all. That is why the first full DeepSeek run reported
+// `outcome: complete` while the Chief Analyst called it "SEVERELY DEGRADED": news
+// covered 4/12, which is not zero. But 4/12 was really 4 of the *6 groundable*
+// names — GE and PLTR were lost to AlphaVantage rate limiting, and nothing caught
+// it. Measuring against the achievable subset makes `complete` mean "we got
+// everything we could get", which is the honest claim.
 //
 // macro is excluded because its evidence is the market regime (rates, spreads,
 // CPI), which is not per-ticker at all.
-func zeroCoverage(statuses []model.DomainStatus) []string {
-	var out []string
+func coverageGaps(statuses []model.DomainStatus) []domainGap {
+	var out []domainGap
 	for _, s := range statuses {
-		if marketdata.IsRegimeDomain(s.Domain) || s.Grounded {
+		if marketdata.IsRegimeDomain(s.Domain) {
 			continue
 		}
-		out = append(out, s.Domain)
+		var missed []string
+		for _, t := range s.Ungrounded {
+			if groundableBy(s.Domain, t) {
+				missed = append(missed, strings.ToUpper(t))
+			}
+		}
+		if len(missed) == 0 {
+			continue
+		}
+		sort.Strings(missed)
+		out = append(out, domainGap{Domain: s.Domain, Missing: missed})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out
 }
 

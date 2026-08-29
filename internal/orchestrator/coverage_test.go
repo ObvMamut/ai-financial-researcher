@@ -84,22 +84,48 @@ func TestOverclaimedCoverage(t *testing.T) {
 
 // Only agent failure used to degrade a run, so ~50 provider errors and 0/12
 // sentiment coverage still reported `complete`.
-func TestZeroCoverageDegradesTheRun(t *testing.T) {
+func TestCoverageGapsDegradeTheRun(t *testing.T) {
 	statuses := []model.DomainStatus{
 		{Domain: "quant", Grounded: true},
-		{Domain: "news", Grounded: true},
-		{Domain: "fundamentals", Grounded: false},
-		{Domain: "sentiment", Grounded: false},
-		{Domain: "macro", Grounded: false},
+		{Domain: "news", Grounded: true, Ungrounded: []string{"GE", "AIR.PA"}},
+		{Domain: "fundamentals", Grounded: false, Ungrounded: []string{"NVDA", "GE", "AIR.PA"}},
+		{Domain: "sentiment", Grounded: true, Ungrounded: []string{"AIR.PA", "2330.TW"}},
+		{Domain: "macro", Grounded: false, Ungrounded: []string{"NVDA", "GE"}},
 	}
-	got := zeroCoverage(statuses)
-	if want := []string{"fundamentals", "sentiment"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("zeroCoverage = %v, want %v (macro is not per-ticker)", got, want)
+	got := coverageGaps(statuses)
+	want := []domainGap{
+		{Domain: "fundamentals", Missing: []string{"GE", "NVDA"}},
+		{Domain: "news", Missing: []string{"GE"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("coverageGaps = %v, want %v", got, want)
+	}
+	// sentiment missed only non-US names — it got everything it could get.
+	// macro is not per-ticker at all, so its Ungrounded list means nothing.
+	for _, g := range got {
+		if g.Domain == "sentiment" || g.Domain == "macro" {
+			t.Errorf("%s should not be a gap: %v", g.Domain, g.Missing)
+		}
+	}
+}
+
+// 6/12 coverage is complete when the other 6 are non-US listings no provider
+// here can reach. The run that exposed this reported `complete` at 4/12 — 4 of
+// 6 groundable — because two US names were lost to AlphaVantage rate limiting.
+func TestCoverageGapsMeasureTheAchievableSubset(t *testing.T) {
+	allAchievable := []model.DomainStatus{
+		{Domain: "news", Ungrounded: []string{"AIR.PA", "2330.TW", "000660.KS"}},
+		{Domain: "macro"},
+	}
+	if got := coverageGaps(allAchievable); len(got) != 0 {
+		t.Errorf("coverageGaps = %v, want none: every groundable name was covered", got)
 	}
 
-	allGood := []model.DomainStatus{{Domain: "news", Grounded: true}, {Domain: "macro", Grounded: true}}
-	if got := zeroCoverage(allGood); len(got) != 0 {
-		t.Errorf("zeroCoverage = %v on a fully grounded run, want none", got)
+	// Yahoo is global, so quant has no structural excuse for a foreign name.
+	quantMissedForeign := []model.DomainStatus{{Domain: "quant", Ungrounded: []string{"AIR.PA"}}}
+	got := coverageGaps(quantMissedForeign)
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Missing, []string{"AIR.PA"}) {
+		t.Errorf("coverageGaps = %v, want quant missing AIR.PA (Yahoo covers foreign listings)", got)
 	}
 }
 
