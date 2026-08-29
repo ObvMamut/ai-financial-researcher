@@ -19,7 +19,7 @@ var indexKeys = []string{"sp500", "nq100", "eu50", "asia100"}
 
 // Universe holds all loaded constituents indexed by key.
 type Universe struct {
-	byIndex map[string][]model.Constituent
+	byIndex  map[string][]model.Constituent
 	byTicker map[string]model.Constituent // canonical ticker → first match
 }
 

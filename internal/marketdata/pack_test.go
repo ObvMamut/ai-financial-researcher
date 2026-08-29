@@ -158,3 +158,117 @@ func TestBuildPackIgnoresNotApplicable(t *testing.T) {
 		t.Errorf("a real failure must still be recorded, got %v", pack.Errors)
 	}
 }
+
+// macroProvider serves regime facts and nothing per-ticker, which is exactly the
+// shape BuildPack produces for the macro domain: Coverage seeded all-false and
+// never written true.
+func macroProvider(facts ...Fact) *stubProvider {
+	return &stubProvider{
+		name: "FRED", source: "https://fred.stlouisfed.org",
+		domains: []string{"macro"}, macro: facts,
+	}
+}
+
+// The macro pack's prompt carried four real FRED series *and* a block reading
+// "No verified data for: 000660.KS, 2330.TW, …" for all twelve names. The
+// specialist believed the block over the data and scored every name strength 1.
+func TestMacroPackReportsNoPerTickerGaps(t *testing.T) {
+	svc := NewService(nil, macroProvider(Fact{
+		Label:  "10-Year Treasury Rate",
+		Value:  "4.67",
+		AsOf:   time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC),
+		Source: "fred.stlouisfed.org",
+	}))
+	pack := svc.BuildPack(context.Background(), "macro", []string{"NVDA", "AIR.PA"})
+
+	if got := pack.Ungrounded(); len(got) != 0 {
+		t.Errorf("Ungrounded() = %v, want none: macro grounds the whole shortlist or none of it", got)
+	}
+
+	md := pack.Markdown()
+	if strings.Contains(md, "No verified data for") {
+		t.Errorf("macro must not render a per-ticker gap block:\n%s", md)
+	}
+	for _, tk := range []string{"NVDA", "AIR.PA"} {
+		if strings.Contains(md, tk) {
+			t.Errorf("macro markdown names ticker %s; its evidence is market-wide:\n%s", tk, md)
+		}
+	}
+	if !strings.Contains(md, "4.67") {
+		t.Errorf("macro markdown should carry its verified series:\n%s", md)
+	}
+}
+
+// A macro run that fetched nothing still has a gap to report — just a
+// domain-level one, not a ticker list.
+func TestMacroPackWithNoFactsWarnsAtDomainLevel(t *testing.T) {
+	svc := NewService(nil, macroProvider())
+	pack := svc.BuildPack(context.Background(), "macro", []string{"NVDA", "AIR.PA"})
+
+	md := pack.Markdown()
+	if !strings.Contains(md, "No verified macro data") {
+		t.Fatalf("an empty macro pack must warn at the domain level:\n%s", md)
+	}
+	for _, tk := range []string{"NVDA", "AIR.PA"} {
+		if strings.Contains(md, tk) {
+			t.Errorf("the domain-level warning must name no tickers, found %s:\n%s", tk, md)
+		}
+	}
+}
+
+// Regression guard for the Phase 4 behaviour this fix must not undo: a
+// per-ticker domain with the same all-false Coverage still lists its gaps.
+func TestPerTickerPackStillListsGaps(t *testing.T) {
+	svc := NewService(nil, &stubProvider{
+		name: "Empty", source: "https://empty.example.com", domains: []string{"news"},
+	})
+	pack := svc.BuildPack(context.Background(), "news", []string{"NVDA", "AIR.PA"})
+
+	if got := pack.Ungrounded(); len(got) != 2 {
+		t.Errorf("Ungrounded() = %v, want both names", got)
+	}
+	md := pack.Markdown()
+	if !strings.Contains(md, "No verified data for") {
+		t.Fatalf("a news pack must still render its per-ticker gap block:\n%s", md)
+	}
+	for _, tk := range []string{"NVDA", "AIR.PA"} {
+		if !strings.Contains(md, tk) {
+			t.Errorf("news gap block should name %s:\n%s", tk, md)
+		}
+	}
+}
+
+// SEC and AlphaVantage are US-only, so half a balanced shortlist can never be
+// covered. Listed as a plain gap it read as a fetch failure; it is a known limit.
+func TestGapBlockMarksNonUSListingsAsStructural(t *testing.T) {
+	svc := NewService(nil, newsProvider())
+	pack := svc.BuildPack(context.Background(), "news", []string{"AAPL", "GE", "AIR.PA", "2330.TW"})
+
+	md := pack.Markdown()
+	if !strings.Contains(md, "GE") {
+		t.Errorf("a US name with no data is still a plain gap:\n%s", md)
+	}
+	if !strings.Contains(md, "2330.TW, AIR.PA (non-US listings — no US filings or news coverage)") {
+		t.Errorf("non-US gaps should be annotated as structural:\n%s", md)
+	}
+	if !strings.Contains(md, "not a fetch failure") {
+		t.Errorf("the annotation should say the gap is expected:\n%s", md)
+	}
+	// The annotation must not swallow the US name into the same clause.
+	if strings.Contains(md, "GE, 2330.TW") {
+		t.Errorf("US and non-US gaps must be listed separately:\n%s", md)
+	}
+}
+
+func TestIsUSListing(t *testing.T) {
+	for _, tk := range []string{"AAPL", "NVDA", "BRK.B"} {
+		if !IsUSListing(tk) {
+			t.Errorf("IsUSListing(%q) = false, want true", tk)
+		}
+	}
+	for _, tk := range []string{"AIR.PA", "2330.TW", "000660.KS", "HDFCBANK.NS", "dte.de"} {
+		if IsUSListing(tk) {
+			t.Errorf("IsUSListing(%q) = true, want false", tk)
+		}
+	}
+}

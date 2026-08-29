@@ -28,7 +28,7 @@ func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, q
 	}
 
 	validIdeas := make([]model.TradeIdea, 0, len(res.Ideas))
-	
+
 	sectors := make(map[string]int)
 
 	for i := range res.Ideas {
