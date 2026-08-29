@@ -496,17 +496,37 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 		}
 
+		// Computed coverage is the authority, not the agent's own `missing`
+		// array: delete scores for names this domain had no data for, or that
+		// were never on the shortlist, and say so in the tail. Done before the
+		// report is written so the artifact is exactly what the Chief read.
+		var enf enforcement
+		if r.Status != model.StatusFailed {
+			corrected, e, err := enforceSpecialistTail(sp.role, r.Stdout, ungrounded[i], tickers)
+			switch {
+			case err != nil:
+				// A report with no usable tail is a refusal or a truncation. It
+				// used to pass as "done" on non-empty stdout alone and flow
+				// into synthesis unnoticed; it fails the domain now.
+				r.Status = model.StatusFailed
+				r.Err = err.Error()
+				log(ch, fmt.Sprintf("warn: %s report unusable: %v", sp.role, err))
+			default:
+				r.Stdout, enf = corrected, e
+				if len(enf.Corrected) > 0 {
+					log(ch, fmt.Sprintf("warn: %s scored %d ticker(s) it had no verified data for (%s) — scores removed, names moved to `missing`",
+						sp.role, len(enf.Corrected), strings.Join(enf.Corrected, ", ")))
+				}
+				if len(enf.OffShortlist) > 0 {
+					log(ch, fmt.Sprintf("warn: %s scored %d ticker(s) not on the shortlist (%s) — scores removed",
+						sp.role, len(enf.OffShortlist), strings.Join(enf.OffShortlist, ", ")))
+				}
+			}
+		}
+
 		r.Path = fmt.Sprintf("%s/%s.md", run.Dir, sp.role)
 		if err := run.WriteReport(sp.role, r.Stdout); err != nil {
 			log(ch, fmt.Sprintf("warn: write %s report: %v", sp.role, err))
-		}
-
-		// Check the agent's own `missing` array against the tickers we know it
-		// had nothing for. Claiming coverage it demonstrably lacked is the
-		// confabulation this pipeline exists to catch.
-		if overclaimed := overclaimedCoverage(r.Stdout, ungrounded[i]); len(overclaimed) > 0 {
-			log(ch, fmt.Sprintf("warn: %s omitted %d ungrounded ticker(s) from its `missing` array (%s) — it had no verified data for them",
-				sp.role, len(overclaimed), strings.Join(overclaimed, ", ")))
 		}
 
 		// Grounded means we actually injected verified data into the prompt —
@@ -519,6 +539,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			Attempts:            r.Attempts,
 			Grounded:            grounded[i],
 			Ungrounded:          ungrounded[i],
+			CorrectedScores:     enf.Corrected,
+			OffShortlistScores:  enf.OffShortlist,
 			FabricatedCitations: fabricated,
 		}
 

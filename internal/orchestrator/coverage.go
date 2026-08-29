@@ -1,13 +1,11 @@
 package orchestrator
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
-	"github.com/mamut/claude-financial-researcher/internal/parse"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
 
@@ -15,13 +13,19 @@ import (
 //
 // Each specialist is grounded by a different artifact: the quant role reads the
 // computed metrics pack, everyone else reads the provider pack for their domain.
-// Macro is the exception — its evidence is the regime (rates, spreads, CPI),
-// which is not per-ticker at all, so macro facts ground every name or none.
+//
+// Macro is the exception — its evidence is the regime, which is not per-ticker.
+// But the configured regime source is FRED, and every series in it (DGS10,
+// T10Y2Y, CPIAUCSL, UNRATE) describes the *United States*. Treating those as a
+// backdrop for every listing let 2330.TW be scored "the strongest macro read in
+// the shortlist" off the US 10-year, at full weight, and pushed a
+// quant-bearish name into the top five. Macro therefore grounds US listings
+// only; a foreign name is a gap like any other.
 func coveredBy(role string, pack *marketdata.DataPack, quantPack *quant.Pack, ticker string) bool {
-	if marketdata.IsRegimeDomain(role) {
-		return len(pack.MacroFacts) > 0
-	}
 	t := strings.ToUpper(ticker)
+	if marketdata.IsRegimeDomain(role) {
+		return marketdata.IsUSListing(t) && len(pack.MacroFacts) > 0
+	}
 	if role == "quant" {
 		if quantPack != nil {
 			if _, ok := quantPack.ByTicker[t]; ok {
@@ -43,11 +47,7 @@ func groundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack) 
 			return true
 		}
 	}
-	// Macro's evidence is not keyed by ticker, and the quant pack is built
-	// outside the provider pack; check both directly.
-	if marketdata.IsRegimeDomain(role) {
-		return len(pack.MacroFacts) > 0
-	}
+	// The quant pack is built outside the provider pack, so check it directly.
 	if role == "quant" && quantPack != nil {
 		return len(quantPack.ByTicker) > 0
 	}
@@ -67,42 +67,11 @@ func ungroundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack
 	return out
 }
 
-// overclaimedCoverage returns the ungrounded tickers an agent left out of its
-// `missing` array — names it had no verified data for but wrote up anyway.
-//
-// A report with no parseable JSON tail returns nothing: that is a parse problem,
-// reported elsewhere, not a coverage claim.
-func overclaimedCoverage(report string, ungrounded []string) []string {
-	if len(ungrounded) == 0 {
-		return nil
-	}
-	raw, ok := parse.LastJSONBlock(report)
-	if !ok {
-		return nil
-	}
-	var res struct {
-		Missing []string `json:"missing"`
-	}
-	if json.Unmarshal([]byte(raw), &res) != nil {
-		return nil
-	}
-	claimed := make(map[string]bool, len(res.Missing))
-	for _, m := range res.Missing {
-		claimed[strings.ToUpper(strings.TrimSpace(m))] = true
-	}
-	var out []string
-	for _, t := range ungrounded {
-		if !claimed[t] {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 // groundableBy reports whether a domain could, in principle, have covered a
 // ticker. Yahoo's chart API — which feeds the quant pack — is global, so every
 // shortlisted name is groundable for quant. SEC EDGAR and AlphaVantage, which
-// feed news, fundamentals and sentiment, are US-only.
+// feed news, fundamentals and sentiment, are US-only, and so is FRED, which
+// feeds macro.
 func groundableBy(domain, ticker string) bool {
 	if domain == "quant" {
 		return true
@@ -128,14 +97,13 @@ type domainGap struct {
 // it. Measuring against the achievable subset makes `complete` mean "we got
 // everything we could get", which is the honest claim.
 //
-// macro is excluded because its evidence is the market regime (rates, spreads,
-// CPI), which is not per-ticker at all.
+// macro used to be excluded on the grounds that its evidence is not per-ticker.
+// It is now measured like the rest: FRED is a US source, so a US name macro
+// failed to ground is a real gap, and a FRED outage degrades the run instead of
+// passing silently as `grounded: true` forever.
 func coverageGaps(statuses []model.DomainStatus) []domainGap {
 	var out []domainGap
 	for _, s := range statuses {
-		if marketdata.IsRegimeDomain(s.Domain) {
-			continue
-		}
 		var missed []string
 		for _, t := range s.Ungrounded {
 			if groundableBy(s.Domain, t) {

@@ -40,10 +40,16 @@ is crowded (contrarian risk), for the Chief Analyst.
   counts) MUST carry `[source:domain.com YYYY-MM-DD]` — no tag, no claim. *Without search*,
   emit no `[source:]` tags; work only from the verified block, whose news-sentiment scores
   and headlines are measurable positioning signals in their own right.
-- **Missing Data:** list a ticker in the `missing` array whenever your available evidence
-  yields no reliable crowd-sentiment view. On a search-less engine, short interest, options
-  skew, and analyst counts are **not** available unless they appear in the verified block —
-  never assert them. A ticker with no verified sentiment data belongs in `missing`.
+- **Missing Data:** every requested ticker goes in exactly one array — in `scores` if you
+  assessed it against evidence in this prompt, in `missing` if you had none. Never score a
+  name at 0 or 1 to mean "no data" and never leave one out silently. On a search-less
+  engine, short interest, options skew, and analyst counts are **not** available unless
+  they appear in the verified block — never assert them.
+- **Enforcement:** the app computes coverage itself and rewrites your structured tail
+  before anyone reads it. A score you give a ticker with no verified data is **deleted**
+  and the ticker moved into `missing`; a score for a ticker not on the shortlist is
+  **deleted** outright. Padding the list costs you the score and is recorded against this
+  domain — say `missing` and move on.
 
 ## Strength rubric (anchored)
 - **0–2** — no measurable positioning data; vibes only.

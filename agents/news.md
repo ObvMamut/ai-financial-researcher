@@ -38,9 +38,16 @@ bias and strength, so the Chief Analyst can weigh catalyst risk and momentum.
   `[source:domain.com YYYY-MM-DD]` — no tag, no claim. *Without search*, emit no
   `[source:]` tags at all; the verified headlines in this prompt come with their own URLs,
   and you may reference those exactly as given.
-- **Missing Data:** list a ticker in the `missing` array whenever your available evidence
-  yields no reliable news context for the window. On a search-less engine that means every
-  ticker with no verified headlines — do not describe a narrative you cannot see.
+- **Missing Data:** every requested ticker goes in exactly one array — in `scores` if you
+  assessed it against evidence in this prompt, in `missing` if you had none. Never score a
+  name at 0 or 1 to mean "no data" and never leave one out silently. On a search-less
+  engine that means every ticker with no verified headlines goes in `missing` — do not
+  describe a narrative you cannot see.
+- **Enforcement:** the app computes coverage itself and rewrites your structured tail
+  before anyone reads it. A score you give a ticker with no verified data is **deleted**
+  and the ticker moved into `missing`; a score for a ticker not on the shortlist is
+  **deleted** outright. Padding the list costs you the score and is recorded against this
+  domain — say `missing` and move on.
 
 ## Strength rubric (anchored)
 - **0–2** — no meaningful news flow, or flow contradicts itself.

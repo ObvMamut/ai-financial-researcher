@@ -39,9 +39,16 @@ bias + strength for the Chief Analyst.
   carry `[source:domain.com YYYY-MM-DD]` (e.g. `[source:sec.gov 2026-05-02]`) — no tag, no
   claim. *Without search*, emit no `[source:]` tags; cite the verified block as
   `[verified]` and quote no figure that is not in it.
-- **Missing Data:** list a ticker in the `missing` array whenever your available evidence
-  yields no reliable current-quarter view. On a search-less engine that means every ticker
-  with no verified filing data — recalled figures are not data.
+- **Missing Data:** every requested ticker goes in exactly one array — in `scores` if you
+  assessed it against evidence in this prompt, in `missing` if you had none. Never score a
+  name at 0 or 1 to mean "no data" and never leave one out silently. On a search-less
+  engine that means every ticker with no verified filing data goes in `missing` — recalled
+  figures are not data.
+- **Enforcement:** the app computes coverage itself and rewrites your structured tail
+  before anyone reads it. A score you give a ticker with no verified data is **deleted**
+  and the ticker moved into `missing`; a score for a ticker not on the shortlist is
+  **deleted** outright. Padding the list costs you the score and is recorded against this
+  domain — say `missing` and move on.
 
 ## Strength rubric (anchored)
 - **0–2** — figures unavailable or contradictory; no fundamental read.

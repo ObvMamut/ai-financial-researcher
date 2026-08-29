@@ -1,6 +1,7 @@
 # Workflow: Independent Research
 
-Goal: from a universe of ~600 names, produce **5 ranked swing-trade ideas**.
+Goal: from a universe of 278 names (curated index samples, see `universe.md`), produce
+**5 ranked swing-trade ideas**.
 
 A two-stage funnel keeps cost bounded: cheap Gemini screening narrows the universe, then a
 fixed set of specialist agents analyze only the shortlist, then Claude synthesizes.

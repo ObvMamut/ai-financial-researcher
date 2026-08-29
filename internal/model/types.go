@@ -233,6 +233,14 @@ type DomainStatus struct {
 	// data for. A domain whose whole shortlist is ungrounded is a degraded run,
 	// however confident the report reads.
 	Ungrounded []string `json:"ungrounded,omitempty"`
+	// CorrectedScores lists shortlisted tickers the agent scored without any
+	// verified data. The orchestrator deleted those scores from the report's
+	// structured tail and moved the names into its `missing` array, so the
+	// Chief Analyst never saw them. A long list means the model confabulated.
+	CorrectedScores []string `json:"corrected_scores,omitempty"`
+	// OffShortlistScores lists tickers the agent scored that were never on the
+	// shortlist — hallucinated symbols, also deleted from the tail.
+	OffShortlistScores []string `json:"off_shortlist_scores,omitempty"`
 	// FabricatedCitations lists [source:] domains the agent cited on a
 	// search-less engine. Non-empty means the report's sourcing was invented and
 	// the orchestrator has rewritten those tags to [unverified].

@@ -69,5 +69,11 @@ Short per-ticker notes quoting the metrics you used, then end with this exact JS
 ## Constraints
 - Every number you state must come from the injected pack and carry `[verified]`.
 - No technical-analysis vocabulary (no "support", "resistance", "RSI", "golden cross").
-- A ticker with no verified metrics goes in `missing` — never invent statistics.
+- Every requested ticker goes in exactly one array — in `scores` if you assessed it
+  against the pack, in `missing` if it is absent from the pack. Never score a name at 0 or
+  1 to mean "no data" and never leave one out silently; never invent statistics.
+- **Enforcement:** the app computes coverage itself and rewrites your structured tail
+  before anyone reads it. A score you give a ticker absent from the pack is **deleted** and
+  the ticker moved into `missing`; a score for a ticker not on the shortlist is **deleted**
+  outright.
 - No final trade decision; the Chief Analyst combines domains.

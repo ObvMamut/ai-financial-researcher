@@ -57,6 +57,29 @@ context + output sections per call.
 - The Chief Analyst is told which specialist reports are missing so it can lower confidence
   accordingly.
 
+## Enforcing coverage on specialist output
+
+Non-empty stdout is not success. Between a specialist returning and its report being
+written, the orchestrator rewrites the report's structured tail to match the data the
+run actually assembled (`internal/orchestrator/enforce.go`), following the no-data
+convention in `output-schema.md`:
+
+1. Scores for shortlisted tickers the domain had no verified data for are deleted and
+   the tickers unioned into `missing` → `domains[].corrected_scores`.
+2. Scores for tickers that were never on the shortlist are deleted →
+   `domains[].off_shortlist_scores`.
+3. A report with no parseable JSON tail fails the domain (`status: failed`,
+   `err: "no structured JSON tail…"`). A refusal, a truncated response, or free prose
+   is not a domain report.
+
+The rewrite is in place — same prose, same fences, only the tail's `scores` and
+`missing` arrays change — so the artifact on disk is exactly what the Chief Analyst
+read. An already-honest report is passed through byte-identical.
+
+This runs after citation scrubbing and before `WriteReport`. It replaced an advisory
+warning (`overclaimedCoverage`) that logged the discrepancy and shipped the invented
+scores anyway.
+
 ## Artifacts
 
 Everything for a run is written under `runs/<timestamp>/`:

@@ -42,6 +42,34 @@ Human-readable analysis, then a structured tail:
 the legacy `technicals` from old runs). `strength`: integer `0–10` per each persona's
 anchored rubric. `missing`: tickers the specialist could not assess.
 
+### The no-data convention
+
+A ticker belongs in **exactly one** of the two arrays:
+
+- in `scores` **iff** the specialist evaluated it against data the run supplied;
+- in `missing` **iff** the specialist had no data for it.
+
+There is no third convention. Do not score a name at `strength: 0` or `1` to mean
+"no data", and do not silently omit it — those were the three different dialects
+news, fundamentals and sentiment each invented, and they corrupted every
+aggregate that read across domains.
+
+**The app enforces this after the fact and does not take the agent's word for it.**
+Before a report is written to disk or shown to the Chief Analyst, the orchestrator
+compares `scores` against the coverage it actually assembled and rewrites the tail:
+
+- a score for a shortlisted ticker the domain had no verified data for is
+  **deleted**, and the ticker is unioned into `missing` (recorded in the run's
+  `domains[].corrected_scores`);
+- a score for a ticker that was never on the shortlist is **deleted** and nothing
+  is added to `missing` — the run never asked about it (recorded in
+  `domains[].off_shortlist_scores`);
+- a report with no parseable JSON tail is not a report. The domain is marked
+  `failed`, whatever the process exit code said.
+
+Coverage is computed per domain: EDGAR and AlphaVantage reach US listings only,
+FRED's series are US macro, and Yahoo's chart API — which feeds quant — is global.
+
 ## Final trade ideas (Chief Analyst → Go → TUI)
 
 The deliverable: direction, confidence, trade mechanics, quick why.

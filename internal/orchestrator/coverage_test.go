@@ -58,27 +58,54 @@ func TestUngroundedForListsTheGaps(t *testing.T) {
 	}
 }
 
-// The sentiment agent asserted short interest and options skew for all 12 names
-// off an empty pack and then declared `"missing": []`.
-func TestOverclaimedCoverage(t *testing.T) {
-	report := "…analysis…\n```json\n{\"missing\": [\"MSFT\"]}\n```"
-	got := overclaimedCoverage(report, []string{"MSFT", "NVDA"})
-	if want := []string{"NVDA"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("overclaimed = %v, want %v", got, want)
+// Macro's evidence is four US FRED series. Treating it as regime data that
+// grounds every name let a Taiwanese semiconductor score "strongest macro read"
+// off the US 10-year and CPI, at full 15% weight, with no gap ever recorded.
+func TestMacroCoverageIsRegional(t *testing.T) {
+	pack := packWith("macro", map[string]bool{"AAPL": false, "2330.TW": false},
+		[]marketdata.Fact{{Label: "CPI"}})
+
+	if !coveredBy("macro", pack, nil, "AAPL") {
+		t.Error("a US listing is covered by the US macro backdrop")
+	}
+	if coveredBy("macro", pack, nil, "2330.TW") {
+		t.Error("a Taiwanese listing is not covered by four US FRED series")
 	}
 
-	honest := "…\n```json\n{\"missing\": [\"msft\", \"NVDA\"]}\n```"
-	if got := overclaimedCoverage(honest, []string{"MSFT", "NVDA"}); len(got) != 0 {
-		t.Errorf("a complete, case-insensitive missing array is honest, got %v", got)
+	// No FRED facts at all: nothing is covered, not even the US names.
+	dry := packWith("macro", map[string]bool{"AAPL": false}, nil)
+	if coveredBy("macro", dry, nil, "AAPL") {
+		t.Error("macro with no facts covers nothing")
+	}
+	if groundedFor("macro", dry, nil) {
+		t.Error("macro with no facts is not grounded")
 	}
 
-	// Nothing was ungrounded, so nothing can be overclaimed.
-	if got := overclaimedCoverage(report, nil); got != nil {
-		t.Errorf("overclaimed = %v with no gaps, want nil", got)
+	got := ungroundedFor("macro", pack, nil, []string{"AAPL", "2330.TW"})
+	if want := []string{"2330.TW"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ungroundedFor(macro) = %v, want %v", got, want)
 	}
-	// An unparseable tail is a parse problem, reported elsewhere.
-	if got := overclaimedCoverage("no json here", []string{"NVDA"}); got != nil {
-		t.Errorf("overclaimed = %v on an unparseable report, want nil", got)
+	if groundableBy("macro", "2330.TW") {
+		t.Error("no configured source carries a Taiwan macro backdrop")
+	}
+	if !groundableBy("macro", "AAPL") {
+		t.Error("FRED can ground a US listing")
+	}
+}
+
+// coverageGaps used to skip regime domains outright, so a run whose own macro
+// report listed all 12 tickers missing still recorded `outcome: complete`.
+func TestCoverageGapsIncludeMacro(t *testing.T) {
+	statuses := []model.DomainStatus{
+		{Domain: "macro", Grounded: true, Ungrounded: []string{"AAPL", "2330.TW"}},
+	}
+	gaps := coverageGaps(statuses)
+	if len(gaps) != 1 || gaps[0].Domain != "macro" {
+		t.Fatalf("coverageGaps = %+v, want one macro gap", gaps)
+	}
+	// 2330.TW was never groundable, so only the US name it actually missed counts.
+	if want := []string{"AAPL"}; !reflect.DeepEqual(gaps[0].Missing, want) {
+		t.Errorf("macro gap = %v, want %v", gaps[0].Missing, want)
 	}
 }
 
@@ -95,15 +122,15 @@ func TestCoverageGapsDegradeTheRun(t *testing.T) {
 	got := coverageGaps(statuses)
 	want := []domainGap{
 		{Domain: "fundamentals", Missing: []string{"GE", "NVDA"}},
+		{Domain: "macro", Missing: []string{"GE", "NVDA"}},
 		{Domain: "news", Missing: []string{"GE"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("coverageGaps = %v, want %v", got, want)
 	}
 	// sentiment missed only non-US names — it got everything it could get.
-	// macro is not per-ticker at all, so its Ungrounded list means nothing.
 	for _, g := range got {
-		if g.Domain == "sentiment" || g.Domain == "macro" {
+		if g.Domain == "sentiment" {
 			t.Errorf("%s should not be a gap: %v", g.Domain, g.Missing)
 		}
 	}
