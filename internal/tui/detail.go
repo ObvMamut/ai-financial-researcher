@@ -26,7 +26,7 @@ type detailModel struct {
 	ideas  []model.TradeIdea
 	idx    int // which idea is shown
 
-	series    *quant.Series               // nil when the run has no saved prices
+	series    *quant.Series                // nil when the run has no saved prices
 	scores    map[string]model.DomainScore // domain → score for this ticker
 	windowIdx int
 
@@ -77,8 +77,8 @@ func (d *detailModel) loadIdea() {
 	}
 }
 
-func (d *detailModel) next() { d.idx = (d.idx + 1) % len(d.ideas); d.loadIdea() }
-func (d *detailModel) prev() { d.idx = (d.idx - 1 + len(d.ideas)) % len(d.ideas); d.loadIdea() }
+func (d *detailModel) next()        { d.idx = (d.idx + 1) % len(d.ideas); d.loadIdea() }
+func (d *detailModel) prev()        { d.idx = (d.idx - 1 + len(d.ideas)) % len(d.ideas); d.loadIdea() }
 func (d *detailModel) cycleWindow() { d.windowIdx = (d.windowIdx + 1) % len(chartWindows) }
 
 func (d *detailModel) View() string {

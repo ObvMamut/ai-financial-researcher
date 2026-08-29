@@ -251,7 +251,7 @@ func (m runModel) View() string {
 		if m.aborted {
 			sb.WriteString(failedStyle.Render("  Run aborted."))
 		} else if m.errMsg != "" {
-			sb.WriteString(failedStyle.Render("  Error: "+m.errMsg))
+			sb.WriteString(failedStyle.Render("  Error: " + m.errMsg))
 		} else if m.runDir != "" {
 			sb.WriteString(doneStyle.Render("  Complete! Showing results…"))
 		}
