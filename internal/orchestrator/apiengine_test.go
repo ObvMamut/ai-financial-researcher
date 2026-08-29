@@ -29,7 +29,7 @@ func TestCallAPIEngineParsesContentAndSendsAuth(t *testing.T) {
 	defer srv.Close()
 
 	api := model.APIConfig{BaseURL: srv.URL, Model: "deepseek-chat", APIKey: "sk-test"}
-	out, err := callAPIEngine(context.Background(), api, "screen the EU50")
+	out, _, err := callAPIEngine(context.Background(), api, "screen the EU50")
 	if err != nil {
 		t.Fatalf("callAPIEngine: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestCallAPIEngineKeylessLocal(t *testing.T) {
 
 	// No APIKey — a local server (Ollama/llama.cpp) doesn't authenticate.
 	api := model.APIConfig{BaseURL: srv.URL, Model: "qwen2.5:7b-instruct"}
-	out, err := callAPIEngine(context.Background(), api, "screen the EU50")
+	out, _, err := callAPIEngine(context.Background(), api, "screen the EU50")
 	if err != nil {
 		t.Fatalf("keyless callAPIEngine: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestCallAPIEngineErrorStatus(t *testing.T) {
 	defer srv.Close()
 
 	api := model.APIConfig{BaseURL: srv.URL, Model: "deepseek-chat", APIKey: "sk-test"}
-	_, err := callAPIEngine(context.Background(), api, "hi")
+	_, _, err := callAPIEngine(context.Background(), api, "hi")
 	if err == nil {
 		t.Fatal("expected an error on HTTP 429, got nil")
 	}
@@ -97,7 +97,7 @@ func TestCallAPIEngineErrorStatus(t *testing.T) {
 }
 
 func TestCallAPIEngineRequiresConfig(t *testing.T) {
-	_, err := callAPIEngine(context.Background(), model.APIConfig{Model: "m", APIKey: "k"}, "hi")
+	_, _, err := callAPIEngine(context.Background(), model.APIConfig{Model: "m", APIKey: "k"}, "hi")
 	if err == nil {
 		t.Fatal("expected an error when base_url is empty")
 	}
@@ -156,7 +156,7 @@ func TestAPIEngineRejectsTruncatedResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := callAPIEngine(context.Background(),
+	_, _, err := callAPIEngine(context.Background(),
 		model.APIConfig{BaseURL: srv.URL, Model: "m", APIKey: "k"}, "prompt")
 	if err == nil {
 		t.Fatal("a length-truncated response must be an error, not a short report")
@@ -174,7 +174,7 @@ func TestAPIEngineSendsMaxTokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := callAPIEngine(context.Background(),
+	out, _, err := callAPIEngine(context.Background(),
 		model.APIConfig{BaseURL: srv.URL, Model: "m", APIKey: "k", MaxTokens: 4096}, "prompt")
 	if err != nil {
 		t.Fatalf("callAPIEngine: %v", err)
@@ -195,12 +195,29 @@ func TestAPIEngineAcceptsMissingFinishReason(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := callAPIEngine(context.Background(),
+	out, _, err := callAPIEngine(context.Background(),
 		model.APIConfig{BaseURL: srv.URL, Model: "m"}, "prompt")
 	if err != nil {
 		t.Fatalf("callAPIEngine: %v", err)
 	}
 	if out != "fine" {
 		t.Errorf("content = %q, want fine", out)
+	}
+}
+
+// A run's cost was invisible: metadata.json recorded no tokens at all.
+func TestAPIEngineReportsCompletionTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}],"usage":{"prompt_tokens":11,"completion_tokens":345}}`)
+	}))
+	defer srv.Close()
+
+	_, tokens, err := callAPIEngine(context.Background(),
+		model.APIConfig{BaseURL: srv.URL, Model: "m"}, "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens != 345 {
+		t.Errorf("tokens = %d, want 345", tokens)
 	}
 }

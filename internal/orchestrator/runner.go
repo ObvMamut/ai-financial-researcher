@@ -45,9 +45,10 @@ func runAgent(ctx context.Context, cli model.CLI, role, stage string, prompt str
 
 		tctx, cancel := context.WithTimeout(ctx, timeout)
 		var out, stderrStr string
+		var tokens int
 		var runErr error
 		if cli == model.CLIApi {
-			out, runErr = callAPIEngine(tctx, api, prompt)
+			out, tokens, runErr = callAPIEngine(tctx, api, prompt)
 		} else {
 			var stdout, stderr bytes.Buffer
 			cmd := exec.CommandContext(tctx, binary, args...)
@@ -61,6 +62,7 @@ func runAgent(ctx context.Context, cli model.CLI, role, stage string, prompt str
 
 		if runErr == nil && strings.TrimSpace(out) != "" {
 			report.Stdout = out
+			report.Tokens = tokens
 			report.Status = model.StatusDone
 			report.Duration = time.Since(start).Milliseconds()
 			return report

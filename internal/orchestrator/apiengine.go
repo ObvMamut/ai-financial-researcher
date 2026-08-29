@@ -20,13 +20,15 @@ import (
 //
 // It uses only the standard library (same discipline as the marketdata
 // providers — no model SDK). The caller (runAgent) owns retry and the per-call
-// timeout via ctx, so this function makes exactly one request.
-func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (string, error) {
+// timeout via ctx, so this function makes exactly one request. It returns the
+// assistant's text and the completion-token count the provider reported (0 when
+// it reported none), which the run records per domain in metadata.json.
+func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (string, int, error) {
 	// A key is required for remote providers but omitted for local servers
 	// (Ollama/llama.cpp), which don't authenticate — so only base_url + model
 	// are mandatory here. Callers validate the key where it matters (remote).
 	if api.BaseURL == "" || api.Model == "" {
-		return "", fmt.Errorf("api engine misconfigured: base_url and model are required")
+		return "", 0, fmt.Errorf("api engine misconfigured: base_url and model are required")
 	}
 
 	maxTokens := api.MaxTokens
@@ -41,13 +43,13 @@ func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (str
 	}
 	buf, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	url := strings.TrimRight(api.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if api.APIKey != "" {
@@ -56,7 +58,7 @@ func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (str
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer resp.Body.Close()
 
@@ -67,29 +69,29 @@ func callAPIEngine(ctx context.Context, api model.APIConfig, prompt string) (str
 		// Include a truncated body snippet for diagnosis; never echo the key.
 		err := fmt.Errorf("api engine %s returned %d: %s", api.Model, resp.StatusCode, snippet(body))
 		if isPermanentStatus(resp.StatusCode) {
-			return "", permanentError{err}
+			return "", 0, permanentError{err}
 		}
-		return "", err
+		return "", 0, err
 	}
 
 	var parsed chatResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("api engine: decode response: %w", err)
+		return "", 0, fmt.Errorf("api engine: decode response: %w", err)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return "", fmt.Errorf("api engine error: %s", parsed.Error.Message)
+		return "", 0, fmt.Errorf("api engine error: %s", parsed.Error.Message)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("api engine: response contained no choices")
+		return "", 0, fmt.Errorf("api engine: response contained no choices")
 	}
 	// A completion cut off at the token limit has lost its structured tail. It
 	// used to be returned as though it were a finished report: the tail was
 	// simply absent, which the pipeline read as a domain that scored nobody.
 	// Returning an error puts it through the ordinary retry path instead.
 	if parsed.Choices[0].FinishReason == "length" {
-		return "", fmt.Errorf("api engine: response truncated at the %d-token limit — raise api.max_tokens", maxTokens)
+		return "", 0, fmt.Errorf("api engine: response truncated at the %d-token limit — raise api.max_tokens", maxTokens)
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, parsed.Usage.CompletionTokens, nil
 }
 
 // defaultMaxTokens bounds a specialist report. A full five-domain report with a

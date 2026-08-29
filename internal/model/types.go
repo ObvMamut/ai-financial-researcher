@@ -121,6 +121,9 @@ type Report struct {
 	Err      string      // error text when Status == failed
 	Duration int64       // milliseconds
 	Attempts int         // subprocess attempts actually made (≥1)
+	// Tokens is the completion-token count the engine reported, when it reported
+	// one. The CLI engines report none, so this stays 0 for them.
+	Tokens int
 }
 
 // TradeIdea is one final deliverable: direction, confidence, rationale, and

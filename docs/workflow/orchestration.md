@@ -112,7 +112,9 @@ Beyond the outcome and per-domain statuses:
 | `data_errors` | every provider failure from every pack, prefixed by domain. These previously lived only in `data/<domain>.json`, so a run that lost eight tickers to rate limiting read like one that lost none |
 | `persona_sha` | short hash per persona file. Personas are runtime data, editable with no code change, so nothing else makes a run's outcome attributable to the prompts that produced it |
 
-Each `domains[]` row also carries `corrected_scores` and `off_shortlist_scores`
+Each `domains[]` row carries `tokens` — the completion-token count the engine
+reported, when it reports one (the CLI engines do not), so a run's cost is
+visible in its own artifacts. Rows also carry `corrected_scores` and `off_shortlist_scores`
 (see the enforcement section above), and every model call gets a row — the four
 scouts and the Chief Analyst included, not just the five specialists.
 

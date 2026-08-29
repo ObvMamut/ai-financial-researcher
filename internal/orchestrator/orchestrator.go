@@ -382,7 +382,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			// stage was missing from the run's own accounting.
 			domainStatuses = append(domainStatuses, model.DomainStatus{
 				Domain: role, Status: r.Status, Err: r.Err,
-				Duration: r.Duration, Attempts: r.Attempts,
+				Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens,
 			})
 			if r.Status == model.StatusFailed {
 				agentStatus(ch, role, model.StatusFailed, &r)
@@ -598,6 +598,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			Err:                 r.Err,
 			Duration:            r.Duration,
 			Attempts:            r.Attempts,
+			Tokens:              r.Tokens,
 			Grounded:            grounded[i],
 			Ungrounded:          ungrounded[i],
 			CorrectedScores:     enf.Corrected,
@@ -663,7 +664,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// no row of its own; only the five specialists were accounted for.
 	domainStatuses = append(domainStatuses, model.DomainStatus{
 		Domain: "chief-analyst", Status: r.Status, Err: r.Err,
-		Duration: r.Duration, Attempts: r.Attempts,
+		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens,
 	})
 
 	var ideas *model.IdeasResult
