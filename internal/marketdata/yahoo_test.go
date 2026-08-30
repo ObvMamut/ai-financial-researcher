@@ -135,3 +135,24 @@ func TestYahooErrorResponses(t *testing.T) {
 		}
 	})
 }
+
+// Yahoo spells US class shares with a hyphen: BRK.B is BRK-B, and the dotted
+// form 404s. The universe carries the dotted form (it is what every other
+// source uses), and the universe-wide pre-screen made the gap visible — every
+// run silently lost Berkshire.
+func TestYahooSymbolMapsClassShares(t *testing.T) {
+	cases := map[string]string{
+		"BRK.B":   "BRK-B",
+		"BF.B":    "BF-B",
+		"AAPL":    "AAPL",
+		"^GSPC":   "^GSPC",
+		"ASML.AS": "ASML.AS", // a real exchange suffix stays dotted
+		"7203.T":  "7203.T",
+		"2330.TW": "2330.TW",
+	}
+	for in, want := range cases {
+		if got := yahooSymbol(in); got != want {
+			t.Errorf("yahooSymbol(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

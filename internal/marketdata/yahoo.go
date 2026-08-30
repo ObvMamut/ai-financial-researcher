@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/quant"
@@ -39,14 +41,26 @@ const DefaultPriceTTL = 4 * time.Hour
 
 func NewYahooClient(cache *Cache) *YahooClient {
 	base := "https://query1.finance.yahoo.com"
+	rerouted := false
 	// CFR_YAHOO_BASE reroutes chart requests (tests, proxies/mirrors).
 	if v := os.Getenv("CFR_YAHOO_BASE"); v != "" {
-		base = v
+		base, rerouted = v, true
+	}
+	// ~4 req/s sustained, burst 5. The universe-wide pre-screen makes this the
+	// pacing constraint of a cold run (~280 symbols ≈ 70s), which is the price
+	// of not hammering a keyless public endpoint.
+	//
+	// A rerouted base is by definition not Yahoo — it is a local fixture server
+	// or a mirror the operator chose — so there is nothing to be polite to and
+	// the throttle only makes the hermetic tests take a minute per run.
+	limiter := NewLimiter(2000, 240, 5)
+	if rerouted {
+		limiter = NewLimiter(math.MaxInt32, 1e6, 1e6)
 	}
 	return &YahooClient{
 		client:  &http.Client{Timeout: 20 * time.Second},
 		baseURL: base,
-		limiter: NewLimiter(2000, 240, 5), // ~4 req/s sustained, burst 5; a full run needs ~16 requests
+		limiter: limiter,
 		cache:   cache,
 		ttl:     DefaultPriceTTL,
 	}
@@ -112,7 +126,7 @@ func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Durat
 	}
 
 	u := fmt.Sprintf("%s/v8/finance/chart/%s?range=%s&interval=1d&includeAdjustedClose=true",
-		y.baseURL, url.PathEscape(symbol), yahooRange)
+		y.baseURL, url.PathEscape(yahooSymbol(symbol)), yahooRange)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -206,6 +220,21 @@ func (y *YahooClient) wait(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// yahooSymbol spells a ticker the way the chart endpoint wants it. Yahoo writes
+// US class shares with a hyphen — BRK.B is BRK-B — and 404s the dotted form,
+// which is what every other source and the universe CSVs use. A dot followed by
+// a known exchange suffix is a foreign listing and is left alone.
+//
+// One symbol in today's universe needs this (Berkshire), and every run silently
+// lost it until the universe-wide pre-screen made the 404 visible.
+func yahooSymbol(symbol string) string {
+	i := strings.LastIndex(symbol, ".")
+	if i <= 0 || IsForeignSuffix(symbol[i+1:]) {
+		return symbol
+	}
+	return symbol[:i] + "-" + symbol[i+1:]
 }
 
 func at(xs []float64, i int) float64 {
