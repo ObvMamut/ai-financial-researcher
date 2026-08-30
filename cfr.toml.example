@@ -145,10 +145,46 @@
 # The agy keyring-contention reason is then gone, so raise gemini_concurrency > 1.
 
 # ── Risk limits ──────────────────────────────────────────────────────────────
+# Enforced in Go after synthesis (docs/workflow/scoring.md). Every one of these
+# was a preference in a persona before it was a number here, and a model asked
+# for "usually 1-2 sigma" and "risk_reward >= 1.5 preferred" answers at the
+# cheapest edge of the band.
 #[risk]
+
+# Position sizing. Currency at risk per trade = account_equity x
+# risk_per_trade_pct / 100; shares = that divided by the stop distance, with any
+# one position capped at 25% of equity.
+#account_equity      = 100000
+#risk_per_trade_pct  = 0.5
+
+# Round-trip cost assumption (spread + commission + slippage), charged against
+# every expectancy calculation.
+#cost_bps = 30
+
+# Hard geometry limits, in units of sigma_daily x sqrt(timeframe_days).
+#rr_min           = 1.8
+#stop_sigma_min   = 1.0
+#stop_sigma_max   = 2.0
+#target_sigma_max = 3.5
+
 # 20-day average dollar volume below which a name is not tradeable in size. The
-# pre-screen drops anything under it, so such names never reach a model.
+# pre-screen drops anything under it, so such names never reach a model, and the
+# gate rejects any that slip through.
 #adv_min_usd = 20000000
+
+# Book-level limits: pairwise return correlation above which two same-direction
+# ideas are one position, and the bound on both the average absolute beta and the
+# net signed beta of the book.
+#max_pair_corr      = 0.75
+#max_portfolio_beta = 1.5
+
+# Daily expected return assumed in the expectancy simulation, in units of
+# sigma_daily. It has to be small: a driftless simulation puts every geometry at
+# about minus costs, and an optimistic one puts every geometry comfortably
+# positive. Measured across the geometries the bands permit, 0.05 puts all of
+# them between +97 and +149bps (the check never fires); 0.02 spreads them from
+# +10 to +64bps. Phase 5 replaces this prior with the system's realized hit rate.
+#edge_sigma_daily = 0.02
 
 # Optional keyed data providers. Yahoo needs no key; these enrich the packs.
 #[providers]

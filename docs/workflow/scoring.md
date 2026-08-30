@@ -119,9 +119,72 @@ Calibration guide (what the final number should mean):
 **Tie-breaks** (in order): better risk/reward → stronger quant confluence → stronger dated
 catalyst → less crowded positioning.
 
-**Diversification guard:** avoid 5 ideas that are effectively the same bet (same
-sector/region all one direction). More than 3 ideas in one sector triggers a corrective
-re-prompt.
+**Diversification guard:** avoid 5 ideas that are effectively the same bet. It is enforced
+by the risk gate below, on correlation and sector count rather than on sector count alone.
+
+## The risk gate
+
+After validation, `applyRiskGate` (`internal/orchestrator/riskgate.go`) applies the
+deterministic risk policy. Every limit here was a sentence in `agents/chief-analyst.md`
+before it was a number, and the 2026-08 runs answered those sentences at the cheapest edge
+of every band they allowed: a cluster of 1.0σ stops against "usually 1–2σ", and
+reward:risk ratios between 1.52 and 1.61 against "≥ 1.5 preferred".
+
+Let `σ = σ_daily · √h · close` for the idea's own `timeframe_days`.
+
+**Per idea — hard.** A violation earns one corrective re-prompt; an idea still violating
+after it is **dropped with the reason recorded**. Returning four ideas is the intended
+outcome, not a shortfall.
+
+| Check | Limit | Config |
+|---|---|---|
+| Stop distance | `1.0σ … 2.0σ` | `stop_sigma_min`, `stop_sigma_max` |
+| Target distance | `≤ 3.5σ` | `target_sigma_max` |
+| Reward:risk | `≥ 1.8` | `rr_min` |
+| Liquidity | `AvgDollarVol20 ≥ $20M` | `adv_min_usd` |
+| Expectancy | `> 0` | `cost_bps`, `edge_sigma_daily` |
+
+**Expectancy** is a seeded Monte-Carlo first-passage simulation (5,000 lognormal paths,
+seed derived from the idea, so the same idea always scores the same number). Two details
+decide whether the number means anything:
+
+- The step is `exp(μ − σ²/2 + σz)`, not `exp(μ + σz)`. Without the Itô term the *expected
+  price* grows at `μ + σ²/2`, which pays every idea free return in proportion to its
+  volatility — exactly backwards.
+- A breached stop books at the price that breached it, not at the stop level. A daily step
+  from 92 to 85 through a stop at 90 loses 15%, not 10%. A target books exactly, because a
+  limit order at that price fills at that price or better.
+
+Together those two were worth about +40bps to every idea scored — more than the entire
+edge prior. `edge_sigma_daily` is that prior, in units of σ_daily per day, and it is small
+on purpose: at 0.05 every geometry the bands permit measures between +97 and +149bps and
+the check never fires; at 0.02 the same geometries spread from +10 to +64bps. Phase 5
+replaces the prior with the system's own realized hit rate.
+
+Each idea records `expectancy_bps` and `breakeven_win_rate` (`risk / (risk + reward)` — the
+hit rate the geometry alone demands).
+
+**Per idea — penalties**, applied in Go and logged:
+
+- A verified earnings date inside the holding window that neither `position_note` nor `why`
+  mentions: **−10**.
+- A date in the prose that appears in none of the run's verified facts: **−10**. This warns
+  rather than rejects — a date can be legitimately derived — but a dated claim is the most
+  persuasive thing a report carries and the easiest to invent.
+
+**Position sizing** is computed, never authored: `risk$ = account_equity ×
+risk_per_trade_pct / 100`, `shares = floor(risk$ / |entry − stop|)`, with any one position
+capped at 25% of equity. `shares`, `notional` and `risk_amount` go into `ideas.json`.
+"Half size" is not a position.
+
+**Book level — re-prompt, never a drop.** Dropping a sound idea because of its neighbour is
+not a risk control.
+
+- Two same-direction ideas whose daily returns correlate above `max_pair_corr` (0.75).
+- More than 2 ideas sharing a sector.
+- Average absolute beta, or net signed beta, beyond `max_portfolio_beta` (1.5).
+- All ideas one direction: **logged only**. Deliberately not a short quota — in the runs
+  this system has produced, the token short was reliably the worst idea in the book.
 
 ## Degraded path
 

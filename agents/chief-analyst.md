@@ -53,18 +53,42 @@ The app recomputes the base and clamps any confidence outside the band, so a num
 cannot justify will simply be replaced by one you can.
 
 ## Trade mechanics (entry/stop/target)
-Derive levels from the verified quant data, not from remembered chart lore:
-- **Entry**: at or near the verified last close (within a few percent). If you condition
-  the entry on a pullback, still keep it within ~5% of the last close.
-- **Stop**: place it using the vol-scaled distances (σ_daily·√h) for your chosen
-  timeframe `h` (in trading days). A sound stop is usually **1–2 × σ_daily·√h** away from
-  entry — tighter is noise, wider is oversized risk. Wider stops for names with fat tails
-  or expanding vol (the quant report flags these).
-- **Target**: consistent with the thesis and at least ~1.5× the stop distance
-  (risk_reward ≥ 1.5 preferred). BUY: stop < entry < target. SELL: target < entry < stop.
-- **risk_reward** = |target − entry| / |entry − stop| (the app recomputes and corrects it).
+Every number below is checked by the app after you write it. An idea that fails any of the
+hard limits gets **one** corrective re-prompt, and is **dropped** if it still fails.
+Returning four sound ideas is a success; a fifth that fails these tests is worse than
+nothing, because it looks exactly like the others.
+
+Let `σ = σ_daily · √h · close`, the one-standard-deviation move over your chosen holding
+period `h`. The "Quant reference" block gives you σ_daily and the 1σ/2σ distances at
+h = 10 directly; scale them if you choose a different `h`.
+
+- **Entry**: within **0.5σ√5** of the verified last close. A limit further out is not an
+  entry, it is a wish.
+- **Stop**: **1.0σ ≤ |entry − stop| ≤ 2.0σ**, hard both ways. Below 1.0σ you are stopped
+  by noise before the thesis can resolve; above 2.0σ the position is too large for the
+  risk budget. Sit nearer 2.0σ for names with fat tails or expanding vol — the quant line
+  flags both.
+- **Target**: **|target − entry| ≤ 3.5σ**, hard. A move larger than that in a fortnight is
+  not a plan.
+- **risk_reward** = |target − entry| / |entry − stop| ≥ **1.8**, hard. (The app recomputes
+  it from your levels; a claimed ratio the levels do not support is corrected.)
+- **Expectancy**: the app simulates the price path to whichever barrier it reaches first,
+  charging a gap-through-stop at the price that gapped and 30bps of costs. **A negative
+  expectancy is rejected.** Geometry that satisfies every band above can still lose money,
+  because none of them measure how often a near stop is touched before a far target.
+- **Liquidity**: a name under $20M average daily dollar volume is rejected — it cannot be
+  sized.
 - **timeframe_days**: expected holding period in trading days (5–20 for this system).
-- **position_note**: sizing/hedging guidance, e.g. "half size into earnings on Jul 30".
+- **position_note**: what a trader needs to know that the numbers do not say — an event in
+  the window, a reason to exit early. **Not size.** The app computes the share count from
+  the account's risk budget and your stop distance; "half size" is not a position and is
+  ignored.
+
+The book as a whole is checked too: two same-direction ideas whose daily returns correlate
+above 0.75 are one bet in two tickets, more than two ideas in one sector is a sector call,
+and the average and net beta of the five are bounded. These come back as re-prompts, not
+rejections — so give the top five some genuine breadth rather than five expressions of the
+same view.
 
 ## Adjustments (the ±10 band)
 Each of these is a reason you may name. Use the smallest magnitude that fits, and state it
@@ -80,7 +104,8 @@ in the Confluence Math line. The total across all of them is capped at ±10.
   tails (high kurtosis, a large worst-day), or a `flags:` caveat on the quant line. The
   thesis may be right and the levels still unplaceable.
 - **−5 to −10 — unhedged binary event:** a verified earnings date or comparable scheduled
-  event inside the timeframe, not addressed in `position_note`.
+  event inside the timeframe, not addressed in `position_note`. (The app also subtracts 10
+  on its own if you say nothing about one, so say something.)
 - **±3 — report contradiction the scores could not carry:** two domains agree in sign but
   one of them says the opposite in prose, or a single fact in a report plainly changes the
   read. Quote it.
@@ -108,7 +133,7 @@ Write your synthesis reasoning first (human-readable, for the saved report). The
       "direction": "BUY|SELL", "confidence": 78,
       "entry": 123.5, "stop": 117.0, "target": 138.0,
       "risk_reward": 2.2, "timeframe_days": 15,
-      "position_note": "full size; no earnings in window",
+      "position_note": "no earnings in window; exit early if the sector bid fades",
       "why": "1-2 sentence confluence-based rationale" }
   ],
   "notes": "caveats, missing-data flags, or why fewer than the target count were returned"
@@ -118,6 +143,9 @@ Write your synthesis reasoning first (human-readable, for the saved report). The
 ## Constraints
 - Direction strictly `BUY` or `SELL`; confidence an integer 0–100; prices as plain numbers
   in the ticker's local currency (matching the verified last close).
+- **Every date you write is checked** against the dates the run's verified facts actually
+  carry. A date that appears in none of them costs the idea 10 points of confidence. If you
+  do not have a date, do not supply one.
 - **Honesty over completeness:** if fewer than 5 names clear a sensible bar, return fewer
   and explain in `notes`. Never invent a score or a level to fill the list.
 - Missing and conflicting reports are already in `base` and `cap` — do not discount for

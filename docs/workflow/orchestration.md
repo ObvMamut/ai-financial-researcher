@@ -85,6 +85,15 @@ This runs after citation scrubbing and before `WriteReport`. It replaced an advi
 warning (`overclaimedCoverage`) that logged the discrepancy and shipped the invented
 scores anyway.
 
+## The risk gate
+
+After validation, `applyRiskGate` (`internal/orchestrator/riskgate.go`) sizes every idea
+and checks its geometry, liquidity and simulated expectancy against the `[risk]` policy,
+plus book-level correlation, sector concentration and beta. Violations join the corrective
+re-prompt; per-idea violations that survive it cost the idea its place, with the reason in
+both the run warnings and `ideas.json`'s `notes`. Limits and rationale:
+`docs/workflow/scoring.md`.
+
 ## Anchoring confidence
 
 Between the specialists and the Chief, `computeBaseScores`

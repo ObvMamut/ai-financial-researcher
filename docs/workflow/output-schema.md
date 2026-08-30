@@ -146,7 +146,12 @@ The deliverable: direction, confidence, trade mechanics, quick why.
       "why": "Momentum confluence with upbeat product-cycle catalyst; macro and fundamentals supportive, sentiment not yet crowded.",
       "price_at_generation": 211.4,
       "base_confidence": 72,
-      "domain_scores": {"quant": 8, "news": 6, "fundamentals": 4, "sentiment": 0, "macro": -2}
+      "domain_scores": {"quant": 8, "news": 6, "fundamentals": 4, "sentiment": 0, "macro": -2},
+      "shares": 47,
+      "notional": 9964.0,
+      "risk_amount": 493.5,
+      "expectancy_bps": 34.2,
+      "breakeven_win_rate": 0.333
     }
   ],
   "notes": "Optional: caveats, missing-data flags, or why fewer than 5 ideas were returned."
@@ -177,6 +182,15 @@ overwritten):
   `scoring.md`.
 - `domain_scores`: the per-domain signed strengths (−10…+10) behind that base, recorded so
   the scoreboard can attribute a result to the domains that called it.
+- `shares` / `notional` / `risk_amount`: the computed position — the account's risk budget
+  divided by the idea's own stop distance, capped at 25% of equity.
+- `expectancy_bps`: the simulated expected value in basis points of entry, net of costs.
+- `breakeven_win_rate`: `risk / (risk + reward)`, the hit rate the geometry alone demands.
+
+An idea that violates a hard risk limit (stop band, target ceiling, reward:risk floor,
+liquidity, or negative expectancy) is **dropped** after one corrective re-prompt, with the
+reason appended to `notes`. Fewer than 5 ideas is the intended outcome in that case. See
+`scoring.md` for the limits.
 
 All mechanics fields are optional (`omitempty`) so ideas.json from older runs still loads.
 
@@ -204,6 +218,12 @@ type TradeIdea struct {
     PriceAtGeneration float64        `json:"price_at_generation,omitempty"`
     BaseConfidence    int            `json:"base_confidence,omitempty"`
     DomainScores      map[string]int `json:"domain_scores,omitempty"`
+
+    Shares           int     `json:"shares,omitempty"`
+    Notional         float64 `json:"notional,omitempty"`
+    RiskAmount       float64 `json:"risk_amount,omitempty"`
+    ExpectancyBps    float64 `json:"expectancy_bps,omitempty"`
+    BreakevenWinRate float64 `json:"breakeven_win_rate,omitempty"`
 }
 
 type IdeasResult struct {
@@ -221,7 +241,7 @@ Validation (warn, don't drop, except invalid directions): direction ∈ {BUY,SEL
 confidence ∈ [0,100] **and inside `base_confidence ± chief_adjust_band`** (clamped, and the
 coverage cap binds over the band — see `scoring.md`), level ordering per direction, entry
 within ±5% of the verified last close, stop distance within 0.5–5 × σ_daily·√h, risk_reward
-recomputed from levels. Hard ordering/diversification violations, and a confidence more
-than twice the band out, trigger one corrective re-prompt of the chief.
+recomputed from levels. Hard level-ordering violations, every risk-gate violation, and a
+confidence more than twice the band out trigger one corrective re-prompt of the chief.
 Malformed output → degraded mechanical fallback from specialist scores (confidence ≤ 55),
 never a crash.

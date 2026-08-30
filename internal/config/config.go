@@ -36,13 +36,15 @@ type Settings struct {
 	// Funnel geometry. PrescreenTopPerIndex is how many of each index's
 	// highest-composite names the Stage 0.5 table shows its scout;
 	// MaxShortlist caps the merged shortlist and MaxPerIndex caps one index's
-	// share of it. ADVMinUSD is the 20-day average dollar volume below which a
-	// name is not tradeable in size and never reaches a model. Zero means the
-	// orchestrator's defaults (15 / 12 / 5 / $20M).
+	// share of it. Zero means the orchestrator's defaults (15 / 12 / 5).
 	PrescreenTopPerIndex int
 	MaxShortlist         int
 	MaxPerIndex          int
-	ADVMinUSD            float64
+
+	// Risk is the deterministic post-synthesis risk policy. Zero fields take the
+	// orchestrator's defaults. Risk.ADVMinUSD also gates the Stage 0.5
+	// pre-screen: a name too thin to trade should not reach a model either.
+	Risk model.RiskConfig
 
 	// ChiefAdjustBand is how far, in confidence points, the Chief Analyst may
 	// move an idea from its computed base score before the orchestrator clamps
@@ -130,11 +132,21 @@ type fileFormat struct {
 		FredKey         string `toml:"fred_key"`
 	} `toml:"providers"`
 
-	// Risk holds the tradeability and sizing limits. Only the liquidity floor is
-	// consumed today (the pre-screen drops anything below it); the rest of the
-	// table arrives with the risk gate.
+	// Risk holds the tradeability, geometry and sizing limits enforced after
+	// synthesis (docs/workflow/scoring.md). Every one of these was a preference
+	// in a persona before it was a number here.
 	Risk struct {
-		ADVMinUSD float64 `toml:"adv_min_usd"`
+		AccountEquity    float64 `toml:"account_equity"`
+		RiskPerTradePct  float64 `toml:"risk_per_trade_pct"`
+		CostBps          float64 `toml:"cost_bps"`
+		RRMin            float64 `toml:"rr_min"`
+		StopSigmaMin     float64 `toml:"stop_sigma_min"`
+		StopSigmaMax     float64 `toml:"stop_sigma_max"`
+		TargetSigmaMax   float64 `toml:"target_sigma_max"`
+		ADVMinUSD        float64 `toml:"adv_min_usd"`
+		MaxPairCorr      float64 `toml:"max_pair_corr"`
+		MaxPortfolioBeta float64 `toml:"max_portfolio_beta"`
+		EdgeSigmaDaily   float64 `toml:"edge_sigma_daily"`
 	} `toml:"risk"`
 
 	// API configures the remote OpenAI-compatible cheap-research engine. Prefer
@@ -222,9 +234,22 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
 	setInt(&s.ChiefAdjustBand, f.ChiefAdjustBand)
-	if f.Risk.ADVMinUSD > 0 {
-		s.ADVMinUSD = f.Risk.ADVMinUSD
+	setPosFloat := func(dst *float64, v float64) {
+		if v > 0 {
+			*dst = v
+		}
 	}
+	setPosFloat(&s.Risk.AccountEquity, f.Risk.AccountEquity)
+	setPosFloat(&s.Risk.RiskPerTradePct, f.Risk.RiskPerTradePct)
+	setPosFloat(&s.Risk.CostBps, f.Risk.CostBps)
+	setPosFloat(&s.Risk.RRMin, f.Risk.RRMin)
+	setPosFloat(&s.Risk.StopSigmaMin, f.Risk.StopSigmaMin)
+	setPosFloat(&s.Risk.StopSigmaMax, f.Risk.StopSigmaMax)
+	setPosFloat(&s.Risk.TargetSigmaMax, f.Risk.TargetSigmaMax)
+	setPosFloat(&s.Risk.ADVMinUSD, f.Risk.ADVMinUSD)
+	setPosFloat(&s.Risk.MaxPairCorr, f.Risk.MaxPairCorr)
+	setPosFloat(&s.Risk.MaxPortfolioBeta, f.Risk.MaxPortfolioBeta)
+	setPosFloat(&s.Risk.EdgeSigmaDaily, f.Risk.EdgeSigmaDaily)
 	if len(f.Indices) > 0 {
 		s.Indices = f.Indices
 	}
@@ -385,9 +410,16 @@ func (s *Settings) applyEnv() {
 	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
 	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
 	setPosInt(&s.ChiefAdjustBand, "CFR_CHIEF_ADJUST_BAND")
-	if v := os.Getenv("CFR_ADV_MIN_USD"); v != "" {
-		if x, err := strconv.ParseFloat(v, 64); err == nil && x > 0 {
-			s.ADVMinUSD = x
+	envFloat := func(dst *float64, key string) {
+		if v := os.Getenv(key); v != "" {
+			if x, err := strconv.ParseFloat(v, 64); err == nil && x > 0 {
+				*dst = x
+			}
 		}
 	}
+	envFloat(&s.Risk.ADVMinUSD, "CFR_ADV_MIN_USD")
+	envFloat(&s.Risk.AccountEquity, "CFR_ACCOUNT_EQUITY")
+	envFloat(&s.Risk.RiskPerTradePct, "CFR_RISK_PER_TRADE_PCT")
+	envFloat(&s.Risk.RRMin, "CFR_RR_MIN")
+	envFloat(&s.Risk.EdgeSigmaDaily, "CFR_EDGE_SIGMA_DAILY")
 }

@@ -15,6 +15,8 @@
 #   no-tail     - specialists emit prose with no JSON tail (domain must fail)
 #   off-base    - chief-analyst scores every idea 99, far outside the computed
 #                 base ± band (confidence clamp + corrective re-prompt)
+#   bad-levels  - chief-analyst places a 0.9σ stop at reward:risk 1.4, and does
+#                 it again when asked to fix it (risk gate re-prompt, then drop)
 prompt="$2"
 mode="${CFR_FAKE_MODE:-ok}"
 
@@ -83,6 +85,47 @@ EOF
 fi
 
 # ── Chief Analyst ───────────────────────────────────────────────────────────
+#
+# Levels are derived from the verified quant block in the prompt rather than
+# hard-coded. The risk gate checks stops and targets against each name's own
+# realized volatility, so fixed numbers against a synthetic price series are
+# rejected — correctly, but they would test nothing. Deriving them means the
+# hermetic run exercises the gate on coherent ideas.
+emit_ideas() {
+  # $1 = mode string, $2 = how many ideas, $3 = confidence,
+  # $4/$5 = stop and target distance in sigma (default 1.5 / 3.0)
+  ss="${4:-1.5}"; ts="${5:-3.0}"
+  printf '%s\n' "$prompt" | awk -v mode="$1" -v topn="$2" -v conf="$3" -v ss="$ss" -v ts="$ts" '
+    $1=="-" && $3=="close" {
+      t=$2; sub(/:$/,"",t); c=$4+0; sd=0
+      for (i=1;i<=NF;i++) if ($i=="\xcf\x83_daily") { v=$(i+1); gsub(/[%,]/,"",v); sd=v+0 }
+      if (c<=0 || sd<=0 || (t in seen)) next
+      seen[t]=1; n++; tick[n]=t; cl[t]=c; sig[t]=sd
+    }
+    END {
+      # NVDA first when present: the hermetic assertions name it as rank 1.
+      k=0
+      if ("NVDA" in cl) { order[++k]="NVDA" }
+      for (i=1;i<=n && k<topn;i++) if (tick[i]!="NVDA") order[++k]=tick[i]
+      printf "Synthesis reasoning. Confluence Math per idea: base +/- adjustments.\n\n```json\n"
+      printf "{\n  \"mode\": \"%s\",\n  \"generated_at\": \"2026-07-18T00:00:00Z\",\n  \"ideas\": [\n", mode
+      for (i=1;i<=k;i++) {
+        t=order[i]; c=cl[t]
+        # 1 sigma over a 15-day hold, in price. The default 1.5/3.0 sits
+        # inside the gate bands at reward:risk 2.0.
+        u = sd_unit(sig[t], c)
+        printf "    {\"rank\": %d, \"ticker\": \"%s\", \"direction\": \"BUY\", \"confidence\": %d,\n", i, t, conf
+        printf "     \"entry\": %.2f, \"stop\": %.2f, \"target\": %.2f,\n", c, c-ss*u, c+ts*u
+        printf "     \"risk_reward\": %.2f, \"timeframe_days\": 15,\n", ts/ss
+        printf "     \"position_note\": \"sized by the app\",\n"
+        printf "     \"why\": \"Fake synthesis for %s; levels derived from verified sigma.\"}%s\n", t, (i<k ? "," : "")
+      }
+      printf "  ],\n  \"notes\": \"Hermetic fake synthesis.\"\n}\n```\n"
+    }
+    function sd_unit(sd, c) { return (sd/100) * sqrt(15) * c }
+  '
+}
+
 if has "# Agent: Chief Analyst"; then
   case "$mode" in
     chief-fail) echo "fake chief crashed" >&2; exit 1 ;;
@@ -99,98 +142,20 @@ EOF
   if [ "$mode" = "off-base" ]; then
     # Confidence asserted rather than derived: the exact failure the base-score
     # anchor exists to catch.
-    cat <<'EOF'
-Synthesis reasoning. Every name is a screaming buy.
-
-```json
-{
-  "mode": "independent",
-  "generated_at": "2026-07-18T00:00:00Z",
-  "ideas": [
-    {"rank": 1, "ticker": "NVDA", "name": "NVIDIA Corporation", "index": "sp500",
-     "direction": "BUY", "confidence": 99,
-     "entry": 176.0, "stop": 165.5, "target": 198.0,
-     "risk_reward": 2.1, "timeframe_days": 15,
-     "position_note": "Full size",
-     "why": "Conviction."},
-    {"rank": 2, "ticker": "NKE", "name": "Nike Inc.", "index": "sp500",
-     "direction": "BUY", "confidence": 99,
-     "entry": 58.0, "stop": 54.0, "target": 68.0,
-     "risk_reward": 2.5, "timeframe_days": 15,
-     "position_note": "Full size",
-     "why": "Contrarian conviction against every domain."}
-  ],
-  "notes": "Confidence asserted, not derived."
-}
-```
-EOF
+    emit_ideas independent 5 99
+    exit 0
+  fi
+  if [ "$mode" = "bad-levels" ]; then
+    # A stop inside the noise band at a reward:risk the old prose merely
+    # "preferred" against — and unchanged after the corrective re-prompt.
+    emit_ideas independent 5 55 0.9 1.26
     exit 0
   fi
   if has "**topN:** 1"; then
-    cat <<'EOF'
-Single-stock synthesis. Confluence Math: fundamentals 8 bull, technicals 6 bull, news 5 bull.
-
-```json
-{
-  "mode": "single",
-  "generated_at": "2026-07-18T00:00:00Z",
-  "ideas": [
-    {"rank": 1, "ticker": "AAPL", "name": "Apple Inc.", "index": "sp500",
-     "direction": "BUY", "confidence": 71,
-     "entry": 210.0, "stop": 199.5, "target": 231.0,
-     "risk_reward": 2.0, "timeframe_days": 15,
-     "position_note": "Half size into July 30 earnings",
-     "why": "Fundamentals and technicals align bullish; sentiment neutral."}
-  ],
-  "notes": "Single-stock verdict."
-}
-```
-EOF
+    emit_ideas single 1 71
     exit 0
   fi
-  cat <<'EOF'
-Synthesis reasoning. Deduped ASML/ASML.AS. Confluence Math per idea follows.
-
-```json
-{
-  "mode": "independent",
-  "generated_at": "2026-07-18T00:00:00Z",
-  "ideas": [
-    {"rank": 1, "ticker": "NVDA", "name": "NVIDIA Corporation", "index": "sp500",
-     "direction": "BUY", "confidence": 82,
-     "entry": 176.0, "stop": 165.5, "target": 198.0,
-     "risk_reward": 2.1, "timeframe_days": 15,
-     "position_note": "Full size, exit before Aug earnings",
-     "why": "Four domains bullish; pullback entry near verified support."},
-    {"rank": 2, "ticker": "ASML", "name": "ASML Holding NV", "index": "nq100",
-     "direction": "BUY", "confidence": 78,
-     "entry": 890.0, "stop": 845.0, "target": 985.0,
-     "risk_reward": 2.1, "timeframe_days": 20,
-     "position_note": "Full size",
-     "why": "Bookings inflection with cheap-vs-growth multiple; base breakout."},
-    {"rank": 3, "ticker": "JPM", "name": "JPMorgan Chase & Co.", "index": "sp500",
-     "direction": "BUY", "confidence": 74,
-     "entry": 305.0, "stop": 292.0, "target": 330.0,
-     "risk_reward": 1.9, "timeframe_days": 15,
-     "position_note": "Full size",
-     "why": "Post-earnings drift with raised guidance; macro supportive."},
-    {"rank": 4, "ticker": "7203.T", "name": "Toyota Motor Corporation", "index": "asia100",
-     "direction": "BUY", "confidence": 70,
-     "entry": 3400.0, "stop": 3230.0, "target": 3750.0,
-     "risk_reward": 2.1, "timeframe_days": 20,
-     "position_note": "Full size",
-     "why": "Yen tailwind plus undervalued-growth bonus; sentiment uncrowded."},
-    {"rank": 5, "ticker": "NKE", "name": "Nike Inc.", "index": "sp500",
-     "direction": "SELL", "confidence": 66,
-     "entry": 58.0, "stop": 62.4, "target": 49.0,
-     "risk_reward": 2.0, "timeframe_days": 15,
-     "position_note": "Half size",
-     "why": "Bearish across news/fundamentals/technicals; guidance cut catalyst."}
-  ],
-  "notes": "ASML kept over ASML.AS duplicate. Diversified across four sectors."
-}
-```
-EOF
+  emit_ideas independent 5 55
   exit 0
 fi
 

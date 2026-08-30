@@ -109,6 +109,11 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived
    from vol-scaled distances) as a fenced ```json block that Go parses into
    `[]model.TradeIdea`. Confidence outside the band is clamped in Go.
+5. **Risk gate (in-process, no model):** `riskgate.go` sizes each idea from the account's
+   risk budget and checks stop/target bands, reward:risk, liquidity and simulated
+   expectancy, plus book-level correlation, sector and beta. Violations buy one corrective
+   re-prompt; per-idea violations that survive it drop the idea. Shipping fewer than 5
+   ideas is the intended outcome.
 
 Single-stock mode: shortlist = `[ticker]`, skip step 1, `topN = 1`.
 

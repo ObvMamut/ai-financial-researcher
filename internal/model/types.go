@@ -164,6 +164,57 @@ type TradeIdea struct {
 	// whether the trade worked.
 	BaseConfidence int            `json:"base_confidence,omitempty"`
 	DomainScores   map[string]int `json:"domain_scores,omitempty"`
+
+	// Position size, computed in Go from the account's risk budget and the
+	// idea's own stop distance — never authored by the model. "Half size" is
+	// not a position; a share count is.
+	Shares     int     `json:"shares,omitempty"`
+	Notional   float64 `json:"notional,omitempty"`
+	RiskAmount float64 `json:"risk_amount,omitempty"` // currency at risk if the stop fills
+
+	// ExpectancyBps is the simulated expected value of the trade in basis
+	// points of the entry price, net of costs, under an explicit small edge.
+	// BreakevenWinRate is the hit rate the geometry alone requires to break
+	// even: risk / (risk + reward). An idea whose implied win rate is
+	// implausible is a losing construction however good the thesis.
+	ExpectancyBps    float64 `json:"expectancy_bps,omitempty"`
+	BreakevenWinRate float64 `json:"breakeven_win_rate,omitempty"`
+}
+
+// RiskConfig is the deterministic risk policy applied after synthesis. Every
+// number here was a sentence in a persona that the model could satisfy at its
+// own edge: "a sound stop is usually 1-2 sigma" produced a run of 1.02-sigma
+// stops, and "risk_reward >= 1.5 preferred" produced a run of 1.52s.
+type RiskConfig struct {
+	// AccountEquity and RiskPerTradePct set the position size: the currency at
+	// risk per trade is equity x pct/100.
+	AccountEquity   float64 `json:"account_equity"`
+	RiskPerTradePct float64 `json:"risk_per_trade_pct"`
+	// CostBps is the round-trip cost assumption (spread + commission + slippage)
+	// charged against every expectancy calculation.
+	CostBps float64 `json:"cost_bps"`
+	// RRMin is the hard reward:risk floor.
+	RRMin float64 `json:"rr_min"`
+	// StopSigmaMin/Max bound the stop distance in units of sigma_daily x sqrt(h).
+	StopSigmaMin float64 `json:"stop_sigma_min"`
+	StopSigmaMax float64 `json:"stop_sigma_max"`
+	// TargetSigmaMax bounds how far a target may sit from entry in the same units.
+	TargetSigmaMax float64 `json:"target_sigma_max"`
+	// ADVMinUSD is the 20-day average dollar volume below which a name is not
+	// tradeable in size. It gates both the pre-screen and the final ideas.
+	ADVMinUSD float64 `json:"adv_min_usd"`
+	// MaxPairCorr is the pairwise return correlation above which two
+	// same-direction ideas are treated as one position.
+	MaxPairCorr float64 `json:"max_pair_corr"`
+	// MaxPortfolioBeta bounds both the average absolute beta of the book and its
+	// net signed beta.
+	MaxPortfolioBeta float64 `json:"max_portfolio_beta"`
+	// EdgeSigmaDaily is the daily expected return assumed in the expectancy
+	// simulation, in units of sigma_daily. A driftless check is vacuous —
+	// gambler's ruin makes EV about minus costs for any geometry — and an
+	// optimistic one is vacuous the other way, so the prior is explicit and
+	// configurable rather than hidden. P5 replaces it with realized hit rates.
+	EdgeSigmaDaily float64 `json:"edge_sigma_daily"`
 }
 
 // IdeasResult is the Chief Analyst's final JSON payload.

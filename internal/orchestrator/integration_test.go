@@ -245,11 +245,20 @@ func TestIndependentRun(t *testing.T) {
 	if complete.Ideas == nil {
 		t.Fatal("EventComplete has nil Ideas")
 	}
-	if got := len(complete.Ideas.Ideas); got != 5 {
-		t.Fatalf("want 5 ideas, got %d", got)
+	// Not "exactly 5". The risk gate drops constructions it cannot justify, and
+	// shipping four is the intended outcome — an unsound idea is worse than a
+	// missing one because it looks like the others.
+	if got := len(complete.Ideas.Ideas); got < 1 || got > 5 {
+		t.Fatalf("want between 1 and 5 ideas, got %d", got)
 	}
 	if complete.Ideas.Ideas[0].Ticker != "NVDA" {
 		t.Errorf("rank-1 ticker = %q, want NVDA", complete.Ideas.Ideas[0].Ticker)
+	}
+	for i, idea := range complete.Ideas.Ideas {
+		if idea.Rank != i+1 {
+			t.Errorf("ranks not contiguous after the risk gate: %+v", complete.Ideas.Ideas)
+			break
+		}
 	}
 
 	// L2 trade mechanics must arrive parsed and consistent.
@@ -825,6 +834,78 @@ func TestSpecialistsReceiveTheComputedBlocksTheirPersonasAssume(t *testing.T) {
 	}
 	if pack.RegimeBlock() == "" {
 		t.Errorf("benchmarks present but no regime block renders")
+	}
+}
+
+// Every number the gate enforces used to be a preference in a persona, and a
+// model asked for "usually 1–2σ" and "risk_reward ≥ 1.5 preferred" satisfies it
+// at the cheapest edge of the band. Here the fake Chief does exactly that, and
+// does it again when asked to fix it.
+func TestRiskGateRePromptsThenDropsUnsoundConstructions(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "bad-levels")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	joined := strings.Join(logs, "\n")
+
+	if !strings.Contains(joined, "corrective re-prompt") {
+		t.Errorf("a 0.9σ stop at reward:risk 1.4 must buy one corrective call:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Risk gate dropped") {
+		t.Errorf("an unfixed construction must be dropped, not shipped:\n%s", joined)
+	}
+	if len(complete.Ideas.Ideas) != 0 {
+		t.Errorf("every idea here is unsound; got %d survivors: %+v",
+			len(complete.Ideas.Ideas), complete.Ideas.Ideas)
+	}
+	if !strings.Contains(complete.Ideas.Notes, "Risk gate dropped") {
+		t.Errorf("notes must say why the list is short: %q", complete.Ideas.Notes)
+	}
+	// The reason travels into the run's own warnings, not only the log.
+	if !strings.Contains(strings.Join(complete.Meta.Warnings, "\n"), "risk gate:") {
+		t.Errorf("gate findings missing from metadata warnings: %v", complete.Meta.Warnings)
+	}
+}
+
+// An idea that survives arrives sized: a share count, a notional, the currency
+// at risk, and the expectancy its geometry implies.
+func TestSurvivingIdeasArriveSized(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil || len(complete.Ideas.Ideas) == 0 {
+		t.Fatal("no ideas survived the gate")
+	}
+	for _, idea := range complete.Ideas.Ideas {
+		if idea.Shares <= 0 || idea.Notional <= 0 || idea.RiskAmount <= 0 {
+			t.Errorf("%s is not sized: %+v", idea.Ticker, idea)
+		}
+		// $100k equity at 0.5% risk is $500 a trade; rounding down to whole
+		// shares can only ever land under it.
+		if idea.RiskAmount > 500 {
+			t.Errorf("%s risks %.2f, above the $500 per-trade budget", idea.Ticker, idea.RiskAmount)
+		}
+		if idea.BreakevenWinRate <= 0 || idea.BreakevenWinRate >= 1 {
+			t.Errorf("%s breakeven win rate = %v", idea.Ticker, idea.BreakevenWinRate)
+		}
+	}
+	ideasJSON := readFile(t, filepath.Join(runDir(t, cfg.RunsDir), "ideas.json"))
+	for _, want := range []string{"shares", "notional", "risk_amount", "expectancy_bps", "breakeven_win_rate"} {
+		if !strings.Contains(ideasJSON, want) {
+			t.Errorf("ideas.json missing %q:\n%s", want, ideasJSON)
+		}
 	}
 }
 

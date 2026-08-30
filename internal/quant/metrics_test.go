@@ -318,3 +318,35 @@ func TestRegimeBlockReadsTheBenchmarksAsAMarketRead(t *testing.T) {
 		t.Error("benchmarks should render in a stable sorted order")
 	}
 }
+
+func TestCorrelationOfAlignedSeries(t *testing.T) {
+	// The risk gate asks how the ideas relate to each other, not how each
+	// relates to its benchmark: five ideas at ρ ≈ 0.9 are one position.
+	rng := &lcg{state: 11}
+	base := make([]float64, 200)
+	for i := range base {
+		base[i] = 0.01 * rng.sym()
+	}
+	a := seriesFromLogReturns("A", 100, base)
+	same := seriesFromLogReturns("B", 50, base)
+	inverse := make([]float64, len(base))
+	for i, r := range base {
+		inverse[i] = -r
+	}
+	opposite := seriesFromLogReturns("C", 50, inverse)
+
+	if c, ok := Correlation(a, same); !ok || math.Abs(c-1) > 1e-9 {
+		t.Errorf("identical return paths: corr = %v (ok=%v), want 1", c, ok)
+	}
+	if c, ok := Correlation(a, opposite); !ok || math.Abs(c+1) > 1e-9 {
+		t.Errorf("mirrored return paths: corr = %v (ok=%v), want -1", c, ok)
+	}
+	// Too little shared history is not a correlation of zero — it is no answer.
+	short := seriesFromLogReturns("D", 50, base[:5])
+	if _, ok := Correlation(a, short); ok {
+		t.Error("5 shared sessions should report no usable correlation")
+	}
+	if _, ok := Correlation(a, nil); ok {
+		t.Error("a nil series should report no usable correlation")
+	}
+}

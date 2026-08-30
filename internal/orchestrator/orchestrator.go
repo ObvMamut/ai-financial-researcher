@@ -99,9 +99,12 @@ type Config struct {
 	// MaxPerIndex caps how many of those names one index may contribute before
 	// the merit backfill. Zero means 5.
 	MaxPerIndex int
-	// ADVMinUSD is the 20-day average dollar volume below which a name is not
-	// tradeable in size and is dropped in the pre-screen. Zero means $20M.
-	ADVMinUSD float64
+	// Risk is the deterministic risk policy applied after synthesis: stop and
+	// target bands, the reward:risk floor, expectancy, liquidity, book-level
+	// correlation and beta, and position sizing. Zero fields take the defaults
+	// in riskDefaults. Risk.ADVMinUSD also gates the Stage 0.5 pre-screen, so a
+	// name too thin to trade never reaches a model either.
+	Risk model.RiskConfig
 
 	// ChiefAdjustBand is how far, in confidence points, the Chief Analyst may
 	// move an idea from its computed base score. Confidence beyond the band is
@@ -192,9 +195,7 @@ func (c *Config) applyDefaults() {
 	if c.MaxPerIndex <= 0 {
 		c.MaxPerIndex = 5
 	}
-	if c.ADVMinUSD <= 0 {
-		c.ADVMinUSD = defaultADVMinUSD
-	}
+	c.Risk = riskDefaults(c.Risk)
 	// Ten points is roughly one confidence band in scoring.md's calibration
 	// table: enough for the Chief to express a real cross-domain read the
 	// arithmetic cannot see, not enough to overwrite it.
@@ -388,7 +389,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// filter a computed shortlist instead of inventing one from familiarity.
 	prescreenParams := defaultPrescreenParams()
 	prescreenParams.TopPerIndex = cfg.PrescreenTopPerIndex
-	prescreenParams.ADVMinUSD = cfg.ADVMinUSD
+	prescreenParams.ADVMinUSD = cfg.Risk.ADVMinUSD
 	var prescreen *Prescreen
 	if cfg.Mode == model.ModeIndependent {
 		prescreenStart := time.Now()
@@ -534,7 +535,6 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// The pre-screen already fetched every one of these series; the shared cache
 	// serves them back here without a second round trip.
 	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, shortlist)
-	_ = quantSeries // consumed by the risk gate
 	logPackErrors(ch, "quant", quantPack.Errors)
 	dataErrors = append(dataErrors, prefixed("quant", quantPack.Errors)...)
 	if len(quantPack.ByTicker) > 0 {
@@ -562,6 +562,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	eventDates := map[string]time.Time{}
+	verifiedDates := map[string]bool{}
+	if quantPack.AsOf != "" {
+		verifiedDates[quantPack.AsOf] = true
+	}
 	specChans := make([]<-chan model.Report, len(specialists))
 	grounded := make([]bool, len(specialists))
 	ungrounded := make([][]string, len(specialists))
@@ -576,6 +580,20 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// the risk checks read the same map the news prompt renders.
 		for t, d := range pack.EventDates {
 			eventDates[t] = d
+		}
+		// Every date this run actually collected, so a date in the final output
+		// that appears nowhere here can be recognised for what it is.
+		for _, td := range pack.ByTicker {
+			for _, f := range td.Facts {
+				if !f.AsOf.IsZero() {
+					verifiedDates[f.AsOf.UTC().Format("2006-01-02")] = true
+				}
+			}
+		}
+		for _, f := range pack.MacroFacts {
+			if !f.AsOf.IsZero() {
+				verifiedDates[f.AsOf.UTC().Format("2006-01-02")] = true
+			}
 		}
 		// Multiples are computed here rather than asked for: the filings give
 		// shares and EPS, the quant pack gives the price, and dividing them is
@@ -772,6 +790,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Shortlist: shortlist,
 		Bases:     bases,
 		Events:    eventDates,
+		Dates:     verifiedDates,
+		Series:    quantSeries,
 	}
 	for _, b := range bases {
 		if b.Direction == "" {
@@ -834,15 +854,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		ideas, parseErr = parseIdeas(r.Stdout)
 		if parseErr == nil {
 			warnings = validateIdeas(ideas, cfg, verifiedCtx)
+			findings := applyRiskGate(ideas, verifiedCtx, cfg.Risk)
 
 			// Corrective re-prompt for violations worth a second model call:
-			// concentration, inverted stop/target levels, and a confidence
-			// scored against a different thesis than the domains reported.
+			// concentration, inverted stop/target levels, a confidence scored
+			// against a different thesis than the domains reported, and every
+			// risk-gate violation.
 			var repromptReasons []string
+			for _, f := range findings {
+				log(ch, "risk: "+f.Message)
+				repromptReasons = append(repromptReasons, f.Message)
+			}
 			for _, w := range warnings {
-				if strings.Contains(w.Message, "diversification fail") {
-					repromptReasons = append(repromptReasons, "your top ideas are over-concentrated: cover at least 3 different sectors")
-				}
 				if strings.Contains(w.Message, "level ordering") {
 					repromptReasons = append(repromptReasons, fmt.Sprintf("fix %s: stop/entry/target must be ordered for the trade direction (BUY: stop < entry < target; SELL: target < entry < stop)", w.Ticker))
 				}
@@ -861,8 +884,30 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas
 						warnings = validateIdeas(ideas, cfg, verifiedCtx)
+						findings = applyRiskGate(ideas, verifiedCtx, cfg.Risk)
 					}
 				}
+			}
+
+			// One corrective call is the budget. An idea whose construction is
+			// still negative-expectancy or noise-stopped after that is dropped:
+			// shipping four ideas is a success, and an unsound one is worse than
+			// none because it looks like the others.
+			for _, f := range findings {
+				msg := f.Message
+				if f.Ticker != "" {
+					msg = strings.TrimPrefix(msg, f.Ticker+": ")
+				}
+				warnings = append(warnings, warning{Ticker: f.Ticker, Message: "risk gate: " + msg})
+			}
+			if dropped := dropViolating(ideas, findings); len(dropped) > 0 {
+				log(ch, fmt.Sprintf("Risk gate dropped %d idea(s) that a corrective re-prompt did not fix", len(dropped)))
+				for _, d := range dropped {
+					log(ch, "dropped: "+d)
+				}
+				ideas.Notes = strings.TrimSpace(ideas.Notes + fmt.Sprintf(
+					" Risk gate dropped %d idea(s) after one corrective re-prompt: %s. Fewer ideas is the intended outcome — an unsound construction is worse than none.",
+					len(dropped), strings.Join(dropped, "; ")))
 			}
 		} else {
 			log(ch, fmt.Sprintf("warn: parse ideas JSON: %v", parseErr))

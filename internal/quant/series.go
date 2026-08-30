@@ -111,6 +111,25 @@ func AlignedReturns(a, b *Series) (ra, rb []float64) {
 	return ra, rb
 }
 
+// Correlation is the Pearson correlation of two series' aligned daily log
+// returns. The bool is false when they share too little history to mean
+// anything — 20 common sessions is already generous for a book-level check.
+//
+// It is exported because the risk gate asks a question the metrics pack cannot:
+// not how each name relates to its benchmark, but how the ideas relate to each
+// other. Five ideas at ρ ≈ 0.9 are one position in five tickets.
+func Correlation(a, b *Series) (float64, bool) {
+	ra, rb := AlignedReturns(a, b)
+	if len(ra) < 20 {
+		return 0, false
+	}
+	sa, sb := stddev(ra), stddev(rb)
+	if sa == 0 || sb == 0 {
+		return 0, false
+	}
+	return covariance(ra, rb) / (sa * sb), true
+}
+
 // ── small stat helpers (shared within the package) ──────────────────────────
 
 func mean(xs []float64) float64 {

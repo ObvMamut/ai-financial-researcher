@@ -34,6 +34,12 @@ type verified struct {
 	Bases []BaseScore
 	// Events maps a ticker to its next verified scheduled binary event.
 	Events map[string]time.Time
+	// Dates is every date any verified fact in this run carried, formatted
+	// YYYY-MM-DD. It is what a date in an idea's prose is checked against.
+	Dates map[string]bool
+	// Series holds the daily bars behind Quant, for the book-level correlation
+	// check. Reading them back off disk would answer the same question slower.
+	Series map[string]*quant.Series
 }
 
 // validateIdeas normalises and checks the Chief Analyst's ideas against
@@ -64,8 +70,6 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 	}
 
 	validIdeas := make([]model.TradeIdea, 0, len(res.Ideas))
-
-	sectors := make(map[string]int)
 
 	for i := range res.Ideas {
 		idea := &res.Ideas[i]
@@ -113,7 +117,6 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 			if idea.Index == "" {
 				idea.Index = c.Index
 			}
-			sectors[c.Sector]++
 		}
 
 		// 4. Confidence is anchored to the computed base score.
@@ -122,23 +125,14 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 		// 5. Trade mechanics: ordering, plausibility vs verified data, RR.
 		warnings = append(warnings, validateLevels(idea, v.Quant)...)
 
-		// 6. A scheduled binary event inside the holding window.
-		warnings = append(warnings, checkEventWindow(idea, v.Events, res.GeneratedAt)...)
-
 		validIdeas = append(validIdeas, *idea)
 	}
 
 	res.Ideas = validIdeas
 
-	// 7. Diversification check (simplistic: > 3 ideas in same sector)
-	if cfg.Mode == model.ModeIndependent && len(res.Ideas) >= 4 {
-		for sector, count := range sectors {
-			if count > 3 {
-				warnings = append(warnings, warning{Message: "diversification fail: too many ideas in " + sector})
-				// We don't drop here, just flag it for the caller to decide if re-prompt is needed
-			}
-		}
-	}
+	// Sector concentration used to be checked here at "more than 3", and again
+	// in the risk gate at "more than 2" — two rules for one question, disagreeing.
+	// The gate's is the one that survives.
 
 	return warnings
 }
@@ -275,51 +269,4 @@ func anchorConfidence(idea *model.TradeIdea, bases map[string]BaseScore, band in
 		msg += fmt.Sprintf(" — the domains read %s, so a %s starts from zero", b.Direction, idea.Direction)
 	}
 	return []warning{{Ticker: idea.Ticker, Message: msg}}
-}
-
-// eventAcknowledgement is what an idea must contain somewhere in its own words
-// for a scheduled event inside the window to count as accounted for. This is
-// deliberately generous: the check exists to catch silence, not to grade prose.
-var eventAcknowledgement = []string{"earnings", "report", "results", "event", "catalyst"}
-
-// checkEventWindow flags an idea whose holding period spans a verified earnings
-// date that the idea never mentions.
-//
-// An unresolved binary event inside the window is the largest uncontrolled risk
-// a swing trade carries, and until the calendar existed the pipeline had no way
-// to know about one: the news persona asked the model for earnings dates, and on
-// a search-less engine it supplied them from memory. Now the date is verified,
-// so an idea that holds through it silently is a real finding.
-func checkEventWindow(idea *model.TradeIdea, events map[string]time.Time, generatedAt string) []warning {
-	if len(events) == 0 {
-		return nil
-	}
-	date, ok := events[strings.ToUpper(strings.TrimSpace(idea.Ticker))]
-	if !ok {
-		return nil
-	}
-	from := time.Now().UTC()
-	if t, err := time.Parse(time.RFC3339, generatedAt); err == nil {
-		from = t.UTC()
-	}
-	h := idea.TimeframeDays
-	if h <= 0 {
-		h = 10
-	}
-	// Trading days to calendar days: five sessions a week, rounded up so the
-	// window is never understated.
-	end := from.AddDate(0, 0, (h*7+4)/5)
-	if date.Before(from.Truncate(24*time.Hour)) || date.After(end) {
-		return nil
-	}
-
-	text := strings.ToLower(idea.PositionNote + " " + idea.Why)
-	for _, word := range eventAcknowledgement {
-		if strings.Contains(text, word) {
-			return nil
-		}
-	}
-	return []warning{{Ticker: idea.Ticker, Message: fmt.Sprintf(
-		"earnings on %s falls inside the %d-day window and neither position_note nor why acknowledges it",
-		date.Format("2006-01-02"), h)}}
 }
