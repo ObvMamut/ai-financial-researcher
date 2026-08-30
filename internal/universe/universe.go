@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"sort"
 	"strings"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
@@ -148,37 +149,55 @@ func Dedupe(candidates []model.Candidate) []model.Candidate {
 	return out
 }
 
-// CapBalanced trims the shortlist to at most max names, round-robin across the
-// candidates' source indices so no single index dominates. Order within an
-// index is preserved; candidates without an Index share one group.
-func CapBalanced(candidates []model.Candidate, max int) []model.Candidate {
-	if max <= 0 || len(candidates) <= max {
+// CapMerit trims the shortlist to at most max names, keeping the highest-scoring
+// candidates and letting no single index contribute more than maxPerIndex until
+// the merit backfill below.
+//
+// It replaces the old round-robin cap, which took each index's candidates in the
+// order its scout happened to emit them. That treated "first name the model
+// typed" as a ranking, so a strongly-supported nomination could be dropped for a
+// throwaway one from another index. score is supplied by the caller (the
+// orchestrator aligns each candidate's pre-screen composite with the direction
+// it was nominated in), keeping this package free of scoring policy.
+//
+// Two passes. The first respects maxPerIndex, which is what spreads the book
+// across regions. The second fills any slots the cap left empty, in pure score
+// order — the cap is a diversification preference, not a reason to hand back a
+// five-name shortlist when twelve were asked for and twelve exist. Ties keep
+// their input order.
+//
+// The result is always ordered best-first, including when nothing needed
+// trimming: everything downstream — the shortlist block each specialist reads,
+// the Chief's ranking prompt, shortlist.json — is more useful ranked than in
+// whatever order the scouts were collected in.
+func CapMerit(candidates []model.Candidate, max, maxPerIndex int, score func(model.Candidate) float64) []model.Candidate {
+	if max <= 0 {
 		return candidates
 	}
-	groups := make(map[string][]model.Candidate)
-	var order []string
-	for _, c := range candidates {
-		if _, ok := groups[c.Index]; !ok {
-			order = append(order, c.Index)
-		}
-		groups[c.Index] = append(groups[c.Index], c)
-	}
+	ranked := make([]model.Candidate, len(candidates))
+	copy(ranked, candidates)
+	sort.SliceStable(ranked, func(i, j int) bool { return score(ranked[i]) > score(ranked[j]) })
+
 	out := make([]model.Candidate, 0, max)
-	for len(out) < max {
-		progressed := false
-		for _, k := range order {
-			if len(groups[k]) == 0 {
-				continue
-			}
-			out = append(out, groups[k][0])
-			groups[k] = groups[k][1:]
-			progressed = true
-			if len(out) == max {
-				break
-			}
-		}
-		if !progressed {
+	taken := make([]bool, len(ranked))
+	perIndex := map[string]int{}
+	for i, c := range ranked {
+		if len(out) == max {
 			break
+		}
+		if maxPerIndex > 0 && perIndex[c.Index] >= maxPerIndex {
+			continue
+		}
+		perIndex[c.Index]++
+		taken[i] = true
+		out = append(out, c)
+	}
+	for i, c := range ranked {
+		if len(out) == max {
+			break
+		}
+		if !taken[i] {
+			out = append(out, c)
 		}
 	}
 	return out

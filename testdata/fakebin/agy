@@ -21,6 +21,9 @@ has() { case "$prompt" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 # ── Scouts ──────────────────────────────────────────────────────────────────
 if has "# Agent: Scout"; then
   [ "$mode" = "scout-empty" ] && exit 0
+  # Echo a marker when the Stage 0.5 table actually reached the prompt, so the
+  # hermetic run can assert the scouts screened data rather than a bare list.
+  has "### Computed pre-screen" && echo "saw-prescreen-table"
   if has "**Index:** sp500"; then
     cat <<'EOF'
 Screened the S&P 500 constituent list for 1-4 week swing setups.

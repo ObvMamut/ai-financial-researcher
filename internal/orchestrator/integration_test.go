@@ -3,15 +3,20 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"hash/fnv"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
 // The integration tests run the full pipeline against the fake model CLIs in
@@ -36,20 +41,93 @@ func fakeBinaries(t *testing.T) map[model.CLI]string {
 	return map[model.CLI]string{model.CLIGemini: agy, model.CLIClaude: claude}
 }
 
-// fakeYahoo serves the marketdata fixture for every chart request so Stage 1.5
-// never touches the network. Registered via CFR_YAHOO_BASE.
+// fakeYahoo serves a synthetic two-year daily series per symbol so the whole
+// pipeline runs without touching the network. Registered via CFR_YAHOO_BASE.
+//
+// It generates rather than replays a fixture because the universe-wide
+// pre-screen ranks names against each other: one canned five-bar series for
+// every symbol would leave every metric zero, every name excluded for short
+// history, and the ranking untested. The path is seeded from the symbol, so a
+// given ticker gets the same series on every run and the ranking is stable.
 func fakeYahoo(t *testing.T) {
 	t.Helper()
-	fixture, err := os.ReadFile("../marketdata/testdata/yahoo_chart_sample.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sym := path.Base(r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(fixture)
+		w.Write(syntheticChart(sym))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+}
+
+// syntheticChart builds a Yahoo chart response for one symbol: 400 weekday bars
+// ending at the most recent weekday, on a deterministic random walk whose drift
+// and volatility are derived from the symbol. Dollar volume is well clear of the
+// pre-screen's liquidity floor so exclusions are driven by the test, not by the
+// fixture.
+func syntheticChart(symbol string) []byte {
+	h := fnv.New32a()
+	h.Write([]byte(symbol))
+	seed := int64(h.Sum32())
+	rng := rand.New(rand.NewSource(seed))
+
+	const bars = 400
+	drift := (float64(seed%21) - 10) / 10000 // ±0.1% per day
+	vol := 0.008 + float64(seed%7)/1000      // 0.8%–1.4% daily
+	price := 50 + float64(seed%450)          // $50–$500
+
+	// Walk back to the start date over weekdays, then forward again.
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	for day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+		day = day.AddDate(0, 0, -1)
+	}
+	dates := make([]time.Time, 0, bars)
+	for d := day; len(dates) < bars; d = d.AddDate(0, 0, -1) {
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			continue
+		}
+		dates = append(dates, d)
+	}
+
+	ts := make([]int64, bars)
+	open := make([]float64, bars)
+	high := make([]float64, bars)
+	low := make([]float64, bars)
+	closes := make([]float64, bars)
+	volume := make([]float64, bars)
+	for i := range dates {
+		j := bars - 1 - i // oldest first
+		ts[j] = dates[i].Unix()
+	}
+	for i := 0; i < bars; i++ {
+		o := price
+		price *= math.Exp(drift + vol*rng.NormFloat64())
+		open[i] = o
+		closes[i] = price
+		high[i] = math.Max(o, price) * (1 + vol/2)
+		low[i] = math.Min(o, price) * (1 - vol/2)
+		volume[i] = 2e6 + rng.Float64()*1e6
+	}
+
+	type quote struct {
+		Open   []float64 `json:"open"`
+		High   []float64 `json:"high"`
+		Low    []float64 `json:"low"`
+		Close  []float64 `json:"close"`
+		Volume []float64 `json:"volume"`
+	}
+	resp := map[string]any{"chart": map[string]any{"result": []map[string]any{{
+		"timestamp": ts,
+		"indicators": map[string]any{
+			"quote":    []quote{{Open: open, High: high, Low: low, Close: closes, Volume: volume}},
+			"adjclose": []map[string]any{{"adjclose": closes}},
+		},
+	}}}}
+	out, err := json.Marshal(resp)
+	if err != nil {
+		panic(err)
+	}
+	return out
 }
 
 // sharedDataDir is one cache dir for the whole test binary so the daily-keyed
@@ -188,7 +266,7 @@ func TestIndependentRun(t *testing.T) {
 		"news.md", "fundamentals.md", "quant.md", "sentiment.md", "macro.md",
 		"chief-analyst.md",
 		"shortlist.json", "ideas.json", "metadata.json",
-		"quant.json", filepath.Join("prices", "NVDA.json"),
+		"quant.json", "prescreen.json", filepath.Join("prices", "NVDA.json"),
 	}
 	for _, f := range wantFiles {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
@@ -218,6 +296,14 @@ func TestIndependentRun(t *testing.T) {
 		seen[c.Ticker] = true
 		if c.Index == "" {
 			t.Errorf("candidate %s missing source index", c.Ticker)
+		}
+		// Identity comes from the universe row, not from the model, and the
+		// sector travels with the name into every downstream prompt.
+		if c.Sector == "" {
+			t.Errorf("candidate %s missing sector — identity was not enriched from the universe", c.Ticker)
+		}
+		if c.Reason == "" {
+			t.Errorf("candidate %s lost its scout reason on the way to the shortlist", c.Ticker)
 		}
 	}
 	if !seen["NVDA"] {
@@ -270,7 +356,7 @@ func TestIndependentRun(t *testing.T) {
 	}
 	// Every stage's wall clock is recorded; 79% of a real run's time used to be
 	// unattributed because the in-process stages had no timings at all.
-	for _, want := range []string{"screening", "quant", "analysis", "synthesis"} {
+	for _, want := range []string{"prescreen", "screening", "quant", "analysis", "synthesis"} {
 		if _, ok := meta.Stages[want]; !ok {
 			t.Errorf("no wall-clock entry for stage %s: %v", want, meta.Stages)
 		}
@@ -532,4 +618,120 @@ func containsLog(logs []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+// Stage 0.5 ranks the whole selected universe before any model is called, and
+// the scouts screen that ranking rather than a bare ticker list. Without it the
+// scouts nominated on familiarity and invented the "recent breakout" that
+// justified each pick.
+func TestPrescreenFeedsTheScouts(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500", "nq100"}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	dir := runDir(t, cfg.RunsDir)
+
+	var ps Prescreen
+	data, err := os.ReadFile(filepath.Join(dir, "prescreen.json"))
+	if err != nil {
+		t.Fatalf("prescreen.json: %v", err)
+	}
+	if err := json.Unmarshal(data, &ps); err != nil {
+		t.Fatalf("prescreen.json: %v", err)
+	}
+	if ps.Params.Formula == "" {
+		t.Error("prescreen.json does not record the formula its scores came from")
+	}
+	// Every constituent of both selected indices is accounted for, and nothing
+	// from an index that was not selected leaked in.
+	uni, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := len(uni.Constituents("sp500")) + len(uni.Constituents("nq100"))
+	if len(ps.Rows) != want {
+		t.Errorf("prescreen has %d rows, want one per constituent of the selected indices (%d)", len(ps.Rows), want)
+	}
+	for _, r := range ps.Rows {
+		if r.Index != "sp500" && r.Index != "nq100" {
+			t.Fatalf("row from an unselected index: %+v", r)
+		}
+	}
+	// Rows are ranked, with the excluded ones last.
+	sawExcluded := false
+	for i, r := range ps.Rows {
+		if r.Excluded != "" {
+			sawExcluded = true
+			continue
+		}
+		if sawExcluded {
+			t.Fatalf("scorable row %s at position %d follows an excluded one", r.Ticker, i)
+		}
+	}
+	if _, ok := ps.Row("NVDA"); !ok {
+		t.Error("prescreen has no row for NVDA")
+	}
+
+	// The table reached the model: the fake scout echoes a marker when its
+	// prompt carries one.
+	for _, idx := range cfg.Indices {
+		report := readFile(t, filepath.Join(dir, "scout-"+idx+".md"))
+		if !strings.Contains(report, "saw-prescreen-table") {
+			t.Errorf("scout-%s ran without the pre-screen table in its prompt", idx)
+		}
+	}
+
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "Stage 0.5") {
+		t.Errorf("run log never mentions the pre-screen stage:\n%s", joined)
+	}
+	if !strings.Contains(joined, "merit") {
+		t.Errorf("run log does not attribute the shortlist to the pre-screen merit:\n%s", joined)
+	}
+}
+
+// A scout nomination that is not in the index it was handed is a hallucinated
+// symbol. It used to reach the shortlist and consume a data-provider slot and an
+// analysis slot on a company the run had never screened.
+func TestOffUniverseNominationsNeverReachTheShortlist(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	uni, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := map[string]bool{}
+	for _, c := range uni.Constituents("sp500") {
+		known[strings.ToUpper(c.Ticker)] = true
+	}
+	for _, c := range complete.Meta.Shortlist {
+		if !known[strings.ToUpper(c.Ticker)] {
+			t.Errorf("shortlisted %s is not in the index that was screened", c.Ticker)
+		}
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }

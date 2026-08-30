@@ -30,6 +30,19 @@
 # Bounded worker pool size for parallel agent subprocesses.
 #workers = 4
 
+# ── Funnel geometry ──────────────────────────────────────────────────────────
+# Stage 0.5 ranks every constituent of the selected indices on a computed quant
+# composite before any model is called; the scouts screen that ranking.
+
+# How many of each index's highest-composite names the scout's table shows. The
+# five weakest are always appended as short candidates.
+#prescreen_top_per_index = 15
+
+# Cap on the merged shortlist that reaches the specialists, and on how many of
+# those names one index may contribute before the merit backfill.
+#max_shortlist = 12
+#max_per_index = 5
+
 # Default indices screened by independent research (empty/omitted = all four).
 # Valid keys: sp500, nq100, eu50, asia100. The TUI picker overrides this per run.
 #indices = ["sp500", "eu50"]
@@ -122,6 +135,12 @@
 #   [models]
 #   gemini = "haiku"
 # The agy keyring-contention reason is then gone, so raise gemini_concurrency > 1.
+
+# ── Risk limits ──────────────────────────────────────────────────────────────
+#[risk]
+# 20-day average dollar volume below which a name is not tradeable in size. The
+# pre-screen drops anything under it, so such names never reach a model.
+#adv_min_usd = 20000000
 
 # Optional keyed data providers. Yahoo needs no key; these enrich the packs.
 #[providers]

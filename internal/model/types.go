@@ -81,12 +81,20 @@ type Constituent struct {
 }
 
 // Candidate is a scout's nomination for the shortlist.
+//
+// Ticker, Name, Sector and Index are authoritative: the orchestrator overwrites
+// whatever the model wrote with the universe's own row for that symbol, so a
+// nomination cannot rename a company or move it to another index. Bias and
+// Reason are the scout's, and travel with the name into every downstream prompt
+// — a specialist that knows *why* a ticker is on the shortlist can confirm or
+// contradict the thesis instead of describing the company from scratch.
 type Candidate struct {
 	Ticker string `json:"ticker"`
 	Name   string `json:"name"`
 	Bias   Bias   `json:"bias"`
 	Reason string `json:"reason"`
-	Index  string `json:"index,omitempty"` // source index key (set by the orchestrator)
+	Sector string `json:"sector,omitempty"` // from the universe row (set by the orchestrator)
+	Index  string `json:"index,omitempty"`  // source index key (set by the orchestrator)
 }
 
 // ScoutResult is the structured tail a scout emits for one index.

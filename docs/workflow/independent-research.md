@@ -1,20 +1,84 @@
 # Workflow: Independent Research
 
-Goal: from a universe of 278 names (curated index samples, see `universe.md`), produce
+Goal: from a universe of 274 names (curated index samples, see `universe.md`), produce
 **5 ranked swing-trade ideas**.
 
-A two-stage funnel keeps cost bounded: cheap Gemini screening narrows the universe, then a
-fixed set of specialist agents analyze only the shortlist, then Claude synthesizes.
+A funnel keeps cost bounded: an in-process quant pre-screen ranks the whole universe,
+cheap screening filters that ranking, a fixed set of specialist agents analyze only the
+shortlist, then Claude synthesizes.
 
-## Stage 1 — Screening (Gemini Scouts)
+## Stage 0.5 — Universe-wide pre-screen (in-process, no model)
+
+`internal/orchestrator/prescreen.go` fetches ~2 years of daily OHLCV for **every**
+constituent of the selected indices (plus each index benchmark) and computes the
+`internal/quant` metrics for all of them. Cold, that is ~275 Yahoo requests at the
+client's ~4/s pace (≈70s); warm, it is served from the shared data cache and costs
+nothing. No model is called.
+
+**Composite**, z-scored *within each index* so a quiet index still nominates its own
+leaders instead of losing every slot to the strongest one:
+
+```
+score = z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63) − 0.5·z(strZ)
+```
+
+where `rs63 = ret63d − benchmark ret63d`, and the last term applies **only when the recent
+move runs with the trend** (`sign(strZ) == sign(mom12-1)`). That is the short-term
+reversal case: a name that has just spiked on top of an uptrend gives the spike back,
+while an uptrend that has just dipped is a pullback entry. The rule is symmetric, so a
+name that has already collapsed is penalised as a short for the same reason.
+
+The composite is a **signed long ranking**: high means a strong long, low means a strong
+short.
+
+Each term is **winsorised at the 2nd/98th percentile within the index** before
+standardising. Cross-sectional factor scores are routinely decided by one extreme value:
+on 2026-08-28 Micron's 12-1 momentum read +644% against an S&P sample whose next-best was
++74%, scoring it +7.0 — three times the runner-up — while inflating the standard deviation
+enough to squash every other name toward zero. Clipping the tails keeps the outlier ranked
+first, where it belongs, without letting it set the scale for the other ninety-odd names.
+
+**Hard exclusions** (dropped before scoring, and left out of the mean and standard
+deviation so they cannot distort other names' z-scores):
+
+| Rule | Reason |
+|---|---|
+| `AvgDollarVol20 < risk.adv_min_usd` (default $20M) | A swing position sized off a real account cannot be entered or exited in it. |
+| `Bars < 60` | Too little history for the momentum term to mean anything. |
+| No price history at all | Fetch failed; recorded as an error and an excluded row. |
+
+`volTrend > 1.5` is flagged, not excluded: expanding volatility makes the level
+arithmetic downstream unstable and the scout is told to say so.
+
+Every constituent gets a row — including excluded ones — in `runs/<ts>/prescreen.json`,
+together with the parameters and the formula string. The price series themselves stay in
+the shared data cache rather than filling the run directory with a few hundred files;
+Stage 1.5 reads back the dozen it needs for free.
+
+## Stage 1 — Screening (Scouts)
 
 - One **Scout** subprocess per index: SP500, NQ100, EU50, Asia100 (4 parallel).
-- Each scout receives its index's constituent list (from `internal/universe`) and returns
-  **~5–10 candidate setups** with a one-line reason and a rough bias (long/short).
+- Each scout receives the **pre-screen table** for its index — the top
+  `prescreen_top_per_index` rows (default 15) plus the bottom 5 as short candidates, with
+  every measured column — followed by the full constituent list. It returns **~5–10
+  nominations** with a one-line reason and a bias, each reason citing a column from the
+  table. Names outside the table may be nominated only on reasoning that does not depend
+  on price data the scout was not given.
+- **Nominations are validated against the index's own constituent list.** A symbol that
+  is not in it is dropped and logged: a hallucinated ticker used to reach the shortlist
+  and consume a data fetch and an analysis slot on a company the run never screened.
+  Ticker spelling, company name, sector and index are then taken from the universe row,
+  not from the model.
 - The orchestrator **merges and dedupes** the four shortlists (exact repeats and
   cross-listings like `ASML`/`ASML.AS` collapse, preferring the unsuffixed primary
-  listing), then **caps the result at 12 names** round-robin across the source indices
-  (`universe.CapBalanced`). The final shortlist is recorded in `runs/<ts>/shortlist.json`.
+  listing), then trims to `max_shortlist` (default 12) by **merit**
+  (`universe.CapMerit`): each nomination scores its pre-screen composite *aligned with the
+  direction it was nominated in* — `+score` for bullish, `−score` for bearish, 0 for
+  neutral or for a name with no computed row. At most `max_per_index` (default 5) names
+  come from one index; if that leaves slots empty they are backfilled in pure score
+  order, so a single-index run still returns a full shortlist.
+- The final shortlist is recorded in `runs/<ts>/shortlist.json`, carrying each name's
+  sector and the scout's bias and reason.
 
 Persona: `agents/scout.md`. Output: see `output-schema.md` (shortlist schema).
 
@@ -43,9 +107,12 @@ total — not per ticker):
 | Macro         | `agents/macro.md`        | Regime, rates, sector/region tailwinds & risks    |
 
 The quant specialist receives the full computed pack as ground truth; news and sentiment
-get compact verified price lines so their narratives stay anchored. Each report scores
-every shortlisted ticker on its domain (bias + strength) so the Chief Analyst can measure
-confluence.
+get compact verified price lines so their narratives stay anchored. Every specialist — and
+the Chief Analyst — receives the shortlist as a block carrying each name's sector, source
+index, and the scout's bias and reason, so a domain can confirm or contradict the thesis
+the name was nominated on instead of describing the company from scratch. Each report
+scores every shortlisted ticker on its domain (bias + strength) so the Chief Analyst can
+measure confluence.
 
 ## Stage 3 — Synthesis (Claude Chief Analyst)
 
@@ -58,9 +125,14 @@ it into `[]model.TradeIdea`, validates the mechanics, and the TUI renders the re
 ## Flow summary
 
 ```
-4 Scouts (parallel) → merged shortlist (deduped, capped at 12)
+Stage 0.5: Yahoo OHLCV for all 274 constituents → quant composite, ranked
+           per index (no model call) → runs/<ts>/prescreen.json
         │
-Stage 1.5: Yahoo OHLCV → internal/quant metrics (no model call)
+4 Scouts (parallel), each screening its index's ranked table
+        │
+merged shortlist (validated, deduped, trimmed to 12 by merit)
+        │
+Stage 1.5: quant metrics for the shortlist (cache hits from Stage 0.5)
         │
 5 Specialists (parallel, each covers shortlist; quant gets the computed pack)
         │
@@ -69,6 +141,9 @@ Chief Analyst (Claude) → top 5 ideas (direction, confidence, entry/stop/target
 
 ## Quality / degradation
 
+- If the pre-screen cannot price a name, that name is an excluded row with a recorded
+  error; if it cannot price anything for an index, that scout falls back to the plain
+  constituent list rather than being handed an empty table.
 - If a scout fails, the run proceeds with the remaining indices.
 - If a specialist fails, the Chief Analyst is told and lowers confidence for affected names.
 - Minimum to produce results: at least 2 specialist reports and a non-empty shortlist.

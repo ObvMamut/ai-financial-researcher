@@ -43,9 +43,11 @@ context + output sections per call.
 ## Concurrency
 
 - A **bounded worker pool** runs subprocesses in parallel, default cap **4** (configurable).
-- Stage ordering is enforced by the orchestrator: scouts complete → Stage 1.5 fetches
-  price data and computes quant metrics in-process (no model call) → specialists run →
-  Chief Analyst runs last (it depends on all specialist reports).
+- Stage ordering is enforced by the orchestrator: Stage 0.5 ranks the whole selected
+  universe in-process (no model call) → scouts screen that ranking and complete →
+  Stage 1.5 fetches price data and computes quant metrics for the shortlist (mostly cache
+  hits from Stage 0.5) → specialists run → Chief Analyst runs last (it depends on all
+  specialist reports).
 - Within a stage, agents run concurrently up to the cap.
 
 ## Timeouts, errors, retries
@@ -86,8 +88,13 @@ Everything for a run is written under `runs/<timestamp>/`:
 
 ```
 runs/2026-06-01T14-30-05/
+  prescreen.json          # universe-wide quant ranking (Stage 0.5), one row per
+                          # constituent incl. excluded ones + the params that ranked
+                          # them. The few hundred price series behind it stay in the
+                          # shared data cache rather than in the run directory.
   scout-sp500.md  scout-nq100.md  scout-eu50.md  scout-asia100.md
-  shortlist.json
+  shortlist.json          # merged, validated, merit-trimmed; carries sector + the
+                          # scout's bias and reason
   prices/<ticker>.json    # raw daily OHLCV per shortlisted ticker (Yahoo, '^' → '_')
   quant.json              # computed quant metrics pack (Stage 1.5)
   data/<domain>.json      # provider data packs (EDGAR/FRED/AV, when keys are set).
@@ -108,7 +115,7 @@ Beyond the outcome and per-domain statuses:
 |---|---|
 | `engine`, `engine_model` | which cheap-research engine and model ran the scouts and specialists |
 | `synthesis_model` | the Claude model the Chief Analyst used |
-| `stages` | wall-clock ms per stage: `screening`, `quant`, `analysis`, `synthesis`. Only per-agent durations were kept before, leaving the in-process stages — most of a run's wall time — unaccounted for |
+| `stages` | wall-clock ms per stage: `prescreen`, `screening`, `quant`, `analysis`, `synthesis`. Only per-agent durations were kept before, leaving the in-process stages — most of a run's wall time — unaccounted for |
 | `data_errors` | every provider failure from every pack, prefixed by domain. These previously lived only in `data/<domain>.json`, so a run that lost eight tickers to rate limiting read like one that lost none |
 | `persona_sha` | short hash per persona file. Personas are runtime data, editable with no code change, so nothing else makes a run's outcome attributable to the prompts that produced it |
 

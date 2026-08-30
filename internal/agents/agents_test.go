@@ -153,3 +153,78 @@ func TestChiefAnalystHasNoCapabilityBlock(t *testing.T) {
 		t.Error("the chief analyst is a synthesis role and needs no capability block")
 	}
 }
+
+// The scout used to receive a bare ticker list and was asked to name the best
+// setups in it — with no prices and no search, the only thing it could rank on
+// was familiarity. The computed table is what it now screens from, so it has to
+// actually reach the prompt, ahead of the constituent list.
+func TestScoutPromptCarriesPrescreenTable(t *testing.T) {
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	table := "| rank | ticker | score | mom12-1 |\n|---:|---|---:|---:|\n| 1 | NVDA | +2.10 | +48.0% |\n"
+	p, err := reg.AssemblePrompt(PromptParams{
+		Role:                 "scout",
+		Mode:                 model.ModeIndependent,
+		RunTS:                time.Now(),
+		IndexKey:             "sp500",
+		IndexConstituentList: "AAPL | Apple Inc. | Info Tech | NASDAQ\n",
+		PrescreenTable:       table,
+	})
+	if err != nil {
+		t.Fatalf("AssemblePrompt scout: %v", err)
+	}
+	if !strings.Contains(p, table) {
+		t.Fatalf("scout prompt does not carry the pre-screen table:\n%s", p)
+	}
+	if strings.Index(p, table) > strings.Index(p, "### Constituent list") {
+		t.Error("the ranked table must precede the constituent list — it is what the scout screens from")
+	}
+
+	// With no table (a pre-screen that fetched nothing) the prompt must degrade
+	// to the plain list rather than carry an empty, authoritative-looking heading.
+	bare, err := reg.AssemblePrompt(PromptParams{
+		Role: "scout", Mode: model.ModeIndependent, RunTS: time.Now(),
+		IndexKey: "sp500", IndexConstituentList: "AAPL | Apple Inc. | Info Tech | NASDAQ\n",
+	})
+	if err != nil {
+		t.Fatalf("AssemblePrompt scout: %v", err)
+	}
+	if strings.Contains(bare, "Computed pre-screen") {
+		t.Error("empty pre-screen still rendered its heading")
+	}
+}
+
+// A bare comma-separated ticker list told a specialist nothing about why a name
+// was on the shortlist, so the scout's thesis — the only reason the name
+// survived screening — was discarded between Stage 1 and Stage 2.
+func TestShortlistBlockCarriesScoutContext(t *testing.T) {
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	shortlist := []model.Candidate{
+		{Ticker: "NVDA", Name: "NVIDIA Corporation", Sector: "Technology", Index: "sp500",
+			Bias: model.BiasBullish, Reason: "pullback to the prior breakout zone"},
+		{Ticker: "NKE", Name: "Nike Inc.", Sector: "Consumer Discretionary", Index: "sp500",
+			Bias: model.BiasBearish, Reason: "inventory overhang"},
+	}
+	for _, role := range []string{"news", "chief-analyst"} {
+		p, err := reg.AssemblePrompt(PromptParams{
+			Role: role, Mode: model.ModeIndependent, RunTS: time.Now(), Shortlist: shortlist,
+		})
+		if err != nil {
+			t.Fatalf("AssemblePrompt %s: %v", role, err)
+		}
+		for _, want := range []string{
+			"NVDA — NVIDIA Corporation (Technology, sp500) — scout: bullish",
+			"pullback to the prior breakout zone",
+			"NKE — Nike Inc. (Consumer Discretionary, sp500) — scout: bearish",
+		} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s prompt missing %q", role, want)
+			}
+		}
+	}
+}

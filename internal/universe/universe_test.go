@@ -55,14 +55,6 @@ func TestDedupe(t *testing.T) {
 }
 
 func TestDedupeCrossListing(t *testing.T) {
-	tickers := func(cs []model.Candidate) []string {
-		out := make([]string, len(cs))
-		for i, c := range cs {
-			out[i] = c.Ticker
-		}
-		return out
-	}
-
 	t.Run("merges cross-listing preferring unsuffixed", func(t *testing.T) {
 		out := Dedupe([]model.Candidate{
 			{Ticker: "ASML", Name: "ASML Holding NV", Index: "nq100"},
@@ -106,32 +98,91 @@ func TestDedupeCrossListing(t *testing.T) {
 	})
 }
 
-func TestCapBalanced(t *testing.T) {
+func TestCapMerit(t *testing.T) {
 	mk := func(ticker, index string) model.Candidate {
 		return model.Candidate{Ticker: ticker, Name: ticker, Index: index}
 	}
+	// Scores are deliberately not in input order: the merge must rank, not
+	// round-robin over whatever order the scouts happened to return.
+	scores := map[string]float64{
+		"A1": 0.5, "A2": 3.0, "A3": 2.5, "A4": 2.0,
+		"B1": 1.0, "B2": 2.9,
+		"C1": 0.1,
+	}
+	score := func(c model.Candidate) float64 { return scores[c.Ticker] }
 	input := []model.Candidate{
 		mk("A1", "sp500"), mk("A2", "sp500"), mk("A3", "sp500"), mk("A4", "sp500"),
 		mk("B1", "nq100"), mk("B2", "nq100"),
 		mk("C1", "eu50"),
 	}
 
-	t.Run("no-op under cap", func(t *testing.T) {
-		if out := CapBalanced(input, 12); len(out) != len(input) {
-			t.Errorf("got %d, want unchanged %d", len(out), len(input))
+	t.Run("drops nothing under the cap, still ranks", func(t *testing.T) {
+		out := CapMerit(input, 12, 5, score)
+		if len(out) != len(input) {
+			t.Fatalf("got %d names, want all %d kept", len(out), len(input))
+		}
+		if out[0].Ticker != "A2" {
+			t.Errorf("best-scoring name is %s, want A2 first even when nothing is trimmed", out[0].Ticker)
 		}
 	})
 
-	t.Run("round-robin across indices", func(t *testing.T) {
-		out := CapBalanced(input, 5)
-		want := []string{"A1", "B1", "C1", "A2", "B2"}
-		if len(out) != len(want) {
-			t.Fatalf("got %d items, want %d", len(out), len(want))
-		}
-		for i, w := range want {
-			if out[i].Ticker != w {
-				t.Errorf("out[%d] = %s, want %s", i, out[i].Ticker, w)
-			}
+	t.Run("keeps the best, ordered by score", func(t *testing.T) {
+		out := CapMerit(input, 3, 5, score)
+		want := []string{"A2", "B2", "A3"}
+		if got := tickers(out); !equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+
+	t.Run("per-index cap shapes the mix", func(t *testing.T) {
+		// sp500 owns three of the four best composites; a per-index cap of one
+		// forces the third slot to a third index instead of a second S&P name
+		// (uncapped the answer would be A2, B2, A3).
+		out := CapMerit(input, 3, 1, score)
+		want := []string{"A2", "B2", "C1"}
+		if got := tickers(out); !equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("cap never shrinks the shortlist below max", func(t *testing.T) {
+		// One index selected: a hard per-index cap would return 2 names when 4
+		// were asked for. The cap is a diversification preference, so the
+		// remaining slots are backfilled by pure merit.
+		only := []model.Candidate{mk("A1", "sp500"), mk("A2", "sp500"), mk("A3", "sp500"), mk("A4", "sp500")}
+		out := CapMerit(only, 4, 2, score)
+		want := []string{"A2", "A3", "A4", "A1"}
+		if got := tickers(out); !equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("ties keep input order", func(t *testing.T) {
+		flat := func(model.Candidate) float64 { return 0 }
+		out := CapMerit(input, 3, 5, flat)
+		want := []string{"A1", "A2", "A3"}
+		if got := tickers(out); !equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+}
+
+func tickers(cs []model.Candidate) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Ticker
+	}
+	return out
+}
+
+func equal(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

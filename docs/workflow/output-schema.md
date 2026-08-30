@@ -18,9 +18,52 @@ Each scout ends its report with:
 ```
 ````
 
-`bias`: `bullish` | `bearish` | `neutral`. The orchestrator merges all scouts, dedupes by
-canonical ticker (including cross-listings like `ASML`/`ASML.AS`), and caps the combined
-shortlist at 12 names balanced across indices.
+`bias`: `bullish` | `bearish` | `neutral` — any other value is read as `neutral`, and a
+neutral nomination is merged as if the pre-screen supported neither direction.
+
+The orchestrator **validates every nomination against the constituent list that scout was
+handed**: a symbol not in it is dropped and logged, and the surviving names take their
+ticker spelling, company name, sector and index from the universe row rather than from the
+model. It then merges all scouts, dedupes by canonical ticker (including cross-listings
+like `ASML`/`ASML.AS`), and trims the combined shortlist to `max_shortlist` (default 12)
+by pre-screen merit — see `independent-research.md`, Stage 1.
+
+`shortlist.json` therefore carries more than the scout wrote: `sector` and `index` come
+from the universe, while `bias` and `reason` are the scout's and travel on into every
+specialist and Chief Analyst prompt.
+
+## Pre-screen (`runs/<ts>/prescreen.json`)
+
+Written by Stage 0.5 before any model call. One row per constituent of the selected
+indices, ranked best-composite-first with excluded rows last:
+
+````
+```json
+{
+  "as_of": "2026-08-28",
+  "indices": ["sp500", "nq100"],
+  "params": {
+    "top_per_index": 15, "bottom_per_index": 5,
+    "adv_min_usd": 20000000, "min_bars": 60, "vol_trend_flag": 1.5,
+    "formula": "z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
+  },
+  "rows": [
+    { "ticker": "NVDA", "name": "NVIDIA Corporation", "sector": "Information Technology",
+      "index": "sp500", "as_of": "2026-08-28", "bars": 501, "close": 176.42,
+      "mom_12_1": 0.482, "ret_63d": 0.191, "ret_21d": 0.064, "ret_5d": 0.012,
+      "rs_63": 0.114, "str_z": 0.4, "vol_yz_20": 0.38, "vol_trend": 1.12,
+      "regime": "trending", "adv_usd": 3.1e10, "price_to_52w_high": 0.94,
+      "score": 2.31 }
+  ],
+  "errors": ["005930.KS: yahoo 005930.KS: empty chart result"]
+}
+```
+````
+
+An excluded row carries `"excluded"` with the reason (`illiquid …`, `insufficient history
+…`, `no price history`) and `"score": 0`; it is never ranked and never contributes to the
+within-index mean or standard deviation. `params.formula` is recorded so a row's `score`
+is legible without reading the source.
 
 ## Specialist report (each Gemini specialist → Chief Analyst)
 

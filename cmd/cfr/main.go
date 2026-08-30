@@ -70,16 +70,22 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		indices = s.Indices // config-file default selection (may still be empty = all)
 	}
 	return orchestrator.Config{
-		Mode:              req.Mode,
-		Ticker:            req.Ticker,
-		Indices:           indices,
-		AgentsDir:         s.AgentsDir,
-		RunsDir:           s.RunsDir,
-		DataDir:           s.DataDir,
-		Workers:           s.Workers,
-		KeepRuns:          s.KeepRuns,
-		PriceTTL:          s.PriceTTL,
-		DataCacheDays:     s.DataCacheDays,
+		Mode:          req.Mode,
+		Ticker:        req.Ticker,
+		Indices:       indices,
+		AgentsDir:     s.AgentsDir,
+		RunsDir:       s.RunsDir,
+		DataDir:       s.DataDir,
+		Workers:       s.Workers,
+		KeepRuns:      s.KeepRuns,
+		PriceTTL:      s.PriceTTL,
+		DataCacheDays: s.DataCacheDays,
+
+		PrescreenTopPerIndex: s.PrescreenTopPerIndex,
+		MaxShortlist:         s.MaxShortlist,
+		MaxPerIndex:          s.MaxPerIndex,
+		ADVMinUSD:            s.ADVMinUSD,
+
 		Timeouts:          s.Timeouts,
 		Retry:             s.Retry,
 		Weights:           s.Weights,

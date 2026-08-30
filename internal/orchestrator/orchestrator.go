@@ -87,6 +87,21 @@ type Config struct {
 	// DataCacheDays is how long cached provider responses survive the run-start
 	// janitor. Zero disables pruning.
 	DataCacheDays int
+
+	// PrescreenTopPerIndex is how many of each index's highest-composite names
+	// the Stage 0.5 table puts in front of its scout (the weakest
+	// prescreenBottomPerIndex are always appended as short candidates). Zero
+	// means 15.
+	PrescreenTopPerIndex int
+	// MaxShortlist caps the merged shortlist that reaches the specialists. Zero
+	// means 12.
+	MaxShortlist int
+	// MaxPerIndex caps how many of those names one index may contribute before
+	// the merit backfill. Zero means 5.
+	MaxPerIndex int
+	// ADVMinUSD is the 20-day average dollar volume below which a name is not
+	// tradeable in size and is dropped in the pre-screen. Zero means $20M.
+	ADVMinUSD float64
 }
 
 func (c *Config) applyDefaults() {
@@ -158,6 +173,22 @@ func (c *Config) applyDefaults() {
 	}
 	if c.DataCacheDays < 0 {
 		c.DataCacheDays = 0
+	}
+
+	// Funnel geometry. 15 names per index is roughly the top sixth of a curated
+	// sample — wide enough that the scout is choosing rather than rubber-stamping
+	// a ranking, narrow enough that the table stays readable in a prompt.
+	if c.PrescreenTopPerIndex <= 0 {
+		c.PrescreenTopPerIndex = 15
+	}
+	if c.MaxShortlist <= 0 {
+		c.MaxShortlist = 12
+	}
+	if c.MaxPerIndex <= 0 {
+		c.MaxPerIndex = 5
+	}
+	if c.ADVMinUSD <= 0 {
+		c.ADVMinUSD = defaultADVMinUSD
 	}
 
 	// Default Timeouts
@@ -323,14 +354,51 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	var dataErrors []string
 	stage := func(name string, t time.Time) { stageMS[name] = time.Since(t).Milliseconds() }
 
-	// ── Stage 1: Scouts (independent research only) ────────────────────────────
-	scoutStart := time.Now()
+	yc := marketdata.NewYahooClient(cache)
+	yc.SetPriceTTL(cfg.PriceTTL)
+
 	var indices []string
 	if cfg.Mode == model.ModeIndependent {
 		indices = selectIndices(cfg.Indices)
 		if len(indices) == 0 {
 			return fmt.Errorf("no valid indices selected (known: %s)", strings.Join(universe.AllIndices(), ", "))
 		}
+	}
+
+	// ── Stage 0.5: universe-wide quant pre-screen (in-process, no model) ──────
+	//
+	// Rank every constituent before any model sees the index, so the scouts
+	// filter a computed shortlist instead of inventing one from familiarity.
+	prescreenParams := defaultPrescreenParams()
+	prescreenParams.TopPerIndex = cfg.PrescreenTopPerIndex
+	prescreenParams.ADVMinUSD = cfg.ADVMinUSD
+	var prescreen *Prescreen
+	if cfg.Mode == model.ModeIndependent {
+		prescreenStart := time.Now()
+		total := 0
+		for _, idx := range indices {
+			total += len(uni.Constituents(idx))
+		}
+		log(ch, fmt.Sprintf("Stage 0.5: pre-screening %d names across %s (cold fetch ~%ds, cached ~0s)…",
+			total, strings.Join(indices, ", "), total/4))
+		prescreen = runPrescreen(ctx, ch, yc, uni, indices, prescreenParams)
+		logPackErrors(ch, "prescreen", prescreen.Errors)
+		dataErrors = append(dataErrors, prefixed("prescreen", prescreen.Errors)...)
+		if err := run.WritePrescreen(prescreen); err != nil {
+			log(ch, fmt.Sprintf("warn: write prescreen.json: %v", err))
+		}
+		ranked := 0
+		for _, idx := range indices {
+			ranked += len(prescreen.Ranked(idx))
+		}
+		log(ch, fmt.Sprintf("Pre-screen ranked %d of %d names (%d excluded: illiquid, too little history, or unavailable)",
+			ranked, total, total-ranked))
+		stage("prescreen", prescreenStart)
+	}
+
+	// ── Stage 1: Scouts (independent research only) ────────────────────────────
+	scoutStart := time.Now()
+	if cfg.Mode == model.ModeIndependent {
 		log(ch, fmt.Sprintf("Stage 1: screening %s with scouts…", strings.Join(indices, ", ")))
 		resultChans := make([]<-chan model.Report, len(indices))
 
@@ -346,6 +414,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				RunTS:                run.TS,
 				IndexKey:             idx,
 				IndexConstituentList: universe.ConstituentList(cs),
+				PrescreenTable:       prescreen.Table(idx, prescreenParams.TopPerIndex, prescreenParams.BottomPerIndex),
 				Caps:                 cheapCaps,
 			})
 			if err != nil {
@@ -390,15 +459,28 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				continue
 			}
 			agentStatus(ch, role, model.StatusDone, &r)
-			candidates := parseScoutResult(r.Stdout, idx)
+			candidates, rejected := parseScoutResult(r.Stdout, idx, uni.Constituents(idx))
+			if len(rejected) > 0 {
+				log(ch, fmt.Sprintf("warn: %s nominated %d symbol(s) not in %s (%s) — dropped",
+					role, len(rejected), idx, strings.Join(rejected, ", ")))
+			}
 			shortlist = append(shortlist, candidates...)
 		}
 
 		shortlist = universe.Dedupe(shortlist)
 		log(ch, fmt.Sprintf("Shortlist after dedup: %d names", len(shortlist)))
-		if capped := universe.CapBalanced(shortlist, maxShortlist); len(capped) < len(shortlist) {
-			log(ch, fmt.Sprintf("Shortlist capped to %d names (balanced across indices)", len(capped)))
-			shortlist = capped
+		before := len(shortlist)
+		// Merit, not round-robin: keep the nominations the pre-screen composite
+		// agrees with, in the direction they were nominated in.
+		shortlist = universe.CapMerit(shortlist, cfg.MaxShortlist, cfg.MaxPerIndex,
+			func(c model.Candidate) float64 { return meritScore(prescreen, c) })
+		if len(shortlist) < before {
+			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index)",
+				before, len(shortlist), cfg.MaxPerIndex))
+		}
+		for _, c := range shortlist {
+			log(ch, fmt.Sprintf("shortlist: %s (%s, %s) — scout %s, merit %+.2f",
+				c.Ticker, c.Index, c.Sector, c.Bias, meritScore(prescreen, c)))
 		}
 		if err := run.WriteShortlist(shortlist); err != nil {
 			log(ch, fmt.Sprintf("warn: write shortlist: %v", err))
@@ -411,7 +493,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// Single-stock: build shortlist from user ticker
 		c, _ := uni.Lookup(cfg.Ticker)
 		shortlist = []model.Candidate{
-			{Ticker: c.Ticker, Name: c.Name, Bias: model.BiasNeutral, Reason: "user-specified", Index: c.Index},
+			{Ticker: c.Ticker, Name: c.Name, Sector: c.Sector, Bias: model.BiasNeutral, Reason: "user-specified", Index: c.Index},
 		}
 		log(ch, fmt.Sprintf("Single-stock mode: analysing %s", c.Ticker))
 	}
@@ -432,8 +514,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	quantStart := time.Now()
 	log(ch, "Stage 1.5: fetching price history and computing quant metrics…")
 	agentStatus(ch, "quant-data", model.StatusRunning, nil)
-	yc := marketdata.NewYahooClient(cache)
-	yc.SetPriceTTL(cfg.PriceTTL)
+	// The pre-screen already fetched every one of these series; the shared cache
+	// serves them back here without a second round trip.
 	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, shortlist)
 	_ = quantSeries // consumed by the risk gate
 	logPackErrors(ch, "quant", quantPack.Errors)
@@ -779,9 +861,6 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	return nil
 }
 
-// maxShortlist caps the merged scout shortlist (spec: 8–12 names).
-const maxShortlist = 12
-
 // selectIndices validates the requested index keys against the universe,
 // preserving canonical order. Empty input means all indices.
 func selectIndices(requested []string) []string {
@@ -834,28 +913,70 @@ func parseIdeas(stdout string) (*model.IdeasResult, error) {
 	return &result, nil
 }
 
-// parseScoutResult extracts a scout's candidates. The index key comes from the
-// orchestrator's own loop, not the model output — provenance must be trusted
-// for the balanced shortlist cap.
-func parseScoutResult(stdout, index string) []model.Candidate {
+// parseScoutResult extracts a scout's candidates and validates every one of
+// them against the constituent list that scout was actually handed. It returns
+// the accepted candidates and the symbols it rejected.
+//
+// Nothing checked this before, so a symbol the model invented — or borrowed
+// from another index — went straight onto the shortlist and consumed a
+// data-provider slot and an analysis slot on a company the run had never
+// screened. Identity (ticker casing, name, sector, index) is taken from the
+// universe row rather than from the model: the scout's job is to choose, not to
+// describe.
+func parseScoutResult(stdout, index string, cs []model.Constituent) ([]model.Candidate, []string) {
 	raw, ok := extractLastJSON(stdout)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	// Try to unmarshal as ScoutResult
 	var sr model.ScoutResult
 	if err := json.Unmarshal([]byte(raw), &sr); err != nil {
-		return nil
+		return nil, nil
 	}
+
+	known := make(map[string]model.Constituent, len(cs))
+	for _, c := range cs {
+		known[strings.ToUpper(c.Ticker)] = c
+	}
+
 	out := make([]model.Candidate, 0, len(sr.Candidates))
+	var rejected []string
+	seen := map[string]bool{}
 	for _, c := range sr.Candidates {
-		if strings.TrimSpace(c.Ticker) == "" {
+		t := strings.ToUpper(strings.TrimSpace(c.Ticker))
+		if t == "" || seen[t] {
 			continue
 		}
-		c.Index = index
-		out = append(out, c)
+		seen[t] = true
+		con, ok := known[t]
+		if !ok {
+			rejected = append(rejected, t)
+			continue
+		}
+		out = append(out, model.Candidate{
+			Ticker: con.Ticker,
+			Name:   con.Name,
+			Sector: con.Sector,
+			Index:  index,
+			Bias:   normalizeBias(c.Bias),
+			Reason: strings.TrimSpace(c.Reason),
+		})
 	}
-	return out
+	return out, rejected
+}
+
+// normalizeBias maps a scout's direction onto the three values the rest of the
+// pipeline understands. The merit merge reads it to decide which end of the
+// pre-screen composite a nomination is strong at, so an unrecognised string has
+// to become neutral rather than travel on as a fourth, meaningless direction.
+func normalizeBias(b model.Bias) model.Bias {
+	switch model.Bias(strings.ToLower(strings.TrimSpace(string(b)))) {
+	case model.BiasBullish:
+		return model.BiasBullish
+	case model.BiasBearish:
+		return model.BiasBearish
+	default:
+		return model.BiasNeutral
+	}
 }
 
 // prefixed labels a domain's provider errors so they stay attributable once

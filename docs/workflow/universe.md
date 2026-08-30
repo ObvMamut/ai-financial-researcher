@@ -38,9 +38,24 @@ keep the exchange/country so agents can disambiguate:
   `ASML.AS`) collapses to the unsuffixed primary listing. A stem match alone is never
   enough — the company name must also match (`SAN.MC` Santander vs `SAN.PA` Sanofi stay
   separate, as do class-share tickers like `BRK.B`).
-- `CapBalanced(candidates, max)` — trim the merged shortlist to at most `max` names
-  (orchestrator uses 12), round-robin across source indices so one index can't dominate.
+- `CapMerit(candidates, max, maxPerIndex, score)` — trim the merged shortlist to at most
+  `max` names (config `max_shortlist`, default 12), keeping the highest-scoring
+  nominations and letting no index contribute more than `maxPerIndex` (default 5) before
+  a pure-merit backfill fills any slots the cap left empty. `score` is supplied by the
+  caller — the orchestrator aligns each candidate's Stage 0.5 composite with the direction
+  it was nominated in — so this package holds no scoring policy. It replaced
+  `CapBalanced`, whose round-robin treated "first name the scout typed" as a ranking.
+  The result is always ordered best-first, including when nothing needed trimming.
 - `Lookup(ticker)` — resolve a user-entered ticker to a known constituent (single-stock mode).
+
+### Symbol spelling per source
+
+The CSVs carry the canonical symbol every source but one agrees on. Yahoo's chart endpoint
+is the exception for **US class shares**: it writes `BRK-B`, not `BRK.B`, and 404s the
+dotted form. `marketdata.yahooSymbol` converts on the way out — a dot followed by a known
+*exchange* suffix (`ASML.AS`, `7203.T`) is a foreign listing and is left alone. Only
+Berkshire needs this today; every run silently lost it until the universe-wide pre-screen
+made the 404 visible.
 
 ## Refresh
 

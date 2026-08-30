@@ -105,6 +105,15 @@ func (r *Run) WriteQuantPack(pack any) error {
 	return r.writeJSON("quant.json", pack)
 }
 
+// WritePrescreen saves the Stage 0.5 universe-wide ranking to prescreen.json:
+// the parameters it ran with and one row per constituent. It is the only record
+// of *why* twelve names out of a few hundred reached the shortlist — the price
+// series behind it deliberately stay in the shared data cache rather than
+// filling the run directory with a few hundred files.
+func (r *Run) WritePrescreen(ps any) error {
+	return r.writeJSON("prescreen.json", ps)
+}
+
 // ReadQuantPack loads quant.json into out; false when absent (older runs).
 func ReadQuantPack(runDir string, out any) (bool, error) {
 	data, err := os.ReadFile(filepath.Join(runDir, "quant.json"))

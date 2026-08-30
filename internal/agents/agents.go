@@ -89,6 +89,7 @@ type PromptParams struct {
 	QuantBlock           string              // chief-analyst: compact verified quant lines per ticker
 	Weights              model.DomainWeights // structured weights
 	IndexConstituentList string              // scout only: formatted constituent list
+	PrescreenTable       string              // scout only: Stage 0.5 ranked table for this index
 	Caps                 Capabilities        // what the engine running this agent can do
 }
 
@@ -127,12 +128,23 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 	switch p.Role {
 	case "scout":
 		sb.WriteString(fmt.Sprintf("- **Index:** %s\n", p.IndexKey))
+		// The ranked table comes first because it is what the scout screens
+		// from. The full constituent list follows as the set it may reach
+		// outside the table, not as the thing to read top to bottom.
+		if p.PrescreenTable != "" {
+			sb.WriteString("\n### Computed pre-screen (verified, ground truth)\n\n")
+			sb.WriteString("Ranked in-process from Yahoo Finance daily OHLCV before you were called. ")
+			sb.WriteString("`score` is the composite these names are ordered by; every other column is a measured value. ")
+			sb.WriteString("Do not re-derive or contradict these numbers, and do not supply figures for names that are not here.\n\n")
+			sb.WriteString(p.PrescreenTable)
+			sb.WriteString("\n")
+		}
 		sb.WriteString("\n### Constituent list\n\n```\n")
 		sb.WriteString(p.IndexConstituentList)
 		sb.WriteString("```\n")
 
 	case "chief-analyst":
-		sb.WriteString(fmt.Sprintf("- **Shortlist:** %s\n", shortlistLine(p.Shortlist)))
+		sb.WriteString(shortlistSection(p.Shortlist))
 		if p.Mode == model.ModeSingle {
 			sb.WriteString(fmt.Sprintf("- **Ticker:** %s\n", p.Ticker))
 			sb.WriteString("- **topN:** 1\n")
@@ -167,7 +179,7 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 		}
 
 	default: // specialists: news, fundamentals, quant, sentiment, macro
-		sb.WriteString(fmt.Sprintf("- **Shortlist:** %s\n", shortlistLine(p.Shortlist)))
+		sb.WriteString(shortlistSection(p.Shortlist))
 		if p.Mode == model.ModeSingle {
 			sb.WriteString(fmt.Sprintf("- **Ticker:** %s (single-stock mode — provide richer depth)\n", p.Ticker))
 		}
@@ -224,11 +236,52 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// shortlistLine produces a compact comma-separated ticker list.
-func shortlistLine(cs []model.Candidate) string {
-	tickers := make([]string, len(cs))
-	for i, c := range cs {
-		tickers[i] = c.Ticker
+// shortlistSection renders the shortlist as its own block, one line per name.
+//
+// It replaces a bare comma-separated ticker list. That list told a specialist
+// nothing about *why* a name was on it, so every domain re-derived the company
+// from scratch — and the scout's actual thesis, the only reason the name
+// survived screening, was thrown away between Stage 1 and Stage 2. Carrying it
+// through means a specialist can confirm or contradict a stated thesis, and the
+// Chief can see which nominations its domains agreed with.
+func shortlistSection(cs []model.Candidate) string {
+	if len(cs) == 0 {
+		return "- **Shortlist:** (empty)\n"
 	}
-	return strings.Join(tickers, ", ")
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n### Shortlist (%d names)\n\n", len(cs)))
+	sb.WriteString("Each line is the name, its sector and source index, and the direction and reason a scout nominated it for. The scout's reason is a hypothesis to test, not a verified fact.\n\n")
+	sb.WriteString(shortlistBlock(cs))
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// shortlistBlock is the bare list of shortlist lines.
+func shortlistBlock(cs []model.Candidate) string {
+	var sb strings.Builder
+	for _, c := range cs {
+		sb.WriteString("- ")
+		sb.WriteString(strings.ToUpper(c.Ticker))
+		if c.Name != "" {
+			sb.WriteString(" — " + c.Name)
+		}
+		var meta []string
+		if c.Sector != "" {
+			meta = append(meta, c.Sector)
+		}
+		if c.Index != "" {
+			meta = append(meta, c.Index)
+		}
+		if len(meta) > 0 {
+			sb.WriteString(" (" + strings.Join(meta, ", ") + ")")
+		}
+		if c.Bias != "" {
+			sb.WriteString(" — scout: " + string(c.Bias))
+			if c.Reason != "" {
+				sb.WriteString(fmt.Sprintf(", %q", c.Reason))
+			}
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }

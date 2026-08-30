@@ -33,6 +33,17 @@ type Settings struct {
 	// can never be read again — they merely accumulate. Zero disables pruning.
 	DataCacheDays int
 
+	// Funnel geometry. PrescreenTopPerIndex is how many of each index's
+	// highest-composite names the Stage 0.5 table shows its scout;
+	// MaxShortlist caps the merged shortlist and MaxPerIndex caps one index's
+	// share of it. ADVMinUSD is the 20-day average dollar volume below which a
+	// name is not tradeable in size and never reaches a model. Zero means the
+	// orchestrator's defaults (15 / 12 / 5 / $20M).
+	PrescreenTopPerIndex int
+	MaxShortlist         int
+	MaxPerIndex          int
+	ADVMinUSD            float64
+
 	GeminiConcurrency int
 	Weights           model.DomainWeights
 	Timeouts          model.StageTimeouts
@@ -62,6 +73,10 @@ type fileFormat struct {
 
 	PriceTTL      string `toml:"price_ttl"`       // Go duration, e.g. "4h"
 	DataCacheDays int    `toml:"data_cache_days"` // 0 disables pruning
+
+	PrescreenTopPerIndex int `toml:"prescreen_top_per_index"`
+	MaxShortlist         int `toml:"max_shortlist"`
+	MaxPerIndex          int `toml:"max_per_index"`
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
 
@@ -108,6 +123,13 @@ type fileFormat struct {
 		AlphaVantageKey string `toml:"alphavantage_key"`
 		FredKey         string `toml:"fred_key"`
 	} `toml:"providers"`
+
+	// Risk holds the tradeability and sizing limits. Only the liquidity floor is
+	// consumed today (the pre-screen drops anything below it); the rest of the
+	// table arrives with the risk gate.
+	Risk struct {
+		ADVMinUSD float64 `toml:"adv_min_usd"`
+	} `toml:"risk"`
 
 	// API configures the remote OpenAI-compatible cheap-research engine. Prefer
 	// setting api_key via the CFR_API_KEY env var rather than committing it to a file.
@@ -190,6 +212,12 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.Workers, f.Workers)
 	setInt(&s.DataCacheDays, f.DataCacheDays)
 	setInt(&s.GeminiConcurrency, f.GeminiConcurrency)
+	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
+	setInt(&s.MaxShortlist, f.MaxShortlist)
+	setInt(&s.MaxPerIndex, f.MaxPerIndex)
+	if f.Risk.ADVMinUSD > 0 {
+		s.ADVMinUSD = f.Risk.ADVMinUSD
+	}
 	if len(f.Indices) > 0 {
 		s.Indices = f.Indices
 	}
@@ -337,6 +365,21 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_DATA_CACHE_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			s.DataCacheDays = n
+		}
+	}
+	setPosInt := func(dst *int, key string) {
+		if v := os.Getenv(key); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*dst = n
+			}
+		}
+	}
+	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")
+	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
+	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
+	if v := os.Getenv("CFR_ADV_MIN_USD"); v != "" {
+		if x, err := strconv.ParseFloat(v, 64); err == nil && x > 0 {
+			s.ADVMinUSD = x
 		}
 	}
 }

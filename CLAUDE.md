@@ -68,7 +68,8 @@ internal/
   quant/        pure-stdlib statistical metrics (momentum, YZ vol, VR, …) — no TA
   marketdata/   HTTP data providers: Yahoo chart API (keyless), EDGAR/FRED/AV (keyed)
   model/        shared types: Report, TradeIdea, RunState, AgentStatus
-  store/        run artifacts under runs/<timestamp>/ (reports, prices/, quant.json)
+  store/        run artifacts under runs/<timestamp>/ (reports, prices/, quant.json,
+                prescreen.json)
   config/       settings: defaults → ~/.config/cfr/config.toml → ./cfr.toml → env
   scoreboard/   past-idea performance vs current prices (win rate, P&L)
 agents/*.md     agent persona prompts (runtime data)
@@ -81,10 +82,18 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 
 ## Pipeline (independent research)
 
-1. **Scouts (cheap engine):** one call per index → shortlist of ~5–10 names each.
-   Orchestrator merges/dedupes (incl. cross-listings) and caps at 12, balanced per index.
-2. **Stage 1.5 (in-process, no model):** fetch 2y daily OHLCV per shortlisted name from
-   Yahoo, compute `internal/quant` metrics, persist `prices/` + `quant.json`.
+0. **Stage 0.5 — pre-screen (in-process, no model):** fetch 2y daily OHLCV for *every*
+   constituent of the selected indices, compute `internal/quant` metrics, and rank each
+   index on a composite (`z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63)`, minus a short-term
+   reversal penalty when the recent move runs with the trend). Illiquid and short-history
+   names are excluded. Persists `prescreen.json`; the price series stay in the data cache.
+1. **Scouts (cheap engine):** one call per index, each screening *its index's ranked
+   table* → ~5–10 nominations each. Nominations outside the index's constituent list are
+   dropped. Orchestrator merges/dedupes (incl. cross-listings) and trims to
+   `max_shortlist` by merit — the pre-screen composite aligned with the nominated
+   direction — capped at `max_per_index` per index.
+2. **Stage 1.5 (in-process, no model):** compute `internal/quant` metrics for the
+   shortlist (mostly cache hits from Stage 0.5), persist `prices/` + `quant.json`.
 3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
