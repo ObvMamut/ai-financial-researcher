@@ -101,10 +101,10 @@ total — not per ticker):
 | Specialist    | Persona                  | Focus                                             |
 |---------------|--------------------------|---------------------------------------------------|
 | News          | `agents/news.md`         | Headline flow + the verified earnings calendar    |
-| Fundamentals  | `agents/fundamentals.md` | Valuation, growth, balance-sheet health           |
+| Fundamentals  | `agents/fundamentals.md` | Filed figures + Go-computed market cap / P/E / P/S |
 | Quant         | `agents/quant.md`        | Interprets the computed statistical pack (no TA)  |
 | Sentiment     | `agents/sentiment.md`    | Insider Form 4 filings + option positioning       |
-| Macro         | `agents/macro.md`        | Regime, rates, sector/region tailwinds & risks    |
+| Macro         | `agents/macro.md`        | Computed benchmark regime + the FRED backdrop     |
 
 The quant specialist receives the full computed pack as ground truth; news and sentiment
 get compact verified price lines so their narratives stay anchored. The news pack also
@@ -124,7 +124,23 @@ excluded as compensation mechanics) and the **Yahoo option chain** (put/call ope
 over the front two expiries, plus ATM implied volatility to compare against the computed
 realized vol). Both are merged into one pack — `BuildPack` no longer stops at the first
 provider that answers. The options endpoint is intermittently crumb-gated; a 401 degrades
-sentiment to insider filings alone and is recorded, never guessed around. Every specialist — and
+sentiment to insider filings alone and is recorded, never guessed around.
+
+Fundamentals gets the price context and **computed multiples**. EDGAR now also extracts
+shares outstanding (a `dei` cover-page fact, not a GAAP one), diluted EPS (quoted in
+USD/shares) and year-over-year revenue growth from the two freshest annual frames; the
+orchestrator divides those against the verified last close to produce market cap, P/E and
+P/S, each line showing its own inputs. Where the filed figure is more than 400 days older
+than the price, the block says the multiple is **not computable** and why — an absent
+number gets filled in from recollection, a stated refusal does not. The persona caps
+strength at 4 on figures older than 13 months.
+
+Macro is scoped to the regime. `quant.Pack.Benchmarks` computes the same metrics for each
+index benchmark the run touched — series that were already fetched for beta and relative
+strength and then never read as a market signal — and `RegimeBlock()` renders them into the
+macro prompt and the Chief's quant reference. The persona is capped at strength 5 unless a
+dated, verified driver names the ticker's sector: a regime is a backdrop shared by every
+name on the shortlist, so twelve names scored 7 is twelve counts of the same fact. Every specialist — and
 the Chief Analyst — receives the shortlist as a block carrying each name's sector, source
 index, and the scout's bias and reason, so a domain can confirm or contradict the thesis
 the name was nominated on instead of describing the company from scratch. Each report

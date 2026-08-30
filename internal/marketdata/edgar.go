@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -250,15 +251,7 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 	}
 
 	var data struct {
-		Facts map[string]map[string]struct {
-			Units map[string][]struct {
-				Val  float64 `json:"val"`
-				Accn string  `json:"accn"`
-				FY   int     `json:"fy"`
-				FP   string  `json:"fp"`
-				End  string  `json:"end"`
-			} `json:"units"`
-		} `json:"facts"`
+		Facts map[string]map[string]xbrlFact `json:"facts"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
@@ -286,8 +279,12 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 	// frame, but only while it is within annualGracePeriod of the latest
 	// observation of any kind. Past that, take the freshest figure and say in
 	// the label that the frame is quarterly.
-	extract := func(label string, gaapKeys ...string) {
-		gaap, ok := data.Facts["us-gaap"]
+	// extractUnit is extract generalised over namespace and unit: share counts
+	// live in the `dei` namespace under a "shares" unit, and diluted EPS under
+	// "USD/shares". Without those two, no multiple is computable from SEC data
+	// at all, and the fundamentals domain could only ever report raw dollars.
+	extractUnit := func(namespace, unit, label string, keys ...string) {
+		ns, ok := data.Facts[namespace]
 		if !ok {
 			return
 		}
@@ -295,12 +292,12 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 			latest, latestAnnual         xbrlObs
 			haveLatest, haveLatestAnnual bool
 		)
-		for _, key := range gaapKeys {
-			fact, ok := gaap[key]
+		for _, key := range keys {
+			fact, ok := ns[key]
 			if !ok {
 				continue
 			}
-			for _, o := range fact.Units["USD"] {
+			for _, o := range fact.Units[unit] {
 				end, err := time.Parse("2006-01-02", o.End)
 				if err != nil {
 					continue
@@ -334,18 +331,110 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 			URL:    filingURL,
 		})
 	}
+	extract := func(label string, gaapKeys ...string) {
+		extractUnit("us-gaap", "USD", label, gaapKeys...)
+	}
 
 	extract("Total Assets", "Assets")
-	extract("Net Income", "NetIncomeLoss", "ProfitLoss")
-	extract("Revenue",
-		"RevenueFromContractWithCustomerExcludingAssessedTax",
-		"RevenueFromContractWithCustomerIncludingAssessedTax",
-		"Revenues",
-		"SalesRevenueNet")
+	extract(FactNetIncome, "NetIncomeLoss", "ProfitLoss")
+	extract(FactRevenue, revenueTags...)
 	extract("Stockholders Equity", "StockholdersEquity")
+	// The two inputs a multiple needs. Shares outstanding is a cover-page fact
+	// in the `dei` namespace, not a GAAP one, which is why it was never found.
+	extractUnit("dei", "shares", FactShares, "EntityCommonStockSharesOutstanding")
+	extractUnit("us-gaap", "USD/shares", FactEPSDiluted, "EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted")
+
+	if g, ok := revenueGrowth(data.Facts["us-gaap"]); ok {
+		td.Facts = append(td.Facts, g)
+	}
 
 	td.Facts, td.Warnings = dropInconsistentDates(td.Facts)
 	return td, nil
+}
+
+// Labels the orchestrator keys off when it computes multiples. They are
+// constants because a rename here would silently stop every multiple being
+// computed rather than fail anything.
+const (
+	FactRevenue    = "Revenue"
+	FactNetIncome  = "Net Income"
+	FactShares     = "Shares outstanding"
+	FactEPSDiluted = "EPS (diluted)"
+	FactRevenueYoY = "Revenue growth YoY"
+)
+
+// revenueTags are the GAAP tags a filer may carry revenue under. Filers migrate
+// between them mid-history, which is why all of them are read together.
+var revenueTags = []string{
+	"RevenueFromContractWithCustomerExcludingAssessedTax",
+	"RevenueFromContractWithCustomerIncludingAssessedTax",
+	"Revenues",
+	"SalesRevenueNet",
+}
+
+// revenueGrowth computes year-over-year revenue growth from the two freshest
+// *annual* frames, and only when they are actually a year apart.
+//
+// Growth is what makes a multiple mean anything — a P/E of 40 is expensive or
+// cheap depending entirely on it — and the fundamentals domain had no growth
+// figure at all, so it supplied one from recollection.
+func revenueGrowth(gaap map[string]xbrlFact) (Fact, bool) {
+	byEnd := map[string]xbrlObs{}
+	for _, tag := range revenueTags {
+		fact, ok := gaap[tag]
+		if !ok {
+			continue
+		}
+		for _, o := range fact.Units["USD"] {
+			if o.FP != "FY" {
+				continue
+			}
+			end, err := time.Parse("2006-01-02", o.End)
+			if err != nil {
+				continue
+			}
+			// A later tag restating the same period wins; filers migrate tags
+			// and the newer one is the one they now report under.
+			byEnd[o.End] = xbrlObs{val: o.Val, end: end, annual: true}
+		}
+	}
+	if len(byEnd) < 2 {
+		return Fact{}, false
+	}
+	obs := make([]xbrlObs, 0, len(byEnd))
+	for _, o := range byEnd {
+		obs = append(obs, o)
+	}
+	sort.Slice(obs, func(i, j int) bool { return obs[i].end.After(obs[j].end) })
+
+	newest, prior := obs[0], obs[1]
+	gap := newest.end.Sub(prior.end)
+	// A fiscal year is 12 months give or take a 52/53-week calendar; anything
+	// outside this is two frames that are not a year apart, and dividing them
+	// produces a growth rate for a period nobody named.
+	if gap < 300*24*time.Hour || gap > 430*24*time.Hour || prior.val <= 0 {
+		return Fact{}, false
+	}
+	return Fact{
+		Label: FactRevenueYoY,
+		Value: fmt.Sprintf("%+.1f%% (FY to %s vs FY to %s)",
+			(newest.val/prior.val-1)*100,
+			newest.end.Format("2006-01-02"), prior.end.Format("2006-01-02")),
+		AsOf:   newest.end,
+		Source: "SEC EDGAR",
+	}, true
+}
+
+// xbrlFact is one XBRL tag's observations, keyed by unit ("USD", "shares",
+// "USD/shares").
+type xbrlFact struct {
+	Units map[string][]struct {
+		Val  float64 `json:"val"`
+		Accn string  `json:"accn"`
+		FY   int     `json:"fy"`
+		FP   string  `json:"fp"`
+		End  string  `json:"end"`
+	} `json:"units"`
 }
 
 // xbrlObs is one XBRL observation reduced to what the choice depends on.

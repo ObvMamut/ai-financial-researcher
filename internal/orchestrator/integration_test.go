@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/quant"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
@@ -783,6 +784,47 @@ func TestChiefConfidenceIsAnchoredToTheComputedBase(t *testing.T) {
 	ideasJSON := readFile(t, filepath.Join(runDir(t, cfg.RunsDir), "ideas.json"))
 	if !strings.Contains(ideasJSON, "base_confidence") || !strings.Contains(ideasJSON, "domain_scores") {
 		t.Errorf("ideas.json should record the base and per-domain scores each idea was anchored to:\n%s", ideasJSON)
+	}
+}
+
+// Each specialist is written against a computed block. Asserting the role ran
+// says nothing about whether it was given the evidence its persona is built on.
+func TestSpecialistsReceiveTheComputedBlocksTheirPersonasAssume(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	dir := runDir(t, cfg.RunsDir)
+
+	// Macro's question at this horizon is the market regime, and the benchmark
+	// prices answer it. It used to be asked whether the backdrop supported a
+	// trade while being shown four FRED series and no market prices at all.
+	if got := readFile(t, filepath.Join(dir, "macro.md")); !strings.Contains(got, "saw-regime-block") {
+		t.Errorf("macro ran without the computed market regime in its prompt")
+	}
+	// Fundamentals cannot say anything about a multiple without a price.
+	if got := readFile(t, filepath.Join(dir, "fundamentals.md")); !strings.Contains(got, "saw-price-context") {
+		t.Errorf("fundamentals ran without the verified price context in its prompt")
+	}
+
+	// The regime also reaches the Chief, which weighs a macro report at 10% of
+	// the score and previously had no market-level price to check it against.
+	var pack quant.Pack
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, "quant.json"))), &pack); err != nil {
+		t.Fatalf("quant.json: %v", err)
+	}
+	if len(pack.Benchmarks) == 0 {
+		t.Errorf("quant.json records no benchmark metrics; the series were fetched and discarded")
+	}
+	if pack.RegimeBlock() == "" {
+		t.Errorf("benchmarks present but no regime block renders")
 	}
 }
 

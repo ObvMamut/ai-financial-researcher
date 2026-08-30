@@ -354,3 +354,82 @@ func TestBuildPackSurfacesTickerWarnings(t *testing.T) {
 		t.Errorf("pack.Errors = %v, want the dropped stale figure named", pack.Errors)
 	}
 }
+
+// multiplesServer carries the three facts a multiple actually needs: a share
+// count (a cover-page `dei` fact, not a GAAP one), diluted EPS (quoted in
+// USD/shares, not USD), and two consecutive annual revenue frames.
+func multiplesServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == secTickersPath:
+			json.NewEncoder(w).Encode(map[string]secTickerEntry{"0": {CIK: "320193", Ticker: "AAPL"}})
+		case strings.HasPrefix(r.URL.Path, "/api/xbrl/companyfacts/"):
+			fmt.Fprint(w, `{"facts":{
+				"dei":{"EntityCommonStockSharesOutstanding":{"units":{"shares":[
+					{"val":15000000000,"fp":"FY","end":"2025-12-31"}]}}},
+				"us-gaap":{
+					"EarningsPerShareDiluted":{"units":{"USD/shares":[
+						{"val":6.50,"fp":"FY","end":"2025-12-31"},
+						{"val":5.90,"fp":"FY","end":"2024-12-31"}]}},
+					"Revenues":{"units":{"USD":[
+						{"val":400000000000,"fp":"FY","end":"2025-12-31"},
+						{"val":100,"fp":"Q1","end":"2026-03-31"},
+						{"val":350000000000,"fp":"FY","end":"2024-12-31"},
+						{"val":300000000000,"fp":"FY","end":"2023-12-31"}]}},
+					"NetIncomeLoss":{"units":{"USD":[{"val":99000000000,"fp":"FY","end":"2025-12-31"}]}}
+				}}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestEdgarExtractsTheInputsAMultipleNeeds(t *testing.T) {
+	t.Setenv("CFR_SEC_BASE", multiplesServer(t).URL)
+	td, err := NewEdgarProvider("cfr@example.com", nil).
+		Fetch(context.Background(), "fundamentals", "AAPL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byLabel := factsByLabel(td)
+
+	// Shares outstanding is a `dei` cover-page fact under a "shares" unit, so a
+	// us-gaap/USD-only extractor could never find it — and without it no market
+	// cap, and therefore no multiple, is computable from SEC data at all.
+	if f, ok := byLabel[FactShares]; !ok {
+		t.Errorf("no share count; facts = %v", byLabel)
+	} else if f.Value != "15000000000.00" {
+		t.Errorf("shares outstanding = %s", f.Value)
+	}
+	// EPS is quoted in USD/shares, not USD.
+	if f, ok := byLabel[FactEPSDiluted]; !ok {
+		t.Errorf("no diluted EPS; facts = %v", byLabel)
+	} else if f.Value != "6.50" {
+		t.Errorf("diluted EPS = %s, want the freshest annual (6.50)", f.Value)
+	}
+	// 400B vs 350B = +14.3%, from the two freshest *annual* frames — the Q1
+	// figure sitting between them is not a year of revenue.
+	if f, ok := byLabel[FactRevenueYoY]; !ok {
+		t.Errorf("no revenue growth; facts = %v", byLabel)
+	} else if !strings.Contains(f.Value, "+14.3%") {
+		t.Errorf("revenue growth = %s, want +14.3%%", f.Value)
+	}
+}
+
+func TestEdgarWithholdsGrowthAcrossANonAnnualGap(t *testing.T) {
+	// The default fixture's two annual revenue frames are four years apart.
+	// Dividing them yields a growth rate for a period nobody named.
+	srv, _ := secServer(t, map[string]secTickerEntry{"0": {CIK: "320193", Ticker: "AAPL"}})
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+	td, err := NewEdgarProvider("cfr@example.com", nil).
+		Fetch(context.Background(), "fundamentals", "AAPL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := factsByLabel(td)[FactRevenueYoY]; ok {
+		t.Error("frames four years apart must not produce a YoY growth rate")
+	}
+}

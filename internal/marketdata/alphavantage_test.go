@@ -111,22 +111,6 @@ func TestNewsSentimentKeepsHeadlines(t *testing.T) {
 	}
 }
 
-// news and sentiment are one upstream call; charging the daily budget twice for
-// it puts a 12-name shortlist over the free tier's 25 requests.
-func TestNewsAndSentimentShareOneCacheKey(t *testing.T) {
-	p := NewAlphaVantageProvider("testkey", t.TempDir())
-	cd, ok := p.(CacheDomainer)
-	if !ok {
-		t.Fatal("AlphaVantage should implement CacheDomainer")
-	}
-	if cd.CacheDomain("news") != cd.CacheDomain("sentiment") {
-		t.Error("news and sentiment must share a cache key")
-	}
-	if cd.CacheDomain("technicals") == cd.CacheDomain("news") {
-		t.Error("technicals is a separate upstream call and needs its own key")
-	}
-}
-
 // Quota errors arrive as HTTP 200 with an Information/Note body. Treating one
 // as a successful empty response would cache the failure for the rest of the day.
 func TestNewsSentimentQuotaMessageIsAnError(t *testing.T) {

@@ -46,7 +46,8 @@ context + output sections per call.
 - Stage ordering is enforced by the orchestrator: Stage 0.5 ranks the whole selected
   universe in-process (no model call) → scouts screen that ranking and complete →
   Stage 1.5 fetches price data and computes quant metrics for the shortlist (mostly cache
-  hits from Stage 0.5) → specialists run → the weighted **base scores** are computed
+  hits from Stage 0.5, and computing each index benchmark's own metrics as the market
+  regime) → specialists run → the weighted **base scores** are computed
   in-process from the specialist tails → Chief Analyst runs last (it depends on all
   specialist reports).
 - Within a stage, agents run concurrently up to the cap.

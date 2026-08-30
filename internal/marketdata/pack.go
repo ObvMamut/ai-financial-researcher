@@ -317,17 +317,10 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				continue
 			}
 
-			// Several request domains may resolve to one upstream call (see
-			// CacheDomainer); cache under the shared key so we fetch once.
-			cacheDomain := domain
-			if cd, ok := prov.(CacheDomainer); ok {
-				cacheDomain = cd.CacheDomain(domain)
-			}
-
 			var data TickerData
 			found := false
 			if s.cache != nil {
-				found, _ = s.cache.Get(prov.Source(), prov.Name(), cacheDomain, t, &data)
+				found, _ = s.cache.Get(prov.Source(), prov.Name(), domain, t, &data)
 			}
 
 			if !found {
@@ -337,7 +330,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 					pack.Errors = append(pack.Errors, fmt.Sprintf("%s %s/%s: %v", prov.Name(), domain, t, err))
 				}
 				if err == nil && len(data.Facts) > 0 && s.cache != nil {
-					s.cache.Set(prov.Source(), prov.Name(), cacheDomain, t, data)
+					s.cache.Set(prov.Source(), prov.Name(), domain, t, data)
 				}
 			}
 

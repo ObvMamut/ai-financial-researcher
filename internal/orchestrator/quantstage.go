@@ -105,6 +105,15 @@ func buildQuantPack(ctx context.Context, ch chan<- Event, run *store.Run, yc *ma
 		}
 	}
 
+	// The benchmarks were fetched above for beta and relative strength. Compute
+	// their own metrics too: that is the market regime, and it costs nothing.
+	for sym, s := range benches {
+		if s == nil {
+			continue
+		}
+		pack.Benchmarks[sym] = quant.Compute(s, nil)
+	}
+
 	if err := run.WriteQuantPack(pack); err != nil {
 		log(ch, fmt.Sprintf("warn: write quant.json: %v", err))
 	}
@@ -129,4 +138,14 @@ func newestBar(series map[string]*quant.Series) string {
 		}
 	}
 	return newest
+}
+
+// regimeSuffix appends the computed market regime to the Chief Analyst's quant
+// reference. The Chief was told to weigh a macro report at 10–15% of the score
+// while having no market-level prices of its own to check that report against.
+func regimeSuffix(p *quant.Pack) string {
+	if rb := p.RegimeBlock(); rb != "" {
+		return "\n" + rb
+	}
+	return ""
 }

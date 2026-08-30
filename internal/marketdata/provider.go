@@ -57,12 +57,3 @@ type Provider interface {
 	Fetch(ctx context.Context, domain string, ticker string) (TickerData, error)
 	MacroFetch(ctx context.Context) ([]Fact, error)
 }
-
-// CacheDomainer is an optional Provider capability: it collapses several request
-// domains onto one cache key when they all resolve to the same upstream call.
-// AlphaVantage serves both "news" and "sentiment" from a single NEWS_SENTIMENT
-// request, so without this the service would pay for every ticker twice.
-type CacheDomainer interface {
-	// CacheDomain returns the cache key segment to use for domain.
-	CacheDomain(domain string) string
-}

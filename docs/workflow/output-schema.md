@@ -81,9 +81,15 @@ Human-readable analysis, then a structured tail:
 ```
 ````
 
-`domain`: `news` | `fundamentals` | `quant` | `sentiment` | `macro` (parsers also accept
-the legacy `technicals` from old runs). `strength`: integer `0–10` per each persona's
-anchored rubric. `missing`: tickers the specialist could not assess.
+`domain`: `news` | `fundamentals` | `quant` | `sentiment` | `macro`. `strength`: integer
+`0–10` per each persona's anchored rubric. `missing`: tickers the specialist could not
+assess.
+
+The legacy `technicals` domain is gone: the quant stage computes everything its
+AlphaVantage `GLOBAL_QUOTE` call carried, from a full 2-year series rather than a single
+snapshot and for every listing rather than US ones. Old artifacts still render — the TUI
+and `DomainWeights` both still read the name — but no new run produces one, and it no
+longer carries weight in the scoring.
 
 ### The no-data convention
 

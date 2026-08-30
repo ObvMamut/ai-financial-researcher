@@ -577,6 +577,13 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		for t, d := range pack.EventDates {
 			eventDates[t] = d
 		}
+		// Multiples are computed here rather than asked for: the filings give
+		// shares and EPS, the quant pack gives the price, and dividing them is
+		// arithmetic. Done before WriteDataPack so the artifact is what the
+		// agent saw.
+		if sp.role == "fundamentals" {
+			enrichFundamentals(pack, quantPack)
+		}
 		logPackErrors(ch, sp.role, pack.Errors)
 		dataErrors = append(dataErrors, prefixed(sp.role, pack.Errors)...)
 		// No provider serves the quant domain — its evidence is the computed
@@ -604,9 +611,19 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 					dataBlock += "\n### Verified macro backdrop\n\n" + mm
 				}
 			}
-		case "news", "sentiment":
+		case "news", "sentiment", "fundamentals":
+			// Fundamentals needs the price to say anything about a multiple:
+			// without it the domain could report a revenue figure but never a
+			// P/E, and "expensive" was an assertion about a number it had not
+			// been shown.
 			if cb := quantPack.CompactBlock(); cb != "" {
 				dataBlock += "\n### Verified price context (computed from daily OHLCV)\n\n" + cb
+			}
+		case "macro":
+			// The macro domain's question at this horizon is the market regime,
+			// and the benchmark prices answer it. FRED alone never could.
+			if rb := quantPack.RegimeBlock(); rb != "" {
+				dataBlock += "\n" + rb
 			}
 		}
 
@@ -778,7 +795,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Reports:        specReports,
 		Missing:        missingDomains,
 		Weights:        cfg.Weights,
-		QuantBlock:     quantPack.CompactBlock(),
+		QuantBlock:     quantPack.CompactBlock() + regimeSuffix(quantPack),
 		BaseScoreBlock: baseScoreBlock(bases, cfg.ChiefAdjustBand),
 	})
 	if err != nil {

@@ -290,3 +290,31 @@ func TestCompactLineCarriesRiskShapeAndFlags(t *testing.T) {
 		t.Errorf("CompactBlock should bullet the first line, got:\n%s", block)
 	}
 }
+
+func TestRegimeBlockReadsTheBenchmarksAsAMarketRead(t *testing.T) {
+	// The benchmark series were fetched to compute beta and relative strength,
+	// and then nothing read them as a regime — so the macro specialist was asked
+	// whether the backdrop supported a trade while being shown no market prices.
+	p := NewPack()
+	if got := p.RegimeBlock(); got != "" {
+		t.Errorf("no benchmarks should render no block, got %q", got)
+	}
+	p.Benchmarks["SPY"] = Metrics{
+		Symbol: "SPY", AsOf: "2026-08-28", LastClose: 612.40,
+		Ret21d: 0.021, Ret63d: 0.074, PriceTo52wHigh: 0.977,
+		VolYZ20: 0.14, VolTrend: 0.92, VR5: 1.11, Regime: "trending",
+		MaxDrawdown126: -0.061,
+	}
+	p.Benchmarks["EZU"] = Metrics{Symbol: "EZU", AsOf: "2026-08-28", LastClose: 55.1, Regime: "random-walk"}
+
+	block := p.RegimeBlock()
+	for _, want := range []string{"SPY", "EZU", "21d +2.1%", "63d +7.4%", "-2.3% from its 52w high",
+		"trend 0.92", "trending", "maxDD126 -6.1%"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("regime block missing %q:\n%s", want, block)
+		}
+	}
+	if strings.Index(block, "EZU") > strings.Index(block, "SPY") {
+		t.Error("benchmarks should render in a stable sorted order")
+	}
+}

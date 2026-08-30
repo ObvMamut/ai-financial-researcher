@@ -227,7 +227,11 @@ EOF
 fi
 
 spec_scores() {
-  # $1 = domain name for the JSON tail
+  # $1 = domain name for the JSON tail. The markers let the hermetic run assert
+  # that each role's prompt actually carried the computed block it is written
+  # against, rather than only that the role ran.
+  has "### Verified market regime" && echo "saw-regime-block"
+  has "### Verified price context" && echo "saw-price-context"
   cat <<EOF
 Fake $1 report covering the shortlist. Findings per ticker follow.
 

@@ -63,13 +63,20 @@ func NewAlphaVantageProvider(apiKey, dataDir string) Provider {
 func (p *alphaVantageProvider) Name() string   { return "AlphaVantage" }
 func (p *alphaVantageProvider) Source() string { return p.baseURL }
 
-// Domains: news only. "sentiment" used to be served here too, from the same
-// NEWS_SENTIMENT call the news domain makes — so two of the five nominally
-// independent domains were reading one source and agreeing with each other by
-// construction. Sentiment now comes from insider filings and option positioning
-// (edgarform4.go, yahoooptions.go); headline tone stays a news fact.
+// Domains: news only.
+//
+// "sentiment" used to be served here too, from the same NEWS_SENTIMENT call the
+// news domain makes — so two of the five nominally independent domains were
+// reading one source and agreeing with each other by construction. Sentiment now
+// comes from insider filings and option positioning (edgarform4.go,
+// yahoooptions.go); headline tone stays a news fact.
+//
+// "technicals" is gone with the specialist of that name: the quant stage
+// computes everything a GLOBAL_QUOTE call carried, from a full 2-year series
+// rather than a single snapshot, and for every listing rather than US ones. The
+// call was still being made and its facts never reached a prompt.
 func (p *alphaVantageProvider) Domains() []string {
-	return []string{"technicals", "news"}
+	return []string{"news"}
 }
 func (p *alphaVantageProvider) Available() bool { return p.apiKey != "" }
 
@@ -79,8 +86,6 @@ func (p *alphaVantageProvider) Fetch(ctx context.Context, domain string, ticker 
 	}
 
 	switch domain {
-	case "technicals":
-		return p.fetchGlobalQuote(ctx, ticker)
 	case "news":
 		return p.fetchNews(ctx, ticker)
 	case "sentiment":
@@ -121,74 +126,6 @@ func (p *alphaVantageProvider) fetchNews(ctx context.Context, ticker string) (Ti
 		}
 		td.Warnings = append(td.Warnings, "news feed unavailable: "+newsErr.Error())
 	}
-	return td, nil
-}
-
-// CacheDomain collapses "news" and "sentiment" onto one key: both are served by
-// a single NEWS_SENTIMENT request, so caching them separately would double the
-// per-run API spend (24 calls instead of 12 — over the free 25/day tier).
-func (p *alphaVantageProvider) CacheDomain(domain string) string {
-	switch domain {
-	case "news", "sentiment":
-		return newsSentimentCacheDomain
-	default:
-		return domain
-	}
-}
-
-// newsSentimentCacheDomain is the shared cache key segment for the news and
-// sentiment domains (see CacheDomain).
-const newsSentimentCacheDomain = "news_sentiment"
-
-func (p *alphaVantageProvider) fetchGlobalQuote(ctx context.Context, ticker string) (TickerData, error) {
-	if isForeignListing(ticker) {
-		return TickerData{}, fmt.Errorf("%w: %s is not a US listing", ErrNotApplicable, ticker)
-	}
-	if err := p.limiter.Wait(ctx); err != nil {
-		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %v", ErrUnavailable, err)
-	}
-
-	v := url.Values{}
-	v.Set("function", "GLOBAL_QUOTE")
-	v.Set("symbol", avSymbol(ticker))
-	v.Set("apikey", p.apiKey)
-
-	u := p.baseURL + "/query?" + v.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return TickerData{}, err
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return TickerData{}, err
-	}
-	defer resp.Body.Close()
-
-	var data struct {
-		Quote map[string]string `json:"Global Quote"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return TickerData{}, err
-	}
-
-	td := TickerData{Ticker: ticker}
-	if price, ok := data.Quote["05. price"]; ok {
-		td.Facts = append(td.Facts, Fact{
-			Label:  "Last Price",
-			Value:  price,
-			AsOf:   time.Now(),
-			Source: "AlphaVantage",
-		})
-	}
-	if change, ok := data.Quote["10. change percent"]; ok {
-		td.Facts = append(td.Facts, Fact{
-			Label:  "Change %",
-			Value:  change,
-			AsOf:   time.Now(),
-			Source: "AlphaVantage",
-		})
-	}
-
 	return td, nil
 }
 

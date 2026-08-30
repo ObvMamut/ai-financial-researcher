@@ -11,11 +11,17 @@ import (
 type Pack struct {
 	AsOf     string             `json:"as_of"` // date of the newest bar used
 	ByTicker map[string]Metrics `json:"by_ticker"`
-	Errors   []string           `json:"errors,omitempty"` // fetch/compute failures per symbol
+	// Benchmarks holds the same metrics computed for each index benchmark the
+	// run touched. The series were already fetched to compute beta and relative
+	// strength; nothing read them as a market regime, so the macro specialist
+	// was asked whether the backdrop supported a trade while being shown four
+	// FRED series and no market prices at all.
+	Benchmarks map[string]Metrics `json:"benchmarks,omitempty"`
+	Errors     []string           `json:"errors,omitempty"` // fetch/compute failures per symbol
 }
 
 func NewPack() *Pack {
-	return &Pack{ByTicker: map[string]Metrics{}}
+	return &Pack{ByTicker: map[string]Metrics{}, Benchmarks: map[string]Metrics{}}
 }
 
 func (p *Pack) tickers() []string {
@@ -130,6 +136,35 @@ func (p *Pack) CompactBlock() string {
 		sb.WriteString("- ")
 		sb.WriteString(p.CompactLine(t))
 		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// RegimeBlock renders the index benchmarks as a market-regime read.
+//
+// It is the answer to the only question the macro domain can actually settle at
+// a 5–20 day horizon: is the market this trade sits inside trending, falling
+// apart, or going nowhere? A 10-year yield does not answer that; the benchmark's
+// own price does, and the run already has it.
+func (p *Pack) RegimeBlock() string {
+	if len(p.Benchmarks) == 0 {
+		return ""
+	}
+	syms := make([]string, 0, len(p.Benchmarks))
+	for s := range p.Benchmarks {
+		syms = append(syms, s)
+	}
+	sort.Strings(syms)
+
+	var sb strings.Builder
+	sb.WriteString("### Verified market regime (computed)\n\n")
+	sb.WriteString("Index benchmarks, computed in-process from the same daily OHLCV as everything else here. ")
+	sb.WriteString("These are ground truth — do not re-derive or contradict them.\n\n")
+	for _, sym := range syms {
+		m := p.Benchmarks[sym]
+		sb.WriteString(fmt.Sprintf("- **%s** (close %.2f, %s): 21d %s | 63d %s | %.1f%% from its 52w high | vol20d %.0f%% (trend %.2f) | VR5 %.2f → %s | maxDD126 %s\n",
+			sym, m.LastClose, m.AsOf, pct(m.Ret21d), pct(m.Ret63d),
+			(m.PriceTo52wHigh-1)*100, m.VolYZ20*100, m.VolTrend, m.VR5, m.Regime, pct(m.MaxDrawdown126)))
 	}
 	return sb.String()
 }
