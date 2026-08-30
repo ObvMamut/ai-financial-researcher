@@ -1,6 +1,8 @@
 package agents
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -315,5 +317,28 @@ func TestChiefPromptCarriesTheTrackRecord(t *testing.T) {
 	// for the injected block's own header rather than the words.
 	if strings.Contains(got, "### Track record (") {
 		t.Errorf("prompt carries a track-record block it does not have:\n%s", got)
+	}
+}
+
+func TestLoadIgnoresAReadme(t *testing.T) {
+	// A persona directory with documentation in it is still a persona
+	// directory. Turning the README into an agent would also change the
+	// persona-hash set, which is what run outcomes are attributed by.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "scout.md"), []byte("# Agent: Scout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("how to use these\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := reg.PersonaSHA()["README"]; ok {
+		t.Errorf("README was loaded as a persona: %v", reg.PersonaSHA())
+	}
+	if len(reg.PersonaSHA()) != 1 {
+		t.Errorf("persona set = %v, want just the scout", reg.PersonaSHA())
 	}
 }

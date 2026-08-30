@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // closedEntry is a finished trade with the domain scores that argued for it.
@@ -117,5 +119,88 @@ func TestCalibrationRoundTripsThroughDisk(t *testing.T) {
 	}
 	if LoadCalibration(filepath.Join(dir, "nope")) != nil {
 		t.Error("a missing calibration file is an absence, not a value")
+	}
+}
+
+func TestPersonaKeyIdentifiesTheExactPromptSet(t *testing.T) {
+	base := &model.RunMeta{
+		PersonaSet: "agents",
+		PersonaSHA: map[string]string{"scout": "aaa111", "macro": "bbb222"},
+	}
+	same := &model.RunMeta{
+		PersonaSet: "agents",
+		PersonaSHA: map[string]string{"macro": "bbb222", "scout": "aaa111"}, // map order differs
+	}
+	if personaKey(base) != personaKey(same) {
+		t.Errorf("same personas keyed differently: %q vs %q", personaKey(base), personaKey(same))
+	}
+	if !strings.HasPrefix(personaKey(base), "agents@") {
+		t.Errorf("key = %q, want it to name the directory it came from", personaKey(base))
+	}
+
+	// One edited persona is a different arm, even in a directory of the same
+	// name. Attributing its results to the old prompts would be the whole
+	// experiment gone wrong.
+	edited := &model.RunMeta{
+		PersonaSet: "agents",
+		PersonaSHA: map[string]string{"scout": "aaa111", "macro": "ccc333"},
+	}
+	if personaKey(edited) == personaKey(base) {
+		t.Error("an edited persona did not change the key")
+	}
+
+	// A different directory is a different arm.
+	other := &model.RunMeta{
+		PersonaSet: "agents.v1",
+		PersonaSHA: map[string]string{"scout": "aaa111", "macro": "bbb222"},
+	}
+	if personaKey(other) == personaKey(base) {
+		t.Error("agents.v1 and agents share a key")
+	}
+
+	// Runs that recorded nothing cannot be attributed, and must not be pooled
+	// into some default arm.
+	if got := personaKey(&model.RunMeta{}); got != "" {
+		t.Errorf("key from empty metadata = %q, want none", got)
+	}
+	if got := personaKey(nil); got != "" {
+		t.Errorf("key from nil metadata = %q, want none", got)
+	}
+}
+
+func TestPersonaComparisonWithholdsAVerdictOnThinArms(t *testing.T) {
+	// Fifteen closed ideas per arm is the floor for saying anything. Below it
+	// the comparison still prints — you want to see it filling up — but it says
+	// plainly that it is not a result yet.
+	s := &Summary{}
+	add := func(persona string, n int, wins int) {
+		for i := 0; i < n; i++ {
+			pnl, r := 6.0, 1.2
+			if i >= wins {
+				pnl, r = -5.0, -1.0
+			}
+			e := closedEntry("BUY", 60, pnl, r, nil)
+			e.PersonaSet = persona
+			s.Entries = append(s.Entries, e)
+		}
+	}
+	add("agents@abc123", 16, 9)
+	add("agents.v1@def456", 8, 2)
+	s.aggregate()
+
+	if got := s.ByPersona["agents@abc123"]; got.N != 16 || got.Wins != 9 {
+		t.Fatalf("arm A = %+v, want N=16 W=9", got)
+	}
+
+	s.Replay = true
+	out := s.FormatText()
+	if !strings.Contains(out, "agents@abc123") || !strings.Contains(out, "agents.v1@def456") {
+		t.Errorf("comparison missing an arm:\n%s", out)
+	}
+	if !strings.Contains(out, "too thin") {
+		t.Errorf("an 8-idea arm was reported without qualification:\n%s", out)
+	}
+	if strings.Contains(out, "agents@abc123 · too thin") {
+		t.Errorf("a 16-idea arm was called thin:\n%s", out)
 	}
 }

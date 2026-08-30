@@ -69,6 +69,11 @@ func Replay(ctx context.Context, runsDir string, yc *marketdata.YahooClient, fil
 		if err != nil || ideas == nil {
 			continue
 		}
+		// Which prompt set produced these ideas. Read once per run: it is the
+		// same answer for every idea in it.
+		meta, _ := store.LoadMeta(r.Dir)
+		persona := personaKey(meta)
+
 		counted := false
 		for _, idea := range ideas.Ideas {
 			if idea.PriceAtGeneration <= 0 && idea.Entry <= 0 {
@@ -77,6 +82,7 @@ func Replay(ctx context.Context, runsDir string, yc *marketdata.YahooClient, fil
 			}
 			counted = true
 			e := replayIdea(ctx, r, ideas.GeneratedAt, idea, series, fillWindow)
+			e.PersonaSet = persona
 			sum.Entries = append(sum.Entries, e)
 		}
 		if counted {

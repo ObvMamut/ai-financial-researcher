@@ -378,6 +378,14 @@ func TestIndependentRun(t *testing.T) {
 	if len(meta.PersonaSHA) == 0 {
 		t.Error("metadata does not record the persona hashes the run used")
 	}
+	// The hashes identify the prompts; the set name says which A/B arm they
+	// were. Without it a scoreboard comparison has nothing legible to group by.
+	if meta.PersonaSet != "agents" {
+		t.Errorf("persona set = %q, want the directory name the personas came from", meta.PersonaSet)
+	}
+	if _, ok := meta.PersonaSHA["README"]; ok {
+		t.Error("a README was loaded as a persona")
+	}
 	for _, d := range meta.Domains {
 		if d.Status != model.StatusDone {
 			t.Errorf("domain %s status = %s, want done", d.Domain, d.Status)
@@ -973,4 +981,38 @@ func anyLogContains(logs []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestBaselinePersonaArmStillRuns(t *testing.T) {
+	// agents.v1 is the frozen control arm of the persona A/B. If it silently
+	// stopped loading — a renamed role, a block the old prompts don't carry —
+	// the comparison would quietly become a one-arm study that still printed a
+	// number. This is the guard against that.
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	dir, err := filepath.Abs("../../agents.v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AgentsDir = dir
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("baseline arm errored: %s", runErr.Message)
+	}
+	if complete == nil || complete.Ideas == nil || len(complete.Ideas.Ideas) == 0 {
+		t.Fatal("baseline arm produced no ideas")
+	}
+
+	meta := readMeta(t, runDir(t, cfg.RunsDir))
+	if meta.PersonaSet != "agents.v1" {
+		t.Errorf("persona set = %q, want agents.v1 — the arms are indistinguishable", meta.PersonaSet)
+	}
+	// Both arms must carry the same roles, or they are not comparable.
+	for _, role := range []string{"scout", "news", "fundamentals", "quant", "sentiment", "macro", "chief-analyst"} {
+		if meta.PersonaSHA[role] == "" {
+			t.Errorf("baseline arm has no %s persona", role)
+		}
+	}
 }

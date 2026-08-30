@@ -1,12 +1,17 @@
 package scoreboard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // CalibrationFile is the name of the stored track record, written under the
@@ -173,4 +178,36 @@ func calibrationLine(m map[string]Bucket, order []string) string {
 		parts = append(parts, fmt.Sprintf("%s %d·%.0f%%·%+.2fR", k, b.N, b.WinRate*100, b.AvgR))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// personaKey identifies the exact prompt set a run used: the directory it was
+// loaded from, plus a digest of every persona hash in it.
+//
+// The directory name alone is not enough — editing one persona in place leaves
+// the name unchanged while changing the thing being measured, and attributing
+// those results to the old prompts is the experiment silently going wrong. The
+// digest alone is not enough either: nobody can read it. Both.
+//
+// A run that recorded no persona hashes returns "", and such runs are pooled
+// into no arm rather than into a plausible-looking default.
+func personaKey(m *model.RunMeta) string {
+	if m == nil || len(m.PersonaSHA) == 0 {
+		return ""
+	}
+	roles := make([]string, 0, len(m.PersonaSHA))
+	for r := range m.PersonaSHA {
+		roles = append(roles, r)
+	}
+	sort.Strings(roles)
+
+	h := sha256.New()
+	for _, r := range roles {
+		fmt.Fprintf(h, "%s:%s\n", r, m.PersonaSHA[r])
+	}
+	digest := hex.EncodeToString(h.Sum(nil))[:6]
+
+	if m.PersonaSet == "" {
+		return digest
+	}
+	return m.PersonaSet + "@" + digest
 }

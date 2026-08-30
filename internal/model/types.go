@@ -369,4 +369,8 @@ type RunMeta struct {
 	// Personas are runtime data, editable without a code change, so this is what
 	// makes a run's outcome attributable to the prompts that produced it.
 	PersonaSHA map[string]string `json:"persona_sha,omitempty"`
+	// PersonaSet names the directory those personas were loaded from ("agents",
+	// "agents.v1"). The hashes identify the prompts; this says which arm of an
+	// A/B comparison a run belongs to in words a person can read.
+	PersonaSet string `json:"persona_set,omitempty"`
 }

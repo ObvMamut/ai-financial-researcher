@@ -76,6 +76,8 @@ internal/
                 bars (fill, then first barrier touched); `--legacy` keeps the old
                 mark-to-current-price math
 agents/*.md     agent persona prompts (runtime data)
+agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
+                (CFR_AGENTS_DIR=agents.v1); never edited
 testdata/fakebin/ fake agy/claude CLIs for hermetic tests + cheap manual TUI runs
 docs/workflow/  workflow + scoring + schema specs (source of truth for behavior)
 ```

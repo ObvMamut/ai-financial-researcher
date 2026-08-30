@@ -36,6 +36,12 @@ func Load(agentsDir string) (*Registry, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
+		// A directory of personas naturally acquires a README. Loading it as a
+		// role named "README" would put it in the persona-hash set and make two
+		// otherwise identical persona directories look like different ones.
+		if strings.EqualFold(e.Name(), "README.md") {
+			continue
+		}
 		role := strings.TrimSuffix(e.Name(), ".md")
 		data, err := os.ReadFile(filepath.Join(agentsDir, e.Name()))
 		if err != nil {

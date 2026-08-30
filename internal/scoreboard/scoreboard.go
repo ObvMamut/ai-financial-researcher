@@ -71,6 +71,10 @@ type Entry struct {
 	// the scoreboard can ask which domains were right rather than only whether
 	// the trade worked.
 	DomainScores map[string]int `json:"domain_scores,omitempty"`
+	// PersonaSet identifies the exact prompt set the producing run used, so an
+	// A/B between two persona directories can be settled on closed trades
+	// instead of on how the reports read. Empty for runs that recorded none.
+	PersonaSet string `json:"persona_set,omitempty"`
 
 	Err string `json:"error,omitempty"`
 }
@@ -132,7 +136,15 @@ type Summary struct {
 	// its signed score agreed with the direction taken. A domain that keeps
 	// backing losers is the one to reweight.
 	ByDomain map[string]Bucket `json:"by_domain,omitempty"`
+	// ByPersona is the same record split by the prompt set that produced the
+	// ideas — the A/B arms.
+	ByPersona map[string]Bucket `json:"by_persona,omitempty"`
 }
+
+// MinClosedPerArm is the number of closed trades an A/B arm needs before its
+// number is worth reading. Below it the comparison is still shown — watching it
+// fill up is the point — but labelled as what it is.
+const MinClosedPerArm = 15
 
 // confidenceBuckets is the fixed display order of the confidence slices.
 var confidenceBuckets = []string{"<40", "40-59", "60-79", "80+"}
@@ -216,7 +228,7 @@ func (m accs) buckets() map[string]Bucket {
 func (s *Summary) aggregate() {
 	s.ByOutcome = map[Outcome]int{}
 	total := &bucketAcc{}
-	dir, idx, conf, dom := accs{}, accs{}, accs{}, accs{}
+	dir, idx, conf, dom, per := accs{}, accs{}, accs{}, accs{}, accs{}
 	var excess float64
 	var excessN int
 
@@ -235,6 +247,7 @@ func (s *Summary) aggregate() {
 		dir.add(e.Direction, e)
 		idx.add(e.Index, e)
 		conf.add(confidenceBucket(e.Confidence), e)
+		per.add(e.PersonaSet, e)
 		for d, sc := range e.DomainScores {
 			if e.backedBy(sc) {
 				dom.add(d, e)
@@ -252,6 +265,7 @@ func (s *Summary) aggregate() {
 		s.AvgExcess = round2(excess / float64(excessN))
 	}
 	s.ByDirection, s.ByIndex, s.ByConfidence, s.ByDomain = dir.buckets(), idx.buckets(), conf.buckets(), dom.buckets()
+	s.ByPersona = per.buckets()
 }
 
 // Build walks runsDir and marks every scorable idea to the latest close. This
@@ -408,6 +422,31 @@ func (s *Summary) formatReplay() string {
 		writeBuckets(&sb, "By index", s.ByIndex, sortedKeys(s.ByIndex))
 		writeBuckets(&sb, "By confidence", s.ByConfidence, confidenceBuckets)
 		writeBuckets(&sb, "By domain backing the trade", s.ByDomain, sortedKeys(s.ByDomain))
+		sb.WriteString(personaComparison(s.ByPersona))
+	}
+	return sb.String()
+}
+
+// personaComparison renders the A/B arms. Each line carries its own n and says
+// when that n is too small to conclude from, because the failure mode of an A/B
+// is not a wrong number — it is a right number read too early.
+func personaComparison(m map[string]Bucket) string {
+	if len(m) < 2 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n  Persona A/B (closed ideas per arm):\n")
+	for _, k := range sortedKeys(m) {
+		b := m[k]
+		if b.N == 0 {
+			continue
+		}
+		note := ""
+		if b.N < MinClosedPerArm {
+			note = fmt.Sprintf("   ← too thin (%d of %d closed ideas)", b.N, MinClosedPerArm)
+		}
+		fmt.Fprintf(&sb, "    %-24s n=%-3d win %3.0f%%  avg %+.2fR  avg %+.2f%%%s\n",
+			k, b.N, b.WinRate*100, b.AvgR, b.AvgPnL, note)
 	}
 	return sb.String()
 }

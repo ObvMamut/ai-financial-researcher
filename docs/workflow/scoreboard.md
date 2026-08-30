@@ -109,6 +109,37 @@ Two consumers:
 Both thresholds exist because a thin record is worse than none: it reads as evidence and is
 noise.
 
+## Persona A/B
+
+Personas are runtime data: they change without a code change, and a run's outcome is only
+attributable if the exact prompt text behind it is identifiable. Every run records
+`persona_sha` (a hash per role) and `persona_set` (the directory they came from) in
+`metadata.json`, and the replay labels every idea with a key combining the two — e.g.
+`agents@4f1a2b`. Editing one persona in place changes the digest, so a mid-experiment
+tweak shows up as a third arm rather than contaminating the second.
+
+`agents.v1/` is the frozen control: the personas exactly as they stood at commit
+`f137f2a`, before the research-quality overhaul rewrote them. Run against it with
+
+```bash
+CFR_AGENTS_DIR=agents.v1 go run ./cmd/cfr run --json
+```
+
+alternating with ordinary runs. `cfr scoreboard` then prints a **Persona A/B** block
+comparing the arms on closed ideas: n, win rate, average R, average P&L. Each line says so
+when its arm is under `MinClosedPerArm` (**15** closed ideas) — the failure mode of an A/B
+is not a wrong number, it is a right number read too early.
+
+Two things the comparison does *not* control for, and should be read with:
+
+- **Both arms run today's pipeline.** The computed base scores, the risk gate and the
+  verified earnings calendar apply either way. The question being answered is which prompt
+  set is better *under this pipeline*, not whether the overhaul as a whole helped — the
+  pipeline is not going back.
+- **Both arms see the same track record**, since the calibration block is pooled across
+  runs. It is a constant across the arms, so it cannot bias the comparison between them,
+  but it does mean neither arm is being measured in isolation from the feedback loop.
+
 ## Skipped ideas
 
 Ideas with neither `price_at_generation` nor an `entry` are counted as `skipped`

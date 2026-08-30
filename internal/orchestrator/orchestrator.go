@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -989,6 +990,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Stages:         stageMS,
 		DataErrors:     dataErrors,
 		PersonaSHA:     reg.PersonaSHA(),
+		PersonaSet:     filepath.Base(cfg.AgentsDir),
 	}
 	if err := run.WriteMeta(meta); err != nil {
 		log(ch, fmt.Sprintf("warn: write metadata.json: %v", err))
