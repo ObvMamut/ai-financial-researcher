@@ -110,8 +110,9 @@ compares `scores` against the coverage it actually assembled and rewrites the ta
 - a report with no parseable JSON tail is not a report. The domain is marked
   `failed`, whatever the process exit code said.
 
-Coverage is computed per domain: EDGAR and AlphaVantage reach US listings only,
-FRED's series are US macro, and Yahoo's chart API — which feeds quant — is global.
+Coverage is computed per domain: EDGAR, AlphaVantage and the option chain reach US
+listings only (or a foreign listing's US line), FRED's series are US macro, and Yahoo's
+chart API — which feeds quant — is global.
 
 ## Final trade ideas (Chief Analyst → Go → TUI)
 

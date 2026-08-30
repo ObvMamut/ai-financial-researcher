@@ -356,6 +356,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		cache,
 		marketdata.NewEdgarProvider(cfg.Providers.ContactEmail, cache),
 		marketdata.NewAlphaVantageProvider(cfg.Providers.AlphaVantageKey, cfg.DataDir),
+		marketdata.NewYahooOptionsProvider(),
 		marketdata.NewFredProvider(cfg.Providers.FredKey),
 	)
 

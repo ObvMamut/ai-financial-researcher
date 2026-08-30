@@ -274,3 +274,47 @@ func TestIsUSListing(t *testing.T) {
 		}
 	}
 }
+
+// factProvider serves a fixed set of facts for one domain.
+type factProvider struct {
+	name   string
+	domain string
+	facts  []Fact
+}
+
+func (s *factProvider) Name() string      { return s.name }
+func (s *factProvider) Source() string    { return "https://" + s.name + ".example.com" }
+func (s *factProvider) Domains() []string { return []string{s.domain} }
+func (s *factProvider) Available() bool   { return true }
+func (s *factProvider) Fetch(ctx context.Context, domain, ticker string) (TickerData, error) {
+	return TickerData{Ticker: ticker, Facts: s.facts}, nil
+}
+func (s *factProvider) MacroFetch(ctx context.Context) ([]Fact, error) { return nil, ErrNotApplicable }
+
+func TestBuildPackMergesEveryProviderForADomain(t *testing.T) {
+	// BuildPack used to stop at the first provider that answered. Insider
+	// filings and option positioning are different evidence about the same
+	// question, so taking whichever replied first made the sentiment domain a
+	// coin toss between two real sources.
+	insider := &factProvider{name: "sec", domain: "sentiment", facts: []Fact{
+		{Label: "Insider activity (SEC Form 4)", Value: "2 buys", Source: "SEC EDGAR", URL: "https://sec.gov/a"},
+	}}
+	options := &factProvider{name: "yahoo", domain: "sentiment", facts: []Fact{
+		{Label: "Options positioning", Value: "put/call 1.18", Source: "Yahoo", URL: "https://finance.yahoo.com/b"},
+	}}
+	pack := NewService(nil, insider, options).
+		BuildPack(context.Background(), "sentiment", []string{"NVDA"})
+
+	labels := map[string]bool{}
+	for _, f := range pack.ByTicker["NVDA"].Facts {
+		labels[f.Label] = true
+	}
+	if !labels["Insider activity (SEC Form 4)"] || !labels["Options positioning"] {
+		t.Errorf("both providers must contribute, got %v", labels)
+	}
+	for _, want := range []string{"sec.gov", "finance.yahoo.com"} {
+		if !pack.Citable[want] {
+			t.Errorf("%s should be citable once its provider contributed, got %v", want, pack.Citable)
+		}
+	}
+}

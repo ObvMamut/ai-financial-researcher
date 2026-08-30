@@ -62,8 +62,14 @@ func NewAlphaVantageProvider(apiKey, dataDir string) Provider {
 
 func (p *alphaVantageProvider) Name() string   { return "AlphaVantage" }
 func (p *alphaVantageProvider) Source() string { return p.baseURL }
+
+// Domains: news only. "sentiment" used to be served here too, from the same
+// NEWS_SENTIMENT call the news domain makes — so two of the five nominally
+// independent domains were reading one source and agreeing with each other by
+// construction. Sentiment now comes from insider filings and option positioning
+// (edgarform4.go, yahoooptions.go); headline tone stays a news fact.
 func (p *alphaVantageProvider) Domains() []string {
-	return []string{"technicals", "news", "sentiment"}
+	return []string{"technicals", "news"}
 }
 func (p *alphaVantageProvider) Available() bool { return p.apiKey != "" }
 

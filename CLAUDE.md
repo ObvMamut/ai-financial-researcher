@@ -47,7 +47,8 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
     (`internal/orchestrator/orchestrator.go`); the pool's throttle is generic
     (`throttleCLI`/`throttleSem` in `pool.go`), covering gemini and local.
   (HTTP to *market-data* sources remains fine and expected — `internal/marketdata` talks to
-  the keyless Yahoo Finance chart API, and optionally EDGAR/FRED/AlphaVantage when keyed.)
+  the keyless Yahoo Finance chart and option-chain APIs and to SEC EDGAR, and optionally
+  FRED/AlphaVantage when keyed.)
 - **Cost split:** the **cheap engine** (agy CLI, remote API, *or* a local model) does cheap,
   parallel research (screening + domain reports); **Claude** does the single heavy
   synthesis/scoring step (Chief Analyst). The split holds whichever cheap engine is selected.
@@ -97,6 +98,8 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
+   News additionally carries a bulk-fetched verified earnings calendar; sentiment reads
+   SEC Form 4 insider filings and the Yahoo option chain, not news tone.
 3.5. **Base scores (in-process, no model):** `basescore.go` does the weighting itself —
    `Σ w·sign·strength/10` over the domains that actually scored each name, renormalized,
    with weighted-coverage caps. The result is both shown to the Chief and enforced against

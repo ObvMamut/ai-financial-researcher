@@ -347,8 +347,17 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				pack.Errors = append(pack.Errors, fmt.Sprintf("%s %s/%s: %s", prov.Name(), domain, t, w))
 			}
 
+			// Merge rather than stop at the first provider that answers. The
+			// old break meant a domain served by two sources only ever saw one
+			// of them: insider filings and option positioning are different
+			// evidence about the same question, and taking whichever replied
+			// first would have made the sentiment domain a coin toss between
+			// them.
 			if len(data.Facts) > 0 {
-				pack.ByTicker[t] = data
+				merged := pack.ByTicker[t]
+				merged.Ticker = t
+				merged.Facts = append(merged.Facts, data.Facts...)
+				pack.ByTicker[t] = merged
 				pack.Coverage[t] = true
 				recordEventDate(pack, t, data.Facts)
 				pack.addCitable(prov.Source())
@@ -357,7 +366,6 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 					pack.addCitable(f.URL)
 					pack.addCitable(f.Source)
 				}
-				break // Found data for this ticker/domain, stop looking
 			}
 		}
 	}

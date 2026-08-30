@@ -103,7 +103,7 @@ total — not per ticker):
 | News          | `agents/news.md`         | Headline flow + the verified earnings calendar    |
 | Fundamentals  | `agents/fundamentals.md` | Valuation, growth, balance-sheet health           |
 | Quant         | `agents/quant.md`        | Interprets the computed statistical pack (no TA)  |
-| Sentiment     | `agents/sentiment.md`    | Positioning, analyst/social sentiment, options    |
+| Sentiment     | `agents/sentiment.md`    | Insider Form 4 filings + option positioning       |
 | Macro         | `agents/macro.md`        | Regime, rates, sector/region tailwinds & risks    |
 
 The quant specialist receives the full computed pack as ground truth; news and sentiment
@@ -114,7 +114,17 @@ requests, cached per UTC day). The persona may state a date **only** if it appea
 previously it was asked for earnings dates it had no way to know, and on a search-less
 engine it supplied plausible ones from memory. An unresolved earnings date inside the
 window caps that ticker's news strength at 5, and the validator flags any idea whose
-holding period spans one without acknowledging it. Every specialist — and
+holding period spans one without acknowledging it.
+
+Sentiment has its own sources. It previously read AlphaVantage's news-sentiment scores —
+the same call the news domain makes — so two of five nominally independent domains agreed
+with each other by construction. It now reads **SEC Form 4** insider filings (keyless;
+open-market purchases and sales only, with grants, option exercises and tax withholding
+excluded as compensation mechanics) and the **Yahoo option chain** (put/call open interest
+over the front two expiries, plus ATM implied volatility to compare against the computed
+realized vol). Both are merged into one pack — `BuildPack` no longer stops at the first
+provider that answers. The options endpoint is intermittently crumb-gated; a 401 degrades
+sentiment to insider filings alone and is recorded, never guessed around. Every specialist — and
 the Chief Analyst — receives the shortlist as a block carrying each name's sector, source
 index, and the scout's bias and reason, so a domain can confirm or contradict the thesis
 the name was nominated on instead of describing the company from scratch. Each report

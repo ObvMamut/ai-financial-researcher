@@ -75,8 +75,13 @@ func NewEdgarProvider(contactEmail string, cache *Cache) Provider {
 
 func (p *edgarProvider) Name() string   { return "EDGAR" }
 func (p *edgarProvider) Source() string { return p.factsBase }
+
+// Domains: fundamentals from companyfacts, and sentiment from Form 4 insider
+// filings. Both are keyless SEC data behind one CIK map and one identified
+// client, which is why insider activity lives on this provider rather than a
+// second one that would duplicate all of it.
 func (p *edgarProvider) Domains() []string {
-	return []string{"fundamentals"}
+	return []string{"fundamentals", "sentiment"}
 }
 func (p *edgarProvider) Available() bool { return p.contactEmail != "" }
 
@@ -205,7 +210,11 @@ func (p *edgarProvider) lookupCIK(ticker string) (string, bool) {
 }
 
 func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string) (TickerData, error) {
-	if domain != "fundamentals" {
+	switch domain {
+	case "fundamentals":
+	case "sentiment":
+		return p.fetchInsiderActivity(ctx, ticker)
+	default:
 		return TickerData{}, ErrNotApplicable
 	}
 	// Some foreign listings file with SEC under a US line — Linde plc trades as
