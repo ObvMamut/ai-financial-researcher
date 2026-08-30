@@ -88,6 +88,7 @@ type PromptParams struct {
 	DataBlock            string              // verified market data block (full quant pack for the quant role)
 	QuantBlock           string              // chief-analyst: compact verified quant lines per ticker
 	BaseScoreBlock       string              // chief-analyst: computed weighted domain scores per ticker
+	TrackRecordBlock     string              // chief-analyst: the pipeline's realized record, when there is enough of one
 	Weights              model.DomainWeights // structured weights
 	IndexConstituentList string              // scout only: formatted constituent list
 	PrescreenTable       string              // scout only: Stage 0.5 ranked table for this index
@@ -167,6 +168,13 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 		if p.BaseScoreBlock != "" {
 			sb.WriteString("\n")
 			sb.WriteString(p.BaseScoreBlock)
+		}
+
+		// The record comes after the scores it qualifies: what this pipeline has
+		// actually achieved is context for how hard to lean on today's evidence.
+		if p.TrackRecordBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.TrackRecordBlock)
 		}
 
 		if p.QuantBlock != "" {

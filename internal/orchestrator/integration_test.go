@@ -17,6 +17,7 @@ import (
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
@@ -916,4 +917,60 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+func TestTrackRecordReachesTheChiefAndTheRiskGate(t *testing.T) {
+	// The feedback loop is only real if the measured record leaves the JSON
+	// file and lands in the prompt the Chief actually reads.
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.DataDir = t.TempDir() // a private cache: this test writes a calibration into it
+
+	cal := &scoreboard.Calibration{
+		ComputedAt: time.Now().UTC().Format(time.RFC3339),
+		NClosed:    31, WinRate: 0.42, AvgPnLPct: 0.8, AvgR: -0.35, AvgBarsHeld: 9,
+		Domains: map[string]scoreboard.Bucket{
+			"quant": {N: 20, Wins: 11, WinRate: 0.55, AvgR: 0.30},
+			"macro": {N: 14, Wins: 4, WinRate: 0.29, AvgR: -0.60},
+		},
+		Confidence: map[string]scoreboard.Bucket{"60-79": {N: 18, Wins: 8, WinRate: 0.44, AvgR: -0.10}},
+	}
+	if err := cal.Save(cfg.DataDir); err != nil {
+		t.Fatalf("seed calibration: %v", err)
+	}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+
+	dir := runDir(t, cfg.RunsDir)
+	report := readFile(t, filepath.Join(dir, "chief-analyst.md"))
+	if !strings.Contains(report, "saw-track-record") {
+		t.Errorf("the track record never reached the chief prompt:\n%s", report)
+	}
+
+	// And a copy travels with the run, so a past decision can be read against
+	// the record that was in front of it.
+	if _, err := os.Stat(filepath.Join(dir, scoreboard.CalibrationFile)); err != nil {
+		t.Errorf("no calibration copy stored with the run: %v", err)
+	}
+
+	// 31 closed trades is past MinClosedForEdge, so the expectancy check must
+	// be running on the measured −0.35R rather than the assumed prior.
+	if !anyLogContains(logs, "expectancy assumes the measured -0.35R edge") {
+		t.Errorf("the risk gate kept its prior despite a usable record:\n%s", strings.Join(logs, "\n"))
+	}
+}
+
+func anyLogContains(logs []string, substr string) bool {
+	for _, l := range logs {
+		if strings.Contains(l, substr) {
+			return true
+		}
+	}
+	return false
 }

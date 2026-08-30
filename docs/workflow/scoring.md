@@ -110,6 +110,27 @@ Calibration guide (what the final number should mean):
 | 40–59      | Mixed; tradeable but speculative                                 |
 | < 40       | Don't surface as a top idea                                      |
 
+## The track record fed back to the Chief
+
+Each idea records `base_confidence` and `domain_scores`, and the replayed scoreboard scores
+those against what the trades actually did. `internal/scoreboard/calibration.go` reduces
+that to `.data/calibration.json`: overall win rate, average R, average hold, and per-domain
+/ per-confidence-bucket / per-direction records over **closed trades only**.
+
+- Written by `cfr scoreboard` (both the CLI and the TUI screen), and refreshed by a run
+  itself when the stored copy is older than 24h. A run never blocks on it: the refresh is
+  bounded and best-effort, and with no record the Chief is simply not told one.
+- Injected into the chief prompt as a `### Track record (computed from N closed ideas)`
+  block at `n_closed ≥ 10` (`MinClosedForFeedback`) — below that the sample cannot
+  distinguish a 45% domain from a 55% one, and a Chief told otherwise would spend its band
+  on noise.
+- Copied into `runs/<ts>/calibration.json`, so a past run's decisions can be read against
+  the record that was in front of it.
+- The persona's use of it is bounded by the same ±band: a domain whose backing wins near
+  half the time carries no information and earns no adjustment; a bucket whose realized win
+  rate is far from the confidence it stated is a bucket to move away from; every cell
+  carries its own `n` so a 100% built on two trades cannot read as one built on twenty.
+
 ## Ranking & selection
 
 1. Compute direction + confidence for every shortlisted ticker.
@@ -158,8 +179,23 @@ decide whether the number means anything:
 Together those two were worth about +40bps to every idea scored — more than the entire
 edge prior. `edge_sigma_daily` is that prior, in units of σ_daily per day, and it is small
 on purpose: at 0.05 every geometry the bands permit measures between +97 and +149bps and
-the check never fires; at 0.02 the same geometries spread from +10 to +64bps. Phase 5
-replaces the prior with the system's own realized hit rate.
+the check never fires; at 0.02 the same geometries spread from +10 to +64bps.
+
+**Once the pipeline has a record, the prior is replaced by it.** At `n_closed ≥ 30` closed
+ideas (`scoreboard.MinClosedForEdge`) the simulation runs on the *measured* average R per
+closed trade instead. The conversion is a derivation, not another assumption: the
+simulation accumulates `edge·σ·days` of return over the holding period, and the record says
+a trade of this kind returns `avgR` multiples of its own risk, which for this idea is
+`avgR·|entry − stop|/entry`. Setting the two equal gives
+
+```
+edge_sigma_daily = avgR × (|entry − stop| / entry) / (σ_daily × timeframe_days)
+```
+
+clamped to ±0.05 in both directions — beyond that the check stops discriminating between
+geometries, and no finite sample should be allowed to switch it off or reject everything on
+arithmetic alone. A **negative** measured record produces a negative edge and the gate stops
+shipping, which is the correct response to a system that is losing money.
 
 Each idea records `expectancy_bps` and `breakeven_win_rate` (`risk / (risk + reward)` — the
 hit rate the geometry alone demands).

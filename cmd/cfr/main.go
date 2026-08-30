@@ -51,7 +51,13 @@ func main() {
 	}
 	sbFn := func(ctx context.Context) (*scoreboard.Summary, error) {
 		yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
-		return scoreboard.Replay(ctx, settings.RunsDir, yc, settings.FillWindowDays)
+		sum, err := scoreboard.Replay(ctx, settings.RunsDir, yc, settings.FillWindowDays)
+		if err == nil {
+			// Opening the scoreboard is also how the track record gets refreshed
+			// for the next run's Chief Analyst.
+			_ = scoreboard.Calibrate(sum).Save(settings.DataDir)
+		}
+		return sum, err
 	}
 
 	app := tui.New(runFn, settings.RunsDir, sbFn)
@@ -85,6 +91,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		MaxShortlist:         s.MaxShortlist,
 		MaxPerIndex:          s.MaxPerIndex,
 		ChiefAdjustBand:      s.ChiefAdjustBand,
+		FillWindowDays:       s.FillWindowDays,
 		Risk:                 s.Risk,
 
 		Timeouts:          s.Timeouts,

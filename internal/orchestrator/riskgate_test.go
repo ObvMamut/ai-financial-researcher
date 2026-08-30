@@ -368,3 +368,100 @@ func shiftedReturns(rets []float64) []float64 {
 	}
 	return out
 }
+
+func TestRealizedEdgeReplacesThePriorOnceThereIsARecord(t *testing.T) {
+	// The 0.02 prior is an assumption. Once the pipeline has enough closed
+	// trades, the drift the simulation assumes should be the drift the pipeline
+	// has actually delivered.
+	idea := &model.TradeIdea{
+		Ticker: "AAA", Direction: model.DirectionBuy,
+		Entry: 100, Stop: 96, Target: 110, TimeframeDays: 10,
+	}
+	m := quant.Metrics{Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02}
+
+	// risk is 4% of entry; over 10 days at σ=2%/day the simulation accumulates
+	// edge·σ·days, so an average of +0.2R per trade implies edge = 0.2·0.04 / 0.2.
+	got, ok := realizedEdgeSigma(idea, m, 0.2, 10)
+	if !ok {
+		t.Fatal("no edge computed from a usable geometry")
+	}
+	if want := 0.04; math.Abs(got-want) > 1e-9 {
+		t.Errorf("edge = %.4f, want %.4f", got, want)
+	}
+	// And it is a measurement, not the prior: a different record moves it.
+	if same, _ := realizedEdgeSigma(idea, m, 0.1, 10); same == got {
+		t.Error("the edge does not depend on the measured record")
+	}
+}
+
+func TestRealizedEdgeIsClampedInBothDirections(t *testing.T) {
+	// A finite sample can produce a number that would make the expectancy check
+	// vacuous (measured: at 0.05 every permitted geometry already passes) or
+	// reject everything outright. Neither belongs in a gate.
+	idea := &model.TradeIdea{
+		Ticker: "AAA", Direction: model.DirectionBuy,
+		Entry: 100, Stop: 96, Target: 110, TimeframeDays: 10,
+	}
+	m := quant.Metrics{Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02}
+
+	if got, _ := realizedEdgeSigma(idea, m, 5.0, 10); got != edgeSigmaCap {
+		t.Errorf("a +5R record produced edge %.4f, want the cap %.4f", got, edgeSigmaCap)
+	}
+	if got, _ := realizedEdgeSigma(idea, m, -5.0, 10); got != -edgeSigmaCap {
+		t.Errorf("a −5R record produced edge %.4f, want %.4f", got, -edgeSigmaCap)
+	}
+}
+
+func TestRealizedNegativeEdgeMakesTheGateStopShipping(t *testing.T) {
+	// If the measured record is a losing one, the honest response is to reject
+	// geometries that only worked under an assumed edge — not to keep assuming.
+	idea := &model.TradeIdea{
+		Ticker: "AAA", Direction: model.DirectionBuy,
+		Entry: 100, Stop: 96, Target: 110, TimeframeDays: 10,
+	}
+	m := quant.Metrics{Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02}
+	cfg := riskDefaults(model.RiskConfig{})
+
+	optimistic := simulateExpectancy(idea, m, cfg, 10)
+
+	losing := cfg
+	losing.EdgeSigmaDaily, _ = realizedEdgeSigma(idea, m, -0.4, 10)
+	pessimistic := simulateExpectancy(idea, m, losing, 10)
+
+	if pessimistic >= optimistic {
+		t.Errorf("a losing record did not lower expectancy: %.1f bps vs %.1f bps", pessimistic, optimistic)
+	}
+	if pessimistic >= 0 {
+		t.Errorf("expectancy is %+.1f bps under a −0.4R record — the gate would keep shipping", pessimistic)
+	}
+}
+
+func TestGateIdeaUsesTheRealizedEdgeWhenOneIsAvailable(t *testing.T) {
+	// The measured edge has to reach the expectancy check, not just exist.
+	mk := func() *model.TradeIdea {
+		return &model.TradeIdea{
+			Ticker: "AAA", Direction: model.DirectionBuy,
+			Entry: 100, Stop: 96, Target: 110, TimeframeDays: 10,
+		}
+	}
+	v := verified{Quant: &quant.Pack{ByTicker: map[string]quant.Metrics{
+		"AAA": {Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02, AvgDollarVol20: 5e8},
+	}}}
+	cfg := riskDefaults(model.RiskConfig{})
+
+	prior := mk()
+	gateIdea(prior, v, cfg)
+
+	losing := -0.4
+	v.RealizedR = &losing
+	measured := mk()
+	findings := gateIdea(measured, v, cfg)
+
+	if measured.ExpectancyBps >= prior.ExpectancyBps {
+		t.Fatalf("realized edge did not reach the simulation: %.1f vs %.1f bps",
+			measured.ExpectancyBps, prior.ExpectancyBps)
+	}
+	if !hasHard(findings, "AAA", "expectancy") {
+		t.Errorf("a negative-expectancy idea was not flagged: %+v", findings)
+	}
+}

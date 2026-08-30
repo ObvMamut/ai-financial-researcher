@@ -109,6 +109,24 @@ in the Confluence Math line. The total across all of them is capped at ±10.
 - **±3 — report contradiction the scores could not carry:** two domains agree in sign but
   one of them says the opposite in prose, or a single fact in a report plainly changes the
   read. Quote it.
+- **−3 to −5 — the track record says otherwise:** a "Track record" block is in this prompt
+  and this idea's stated confidence bucket has a realized win rate well below the
+  confidence it claims. Name the bucket and its number.
+
+### When the prompt carries a track record
+It is this pipeline's own measured results, from replaying past ideas through their daily
+bars. It is not in every prompt: it appears only once enough ideas have closed to mean
+anything. When it is there:
+
+- **A domain whose backing wins near half the time carries no information.** Do not spend
+  an adjustment on it in either direction — a coin has no opinion.
+- **A domain whose backing is well off 50% is worth an adjustment**, in the direction its
+  record points, inside the same ±10 band. Name the domain and its number.
+- **Calibrate confidence against the bucket, not against your conviction.** If ideas that
+  claimed 80+ have realized 35%, an 80 here needs evidence that distinguishes it from
+  those, or it is a 60.
+- **Small n means small conclusions.** Each cell carries its own count. Nine trades cannot
+  tell a 45% domain from a 55% one; say so rather than reading a pattern into it.
 
 Not adjustments, and never penalties on their own:
 - **Price near the 52-week high is continuation evidence** (George & Hwang), not extension.

@@ -110,6 +110,10 @@ type Config struct {
 	// move an idea from its computed base score. Confidence beyond the band is
 	// clamped; far beyond it triggers one corrective re-prompt. Zero means 10.
 	ChiefAdjustBand int
+
+	// FillWindowDays is how many sessions a past idea's entry limit stays live
+	// when the scoreboard replays it for the track record. Zero means 3.
+	FillWindowDays int
 }
 
 func (c *Config) applyDefaults() {
@@ -784,6 +788,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// start from, and enforced afterwards as the level it may only move by the
 	// configured band.
 	bases := computeBaseScores(cfg.Weights, specReports, shortlist)
+
+	// What this pipeline has actually achieved, measured by replaying its own
+	// past ideas. It reaches the Chief as context for how hard to lean on
+	// today's evidence, and the risk gate as the edge its expectancy check
+	// assumes — replacing a prior with a measurement.
+	cal := trackRecord(ctx, ch, cfg, yc)
 	verifiedCtx := verified{
 		Universe:  uni,
 		Quant:     quantPack,
@@ -792,6 +802,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Events:    eventDates,
 		Dates:     verifiedDates,
 		Series:    quantSeries,
+	}
+	if cal != nil && cal.NClosed > 0 {
+		log(ch, fmt.Sprintf("track record: %d closed idea(s), %.0f%% profitable, avg %+.2fR",
+			cal.NClosed, cal.WinRate*100, cal.AvgR))
+		if err := cal.Save(run.Dir); err != nil {
+			log(ch, fmt.Sprintf("warn: copy the track record into the run: %v", err))
+		}
+	}
+	if r, ok := cal.RealizedEdge(); ok {
+		verifiedCtx.RealizedR = &r
+		log(ch, fmt.Sprintf("risk: expectancy assumes the measured %+.2fR edge, not the %.2fσ prior",
+			r, riskDefaults(cfg.Risk).EdgeSigmaDaily))
 	}
 	for _, b := range bases {
 		if b.Direction == "" {
@@ -807,16 +829,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	prompt, err := reg.AssemblePrompt(agents.PromptParams{
-		Role:           "chief-analyst",
-		Mode:           cfg.Mode,
-		RunTS:          run.TS,
-		Shortlist:      shortlist,
-		Ticker:         cfg.Ticker,
-		Reports:        specReports,
-		Missing:        missingDomains,
-		Weights:        cfg.Weights,
-		QuantBlock:     quantPack.CompactBlock() + regimeSuffix(quantPack),
-		BaseScoreBlock: baseScoreBlock(bases, cfg.ChiefAdjustBand),
+		Role:             "chief-analyst",
+		Mode:             cfg.Mode,
+		RunTS:            run.TS,
+		Shortlist:        shortlist,
+		Ticker:           cfg.Ticker,
+		Reports:          specReports,
+		Missing:          missingDomains,
+		Weights:          cfg.Weights,
+		QuantBlock:       quantPack.CompactBlock() + regimeSuffix(quantPack),
+		BaseScoreBlock:   baseScoreBlock(bases, cfg.ChiefAdjustBand),
+		TrackRecordBlock: cal.Block(),
 	})
 	if err != nil {
 		return fmt.Errorf("assemble chief-analyst prompt: %w", err)

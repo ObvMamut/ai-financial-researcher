@@ -183,7 +183,8 @@
 # about minus costs, and an optimistic one puts every geometry comfortably
 # positive. Measured across the geometries the bands permit, 0.05 puts all of
 # them between +97 and +149bps (the check never fires); 0.02 spreads them from
-# +10 to +64bps. Phase 5 replaces this prior with the system's realized hit rate.
+# +10 to +64bps. Once 30 ideas have closed, the scoreboard's measured average R
+# replaces this prior entirely and the value below stops being used.
 #edge_sigma_daily = 0.02
 
 # How past ideas are replayed by `cfr scoreboard`.

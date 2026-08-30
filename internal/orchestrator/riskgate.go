@@ -176,7 +176,13 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	// Expectancy. A geometry can satisfy every band above and still lose money,
 	// because the probability of touching a near stop before a far target is
 	// exactly what the bands do not measure.
-	ev := simulateExpectancy(idea, m, cfg, int(h))
+	ec := cfg
+	if v.RealizedR != nil {
+		if e, ok := realizedEdgeSigma(idea, m, *v.RealizedR, h); ok {
+			ec.EdgeSigmaDaily = e
+		}
+	}
+	ev := simulateExpectancy(idea, m, ec, int(h))
 	idea.ExpectancyBps = math.Round(ev*10) / 10
 	if ev <= 0 {
 		hard("%s: simulated expectancy is %+.0f bps net of %.0f bps costs — the geometry loses money at the assumed edge (breakeven win rate %.0f%%)",
@@ -186,6 +192,38 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	out = append(out, checkEventWindow(idea, v.Events)...)
 	out = append(out, checkFabricatedDates(idea, v.Dates)...)
 	return out
+}
+
+// edgeSigmaCap bounds the edge imported from the measured record. Beyond about
+// 0.05 the expectancy check stops discriminating between geometries at all
+// (measured across the range the σ-bands permit), so a lucky sample must not be
+// allowed to switch the check off; the same bound applies to a losing sample so
+// one bad quarter cannot reject everything on arithmetic alone.
+const edgeSigmaCap = 0.05
+
+// realizedEdgeSigma converts the pipeline's measured average R per closed trade
+// into the per-day drift, in σ units, that *this* idea's geometry implies.
+//
+// The simulation's drift is edge·σ per day, so over the holding period it
+// accumulates edge·σ·days of return. The record says a trade of this kind
+// returns avgR multiples of its own risk, which for this idea is
+// avgR·|entry−stop|/entry. Setting the two equal gives the edge. It is a
+// derivation, not another prior: every term in it is measured.
+func realizedEdgeSigma(idea *model.TradeIdea, m quant.Metrics, avgR, days float64) (float64, bool) {
+	if idea.Entry <= 0 || m.SigmaDaily <= 0 || days <= 0 {
+		return 0, false
+	}
+	riskFrac := math.Abs(idea.Entry-idea.Stop) / idea.Entry
+	if riskFrac <= 0 {
+		return 0, false
+	}
+	e := avgR * riskFrac / (m.SigmaDaily * days)
+	if e > edgeSigmaCap {
+		e = edgeSigmaCap
+	} else if e < -edgeSigmaCap {
+		e = -edgeSigmaCap
+	}
+	return e, true
 }
 
 // sizeIdea converts the account's risk budget and the idea's own stop distance

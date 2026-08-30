@@ -127,6 +127,9 @@ emit_ideas() {
 }
 
 if has "# Agent: Chief Analyst"; then
+  # Echo a marker when the pipeline's own track record reached the prompt, so a
+  # hermetic run can assert the feedback loop is wired rather than merely built.
+  has "### Track record (computed from" && echo "saw-track-record"
   case "$mode" in
     chief-fail) echo "fake chief crashed" >&2; exit 1 ;;
     badjson)

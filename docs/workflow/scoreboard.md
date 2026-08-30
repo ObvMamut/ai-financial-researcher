@@ -91,6 +91,24 @@ for; scoring it on trades it called the other way, or had no view on, measures
 nothing. A domain that keeps backing losers is the one to reweight in
 `[weights]`.
 
+## Calibration: feeding the record back
+
+`Calibrate` reduces a replayed summary to `.data/calibration.json` — overall win rate,
+average R, average hold, and the same per-domain / per-confidence / per-direction buckets,
+all over closed trades. It is written by `cfr scoreboard` and by the TUI screen, and
+refreshed by a run when the stored copy is more than 24h old (bounded and best-effort; a
+run never fails for want of it).
+
+Two consumers:
+
+- **The Chief Analyst**, at `n_closed ≥ 10`: a ≤15-line `### Track record` block in its
+  prompt, and a copy in `runs/<ts>/calibration.json`.
+- **The risk gate**, at `n_closed ≥ 30`: the expectancy simulation's assumed edge is
+  replaced by the measured average R (see `scoring.md`).
+
+Both thresholds exist because a thin record is worse than none: it reads as evidence and is
+noise.
+
 ## Skipped ideas
 
 Ideas with neither `price_at_generation` nor an `entry` are counted as `skipped`

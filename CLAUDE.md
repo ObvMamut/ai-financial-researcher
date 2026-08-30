@@ -107,15 +107,20 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    with weighted-coverage caps. The result is both shown to the Chief and enforced against
    its output.
 4. **Chief Analyst (Claude):** reads the 5 reports + the computed base-score table +
-   compact verified quant lines, adjusts each base by at most `chief_adjust_band` points
-   with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived
-   from vol-scaled distances) as a fenced ```json block that Go parses into
+   compact verified quant lines + — once ≥10 past ideas have closed — the pipeline's own
+   replayed track record, adjusts each base by at most `chief_adjust_band` points with a
+   named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived from
+   vol-scaled distances) as a fenced ```json block that Go parses into
    `[]model.TradeIdea`. Confidence outside the band is clamped in Go.
 5. **Risk gate (in-process, no model):** `riskgate.go` sizes each idea from the account's
    risk budget and checks stop/target bands, reward:risk, liquidity and simulated
    expectancy, plus book-level correlation, sector and beta. Violations buy one corrective
    re-prompt; per-idea violations that survive it drop the idea. Shipping fewer than 5
-   ideas is the intended outcome.
+   ideas is the intended outcome. At ≥30 closed ideas the expectancy simulation swaps its
+   assumed edge for the measured one.
+
+The loop closes through `internal/scoreboard`: past ideas are replayed through their own
+daily bars, reduced to `.data/calibration.json`, and fed back into both step 4 and step 5.
 
 Single-stock mode: shortlist = `[ticker]`, skip step 1, `topN = 1`.
 

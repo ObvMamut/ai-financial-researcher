@@ -274,3 +274,46 @@ func TestChiefPromptLeadsWithTheComputedBaseScores(t *testing.T) {
 		t.Error("no base scores should render no heading")
 	}
 }
+
+func TestChiefPromptCarriesTheTrackRecord(t *testing.T) {
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	p := PromptParams{
+		Role:             "chief-analyst",
+		Mode:             model.ModeIndependent,
+		RunTS:            time.Now(),
+		Shortlist:        []model.Candidate{{Ticker: "AAA", Index: "sp500"}},
+		BaseScoreBlock:   "### Computed base scores\n\nAAA BUY 55\n",
+		TrackRecordBlock: "### Track record (computed from 31 closed ideas)\n\n- Overall: 45%\n",
+	}
+	got, err := reg.AssemblePrompt(p)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if !strings.Contains(got, "### Track record (computed from 31 closed ideas)") {
+		t.Errorf("chief prompt missing the track record:\n%s", got)
+	}
+	// The record qualifies the scores, so it has to come after them — and
+	// before the prose the Chief reads to adjust them.
+	base := strings.Index(got, "### Computed base scores")
+	rec := strings.Index(got, "### Track record")
+	reports := strings.Index(got, "### Specialist reports")
+	if !(base < rec && rec < reports) {
+		t.Errorf("ordering base=%d record=%d reports=%d, want base < record < reports", base, rec, reports)
+	}
+
+	// With no record, nothing is said about one. An empty header would invite
+	// the Chief to reason about a track record it cannot see.
+	p.TrackRecordBlock = ""
+	got, err = reg.AssemblePrompt(p)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	// The persona itself explains what to do when a record is present, so look
+	// for the injected block's own header rather than the words.
+	if strings.Contains(got, "### Track record (") {
+		t.Errorf("prompt carries a track-record block it does not have:\n%s", got)
+	}
+}

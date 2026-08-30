@@ -38,6 +38,15 @@ func runScoreboard(settings *config.Settings, args []string) int {
 		return 1
 	}
 
+	// Storing what was just measured is what lets the next run's Chief Analyst
+	// and risk gate see it. The legacy math is not a track record — it counts
+	// unfilled and still-open ideas as flat trades — so it is never stored.
+	if !*legacy {
+		if err := scoreboard.Calibrate(sum).Save(settings.DataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: store the track record: %v\n", err)
+		}
+	}
+
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

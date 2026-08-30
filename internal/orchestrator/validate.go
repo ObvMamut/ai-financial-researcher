@@ -40,6 +40,12 @@ type verified struct {
 	// Series holds the daily bars behind Quant, for the book-level correlation
 	// check. Reading them back off disk would answer the same question slower.
 	Series map[string]*quant.Series
+	// RealizedR is the pipeline's measured average R per closed trade, present
+	// only once the scoreboard has enough closed history to mean anything. When
+	// set, the expectancy simulation runs on it instead of the assumed edge
+	// prior — including when it is negative, which is the whole point of
+	// measuring.
+	RealizedR *float64
 }
 
 // validateIdeas normalises and checks the Chief Analyst's ideas against
