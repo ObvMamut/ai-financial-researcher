@@ -44,6 +44,11 @@ type Settings struct {
 	MaxPerIndex          int
 	ADVMinUSD            float64
 
+	// ChiefAdjustBand is how far, in confidence points, the Chief Analyst may
+	// move an idea from its computed base score before the orchestrator clamps
+	// it. Zero means 10.
+	ChiefAdjustBand int
+
 	GeminiConcurrency int
 	Weights           model.DomainWeights
 	Timeouts          model.StageTimeouts
@@ -77,6 +82,7 @@ type fileFormat struct {
 	PrescreenTopPerIndex int `toml:"prescreen_top_per_index"`
 	MaxShortlist         int `toml:"max_shortlist"`
 	MaxPerIndex          int `toml:"max_per_index"`
+	ChiefAdjustBand      int `toml:"chief_adjust_band"`
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
 
@@ -215,6 +221,7 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
+	setInt(&s.ChiefAdjustBand, f.ChiefAdjustBand)
 	if f.Risk.ADVMinUSD > 0 {
 		s.ADVMinUSD = f.Risk.ADVMinUSD
 	}
@@ -377,6 +384,7 @@ func (s *Settings) applyEnv() {
 	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")
 	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
 	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
+	setPosInt(&s.ChiefAdjustBand, "CFR_CHIEF_ADJUST_BAND")
 	if v := os.Getenv("CFR_ADV_MIN_USD"); v != "" {
 		if x, err := strconv.ParseFloat(v, 64); err == nil && x > 0 {
 			s.ADVMinUSD = x

@@ -156,6 +156,14 @@ type TradeIdea struct {
 	// PriceAtGeneration is the verified last close when the idea was produced
 	// (from the quant pack); the scoreboard measures P&L against it.
 	PriceAtGeneration float64 `json:"price_at_generation,omitempty"`
+
+	// BaseConfidence is the deterministic weighted domain score this idea's
+	// confidence was anchored to, and DomainScores the per-domain signed
+	// strengths (−10…+10) behind it. Both are recorded at generation so the
+	// scoreboard can later ask which domains were right, rather than only
+	// whether the trade worked.
+	BaseConfidence int            `json:"base_confidence,omitempty"`
+	DomainScores   map[string]int `json:"domain_scores,omitempty"`
 }
 
 // IdeasResult is the Chief Analyst's final JSON payload.

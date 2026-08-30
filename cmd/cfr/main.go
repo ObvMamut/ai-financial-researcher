@@ -85,6 +85,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		MaxShortlist:         s.MaxShortlist,
 		MaxPerIndex:          s.MaxPerIndex,
 		ADVMinUSD:            s.ADVMinUSD,
+		ChiefAdjustBand:      s.ChiefAdjustBand,
 
 		Timeouts:          s.Timeouts,
 		Retry:             s.Retry,

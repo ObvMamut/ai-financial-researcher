@@ -228,3 +228,49 @@ func TestShortlistBlockCarriesScoutContext(t *testing.T) {
 		}
 	}
 }
+
+func TestChiefPromptLeadsWithTheComputedBaseScores(t *testing.T) {
+	// The Chief reads top-down. The arithmetic it is meant to start from has to
+	// arrive before the prose it is meant to adjust with, or the prose anchors
+	// it first and the base becomes a number to reconcile against afterwards.
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	block := "### Computed base scores (authoritative)\n\n| ticker | base |\n|---|---|\n| NVDA | 41 |\n"
+	p, err := reg.AssemblePrompt(PromptParams{
+		Role:           "chief-analyst",
+		Mode:           model.ModeIndependent,
+		RunTS:          time.Now(),
+		Shortlist:      []model.Candidate{{Ticker: "NVDA", Name: "NVIDIA", Index: "sp500"}},
+		BaseScoreBlock: block,
+		QuantBlock:     "- NVDA: close 231.50\n  ↳ maxDD126 -18.0%\n",
+		Reports:        []ReportContext{{Domain: "quant", Content: "quant prose"}},
+	})
+	if err != nil {
+		t.Fatalf("AssemblePrompt chief-analyst: %v", err)
+	}
+	if !strings.Contains(p, block) {
+		t.Fatalf("chief prompt does not carry the base scores:\n%s", p)
+	}
+	if strings.Index(p, block) > strings.Index(p, "### Specialist reports") {
+		t.Error("the computed base scores must precede the specialist reports")
+	}
+	if strings.Index(p, "Authoritative Scoring Weights") > strings.Index(p, block) {
+		t.Error("the weights that produced the base belong above it")
+	}
+
+	// A run whose specialists all failed has no base block; the prompt must not
+	// carry an empty authoritative-looking heading.
+	bare, err := reg.AssemblePrompt(PromptParams{
+		Role: "chief-analyst", Mode: model.ModeIndependent, RunTS: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("AssemblePrompt chief-analyst (bare): %v", err)
+	}
+	// The persona names the block in prose; what must be absent is the heading
+	// that introduces one.
+	if strings.Contains(bare, "### Computed base scores") {
+		t.Error("no base scores should render no heading")
+	}
+}

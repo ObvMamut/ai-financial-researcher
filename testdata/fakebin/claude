@@ -13,6 +13,8 @@
 #   overclaim   - specialists score an off-shortlist ticker and claim missing:[]
 #                 (coverage enforcement: scores stripped, CorrectedScores recorded)
 #   no-tail     - specialists emit prose with no JSON tail (domain must fail)
+#   off-base    - chief-analyst scores every idea 99, far outside the computed
+#                 base ± band (confidence clamp + corrective re-prompt)
 prompt="$2"
 mode="${CFR_FAKE_MODE:-ok}"
 
@@ -94,6 +96,36 @@ Synthesis reasoning here.
 EOF
       exit 0 ;;
   esac
+  if [ "$mode" = "off-base" ]; then
+    # Confidence asserted rather than derived: the exact failure the base-score
+    # anchor exists to catch.
+    cat <<'EOF'
+Synthesis reasoning. Every name is a screaming buy.
+
+```json
+{
+  "mode": "independent",
+  "generated_at": "2026-07-18T00:00:00Z",
+  "ideas": [
+    {"rank": 1, "ticker": "NVDA", "name": "NVIDIA Corporation", "index": "sp500",
+     "direction": "BUY", "confidence": 99,
+     "entry": 176.0, "stop": 165.5, "target": 198.0,
+     "risk_reward": 2.1, "timeframe_days": 15,
+     "position_note": "Full size",
+     "why": "Conviction."},
+    {"rank": 2, "ticker": "NKE", "name": "Nike Inc.", "index": "sp500",
+     "direction": "BUY", "confidence": 99,
+     "entry": 58.0, "stop": 54.0, "target": 68.0,
+     "risk_reward": 2.5, "timeframe_days": 15,
+     "position_note": "Full size",
+     "why": "Contrarian conviction against every domain."}
+  ],
+  "notes": "Confidence asserted, not derived."
+}
+```
+EOF
+    exit 0
+  fi
   if has "**topN:** 1"; then
     cat <<'EOF'
 Single-stock synthesis. Confluence Math: fundamentals 8 bull, technicals 6 bull, news 5 bull.

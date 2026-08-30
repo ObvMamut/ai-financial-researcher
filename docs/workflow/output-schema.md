@@ -65,7 +65,7 @@ An excluded row carries `"excluded"` with the reason (`illiquid …`, `insuffici
 within-index mean or standard deviation. `params.formula` is recorded so a row's `score`
 is legible without reading the source.
 
-## Specialist report (each Gemini specialist → Chief Analyst)
+## Specialist report (each specialist → Chief Analyst)
 
 Human-readable analysis, then a structured tail:
 
@@ -136,7 +136,10 @@ The deliverable: direction, confidence, trade mechanics, quick why.
       "risk_reward": 2.0,
       "timeframe_days": 15,
       "position_note": "half size into Jul 30 earnings",
-      "why": "Momentum confluence with upbeat product-cycle catalyst; macro and fundamentals supportive, sentiment not yet crowded."
+      "why": "Momentum confluence with upbeat product-cycle catalyst; macro and fundamentals supportive, sentiment not yet crowded.",
+      "price_at_generation": 211.4,
+      "base_confidence": 72,
+      "domain_scores": {"quant": 8, "news": 6, "fundamentals": 4, "sentiment": 0, "macro": -2}
     }
   ],
   "notes": "Optional: caveats, missing-data flags, or why fewer than 5 ideas were returned."
@@ -157,6 +160,16 @@ Field rules:
 - `why`: 1–2 sentences, concrete.
 - `ideas`: length 5 for independent research, 1 for single stock — fewer allowed if the
   bar isn't met (explain in `notes`).
+
+Written by Go, never by the model (a value the Chief supplies for any of these is
+overwritten):
+- `price_at_generation`: the verified last close from the quant pack, the scoreboard's P&L
+  baseline.
+- `base_confidence`: the computed weighted domain score this idea's confidence was anchored
+  to, **for the direction the idea proposes** (0 when the domains read the other way). See
+  `scoring.md`.
+- `domain_scores`: the per-domain signed strengths (−10…+10) behind that base, recorded so
+  the scoreboard can attribute a result to the domains that called it.
 
 All mechanics fields are optional (`omitempty`) so ideas.json from older runs still loads.
 
@@ -180,6 +193,10 @@ type TradeIdea struct {
     RiskReward    float64 `json:"risk_reward,omitempty"`
     TimeframeDays int     `json:"timeframe_days,omitempty"`
     PositionNote  string  `json:"position_note,omitempty"`
+
+    PriceAtGeneration float64        `json:"price_at_generation,omitempty"`
+    BaseConfidence    int            `json:"base_confidence,omitempty"`
+    DomainScores      map[string]int `json:"domain_scores,omitempty"`
 }
 
 type IdeasResult struct {
@@ -194,8 +211,10 @@ type IdeasResult struct {
 
 Go extracts the **last** fenced ```json block from the agent's stdout and unmarshals it.
 Validation (warn, don't drop, except invalid directions): direction ∈ {BUY,SELL},
-confidence ∈ [0,100], level ordering per direction, entry within ±10% of the verified
-last close, stop distance within 0.5–5 × σ_daily·√h, risk_reward recomputed from levels.
-Hard ordering/diversification violations trigger one corrective re-prompt of the chief.
+confidence ∈ [0,100] **and inside `base_confidence ± chief_adjust_band`** (clamped, and the
+coverage cap binds over the band — see `scoring.md`), level ordering per direction, entry
+within ±5% of the verified last close, stop distance within 0.5–5 × σ_daily·√h, risk_reward
+recomputed from levels. Hard ordering/diversification violations, and a confidence more
+than twice the band out, trigger one corrective re-prompt of the chief.
 Malformed output → degraded mechanical fallback from specialist scores (confidence ≤ 55),
 never a crash.

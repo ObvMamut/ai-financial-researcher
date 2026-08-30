@@ -38,8 +38,16 @@ func TestConfigApplyDefaults(t *testing.T) {
 				if c.Retry.MaxAttempts != 2 {
 					t.Errorf("expected MaxAttempts 2, got %d", c.Retry.MaxAttempts)
 				}
-				if c.Weights.Fundamentals != 0.30 {
-					t.Errorf("expected Fundamentals weight 0.30, got %f", c.Weights.Fundamentals)
+				// Horizon-matched defaults (see scoring.md): quant leads because
+				// it is the only fully-covered, computed, 5–20d-scoped domain.
+				if c.Weights.Quant != 0.35 {
+					t.Errorf("expected Quant weight 0.35, got %f", c.Weights.Quant)
+				}
+				if c.Weights.Fundamentals != 0.15 {
+					t.Errorf("expected Fundamentals weight 0.15, got %f", c.Weights.Fundamentals)
+				}
+				if c.ChiefAdjustBand != 10 {
+					t.Errorf("expected ChiefAdjustBand 10, got %d", c.ChiefAdjustBand)
 				}
 			},
 		},
@@ -102,7 +110,7 @@ func TestValidateIdeasCorrectsIndexAttribution(t *testing.T) {
 		{Ticker: "MU", Direction: "BUY"}, // not shortlisted: falls back to the universe
 	}}
 
-	ws := validateIdeas(res, Config{Mode: model.ModeIndependent}, uni, nil, shortlist)
+	ws := validateIdeas(res, Config{Mode: model.ModeIndependent}, uni, nil, shortlist, nil)
 
 	if got := res.Ideas[0].Index; got != "sp500" {
 		t.Errorf("NVDA index = %q, want sp500 — the shortlist is authoritative", got)

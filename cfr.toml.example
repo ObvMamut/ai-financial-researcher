@@ -43,6 +43,11 @@
 #max_shortlist = 12
 #max_per_index = 5
 
+# How far, in confidence points, the Chief Analyst may move an idea from its
+# computed base score (docs/workflow/scoring.md). Confidence outside the band is
+# clamped; more than twice the band out triggers one corrective re-prompt.
+#chief_adjust_band = 10
+
 # Default indices screened by independent research (empty/omitted = all four).
 # Valid keys: sp500, nq100, eu50, asia100. The TUI picker overrides this per run.
 #indices = ["sp500", "eu50"]
@@ -67,13 +72,16 @@
 #local_concurrency = 1
 
 # Domain weights for confluence scoring; they are renormalized, so only the
-# ratios matter.
+# ratios matter. Defaults are mapped to the 5-20 trading-day horizon: quant leads
+# because it is the only fully-covered, computed, horizon-matched domain, and
+# fundamentals is demoted because a multiple says little about three weeks and is
+# the worst-covered domain (US filers only, quarterly, often stale).
 #[weights]
-#fundamentals = 0.30
-#quant        = 0.20
-#news         = 0.20
-#macro        = 0.15
+#quant        = 0.35
+#news         = 0.25
+#fundamentals = 0.15
 #sentiment    = 0.15
+#macro        = 0.10
 
 # Per-stage subprocess timeouts (Go duration strings).
 #[timeouts]

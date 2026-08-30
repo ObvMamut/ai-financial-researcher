@@ -23,12 +23,20 @@ type warning struct {
 // to come from the universe files and only ever filled an *empty* field, so an
 // idea the Chief labelled nq100 for a name the run screened out of sp500 kept
 // the wrong label all the way into the scoreboard's per-index attribution.
-func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, qp *quant.Pack, shortlist []model.Candidate) []warning {
+//
+// bases carries the deterministic weighted domain scores. Confidence is an
+// adjustment to those, not a free assertion, so anything outside the configured
+// band is clamped here and reported.
+func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, qp *quant.Pack, shortlist []model.Candidate, bases []BaseScore) []warning {
 	var warnings []warning
 
 	byTicker := make(map[string]model.Candidate, len(shortlist))
 	for _, c := range shortlist {
 		byTicker[strings.ToUpper(strings.TrimSpace(c.Ticker))] = c
+	}
+	baseByTicker := make(map[string]BaseScore, len(bases))
+	for _, b := range bases {
+		baseByTicker[strings.ToUpper(strings.TrimSpace(b.Ticker))] = b
 	}
 
 	// Fix GeneratedAt if missing
@@ -92,7 +100,10 @@ func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, q
 			sectors[c.Sector]++
 		}
 
-		// 4. Trade mechanics: ordering, plausibility vs verified data, RR.
+		// 4. Confidence is anchored to the computed base score.
+		warnings = append(warnings, anchorConfidence(idea, baseByTicker, cfg.ChiefAdjustBand)...)
+
+		// 5. Trade mechanics: ordering, plausibility vs verified data, RR.
 		warnings = append(warnings, validateLevels(idea, qp)...)
 
 		validIdeas = append(validIdeas, *idea)
@@ -100,7 +111,7 @@ func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, q
 
 	res.Ideas = validIdeas
 
-	// 5. Diversification check (simplistic: > 3 ideas in same sector)
+	// 6. Diversification check (simplistic: > 3 ideas in same sector)
 	if cfg.Mode == model.ModeIndependent && len(res.Ideas) >= 4 {
 		for sector, count := range sectors {
 			if count > 3 {
@@ -187,4 +198,62 @@ func validateLevels(idea *model.TradeIdea, qp *quant.Pack) []warning {
 		}
 	}
 	return ws
+}
+
+// anchorConfidence ties an idea's confidence to the deterministic base score
+// for the direction it proposes, and records the base and its per-domain
+// strengths on the idea.
+//
+// Confidence used to be whatever the Chief asserted, checked only against 0–100.
+// Two runs on the same reports could disagree by thirty points, and nothing in
+// the artifacts said which weighting produced either. The band is the size of
+// the judgment the model is being asked for: the arithmetic sets the level, the
+// model may move it by ±band for a reason it names, and the coverage cap binds
+// over both.
+func anchorConfidence(idea *model.TradeIdea, bases map[string]BaseScore, band int) []warning {
+	b, ok := bases[strings.ToUpper(strings.TrimSpace(idea.Ticker))]
+	if !ok {
+		return []warning{{Ticker: idea.Ticker,
+			Message: "no computed base score for this ticker — confidence is unanchored"}}
+	}
+	if band <= 0 {
+		band = 10
+	}
+	idea.BaseConfidence = b.For(idea.Direction)
+	idea.DomainScores = b.Domains
+
+	lo, hi := idea.BaseConfidence-band, idea.BaseConfidence+band
+	if b.Cap > 0 && hi > b.Cap {
+		hi = b.Cap // the band may not be used to climb over a coverage cap
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > 100 {
+		hi = 100
+	}
+	if idea.Confidence >= lo && idea.Confidence <= hi {
+		return nil
+	}
+	was := idea.Confidence
+	if idea.Confidence > hi {
+		idea.Confidence = hi
+	} else {
+		idea.Confidence = lo
+	}
+	msg := fmt.Sprintf("confidence %d is outside the computed base %d ±%d — clamped to %d",
+		was, idea.BaseConfidence, band, idea.Confidence)
+	// A whole second band beyond the band is not a judgment the arithmetic
+	// missed; it means the model scored a different thesis than its own domains
+	// reported, and that is worth one more synthesis call to correct.
+	if abs(float64(was-idea.BaseConfidence)) > float64(2*band) {
+		msg = "far " + msg
+	}
+	if b.Cap > 0 {
+		msg += fmt.Sprintf(" (coverage cap %d, %.0f%% of domain weight)", b.Cap, b.CoveredWeight*100)
+	}
+	if b.Direction != "" && b.Direction != idea.Direction {
+		msg += fmt.Sprintf(" — the domains read %s, so a %s starts from zero", b.Direction, idea.Direction)
+	}
+	return []warning{{Ticker: idea.Ticker, Message: msg}}
 }

@@ -97,9 +97,15 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
-4. **Chief Analyst (Claude):** reads the 5 reports + compact verified quant lines, scores
-   confluence, ranks, emits the final 5 ideas (with entry/stop/target derived from
-   vol-scaled distances) as a fenced ```json block that Go parses into `[]model.TradeIdea`.
+3.5. **Base scores (in-process, no model):** `basescore.go` does the weighting itself —
+   `Σ w·sign·strength/10` over the domains that actually scored each name, renormalized,
+   with weighted-coverage caps. The result is both shown to the Chief and enforced against
+   its output.
+4. **Chief Analyst (Claude):** reads the 5 reports + the computed base-score table +
+   compact verified quant lines, adjusts each base by at most `chief_adjust_band` points
+   with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived
+   from vol-scaled distances) as a fenced ```json block that Go parses into
+   `[]model.TradeIdea`. Confidence outside the band is clamped in Go.
 
 Single-stock mode: shortlist = `[ticker]`, skip step 1, `topN = 1`.
 

@@ -241,3 +241,52 @@ func TestPackMarkdownAndCompact(t *testing.T) {
 		t.Errorf("empty pack Markdown = %q, want \"\"", empty)
 	}
 }
+
+func TestCompactLineCarriesRiskShapeAndFlags(t *testing.T) {
+	// The Chief Analyst places every stop and target off this block. A one-line
+	// summary gave it the trend but none of the risk shape, so the σ-distances
+	// it was told to use had to be re-derived from σ_daily by hand — and a
+	// staleness flag on the price it was pricing off never reached it at all.
+	m := Metrics{
+		Symbol: "NVDA", AsOf: "2026-08-28", Bars: 500, LastClose: 231.5,
+		Ret5d: 0.01, Ret21d: 0.03, Mom12_1: 0.44, PriceTo52wHigh: 0.98,
+		VolYZ20: 0.28, VolTrend: 1.9, VR5: 1.2, Regime: "trending",
+		SigmaDaily: 0.0176, Benchmark: "SPY", Beta: 1.35, Corr: 0.72,
+		MaxDrawdown126: -0.18, WorstDay252: -0.07, Skew252: 0.3, Kurt252: 2.1,
+		AvgDollarVol20: 4.2e9,
+		Distances:      map[string]float64{"1s_h10": 0.0556, "2s_h10": 0.1113},
+		Flags:          []string{"stale: last bar 2 sessions old"},
+	}
+	p := NewPack()
+	p.ByTicker["NVDA"] = m
+	p.AsOf = m.AsOf
+
+	line := p.CompactLine("nvda")
+	if n := strings.Count(line, "\n"); n != 1 {
+		t.Errorf("CompactLine should render two lines, got %d newline(s):\n%s", n, line)
+	}
+	for _, want := range []string{
+		"NVDA", "231.50", "2026-08-28", "mom12-1 +44.0%", "trending",
+		"1σ(10d)", "5.6%", "2σ", "11.1%", // the distances stops are placed with
+		"maxDD126 -18.0%", "worst day -7.0%", "skew +0.30", "kurt +2.10",
+		"volTrend 1.90", "beta 1.35", "corr 0.72", "ADV $4200M",
+		"stale: last bar 2 sessions old", // the flag that must never be silent
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("CompactLine missing %q:\n%s", want, line)
+		}
+	}
+
+	// A ticker with no flags must not render an empty caveat tail.
+	clean := m
+	clean.Flags = nil
+	p.ByTicker["NVDA"] = clean
+	if got := p.CompactLine("NVDA"); strings.Contains(got, "flags") {
+		t.Errorf("unflagged ticker rendered a flags section:\n%s", got)
+	}
+
+	block := p.CompactBlock()
+	if !strings.HasPrefix(block, "- NVDA:") {
+		t.Errorf("CompactBlock should bullet the first line, got:\n%s", block)
+	}
+}

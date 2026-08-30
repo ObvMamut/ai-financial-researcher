@@ -46,7 +46,8 @@ context + output sections per call.
 - Stage ordering is enforced by the orchestrator: Stage 0.5 ranks the whole selected
   universe in-process (no model call) → scouts screen that ranking and complete →
   Stage 1.5 fetches price data and computes quant metrics for the shortlist (mostly cache
-  hits from Stage 0.5) → specialists run → Chief Analyst runs last (it depends on all
+  hits from Stage 0.5) → specialists run → the weighted **base scores** are computed
+  in-process from the specialist tails → Chief Analyst runs last (it depends on all
   specialist reports).
 - Within a stage, agents run concurrently up to the cap.
 
@@ -56,8 +57,9 @@ context + output sections per call.
   the run **continues** — a missing domain degrades quality but must not crash the run.
 - One retry on transient failure (non-zero exit with empty stdout) is allowed; otherwise
   mark `failed`.
-- The Chief Analyst is told which specialist reports are missing so it can lower confidence
-  accordingly.
+- The Chief Analyst is told which specialist reports are missing. It does **not** discount
+  for them by hand: weighted coverage is already priced into the computed base score and
+  its cap (`docs/workflow/scoring.md`).
 
 ## Enforcing coverage on specialist output
 
@@ -81,6 +83,18 @@ read. An already-honest report is passed through byte-identical.
 This runs after citation scrubbing and before `WriteReport`. It replaced an advisory
 warning (`overclaimedCoverage`) that logged the discrepancy and shipped the invented
 scores anyway.
+
+## Anchoring confidence
+
+Between the specialists and the Chief, `computeBaseScores`
+(`internal/orchestrator/basescore.go`) does the weighting the Chief used to be asked to do
+in prose. The result is injected into the chief prompt as a **"Computed base scores
+(authoritative)"** table — above the specialist reports, so the arithmetic anchors the read
+rather than the other way round — and enforced afterwards by `anchorConfidence`: confidence
+outside `base ± chief_adjust_band` is clamped and warned about, and more than twice the
+band out costs one corrective re-prompt. The same function feeds the degraded fallback, so
+the fallback ranking and the Chief's own table can never disagree. Formula, caps and band:
+`docs/workflow/scoring.md`.
 
 ## Artifacts
 

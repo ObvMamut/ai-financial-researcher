@@ -102,6 +102,11 @@ type Config struct {
 	// ADVMinUSD is the 20-day average dollar volume below which a name is not
 	// tradeable in size and is dropped in the pre-screen. Zero means $20M.
 	ADVMinUSD float64
+
+	// ChiefAdjustBand is how far, in confidence points, the Chief Analyst may
+	// move an idea from its computed base score. Confidence beyond the band is
+	// clamped; far beyond it triggers one corrective re-prompt. Zero means 10.
+	ChiefAdjustBand int
 }
 
 func (c *Config) applyDefaults() {
@@ -190,6 +195,12 @@ func (c *Config) applyDefaults() {
 	if c.ADVMinUSD <= 0 {
 		c.ADVMinUSD = defaultADVMinUSD
 	}
+	// Ten points is roughly one confidence band in scoring.md's calibration
+	// table: enough for the Chief to express a real cross-domain read the
+	// arithmetic cannot see, not enough to overwrite it.
+	if c.ChiefAdjustBand <= 0 {
+		c.ChiefAdjustBand = 10
+	}
 
 	// Default Timeouts
 	if c.Timeouts.Screening == 0 {
@@ -210,14 +221,19 @@ func (c *Config) applyDefaults() {
 		c.Retry.BaseDelay = 1 * time.Second
 	}
 
-	// Default Weights (matches scoring.md)
+	// Default weights (matches scoring.md), mapped to the 5–20 day horizon this
+	// system actually trades. Fundamentals led at 0.30 for no reason connected
+	// to the holding period: a rich multiple says little about the next three
+	// weeks, and it is the worst-covered domain (US filers only, quarterly, and
+	// often stale). Quant is the only domain covered for every name, computed
+	// rather than recalled, and measured over exactly this horizon.
 	if c.Weights.Quant == 0 && c.Weights.News == 0 && c.Weights.Fundamentals == 0 && c.Weights.Macro == 0 && c.Weights.Sentiment == 0 {
 		c.Weights = model.DomainWeights{
-			Fundamentals: 0.30,
-			Quant:        0.20,
-			News:         0.20,
-			Macro:        0.15,
+			Quant:        0.35,
+			News:         0.25,
+			Fundamentals: 0.15,
 			Sentiment:    0.15,
+			Macro:        0.10,
 		}
 	}
 }
@@ -721,16 +737,35 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	synthStart := time.Now()
 	log(ch, "Stage 3: Chief Analyst synthesising results…")
 
+	// The weighting the Chief was told to apply is done here first, in
+	// arithmetic the run can reproduce. It is shown to the model as the level to
+	// start from, and enforced afterwards as the level it may only move by the
+	// configured band.
+	bases := computeBaseScores(cfg.Weights, specReports, shortlist)
+	for _, b := range bases {
+		if b.Direction == "" {
+			log(ch, fmt.Sprintf("base: %s — no domain scored it", b.Ticker))
+			continue
+		}
+		capNote := ""
+		if b.Cap > 0 {
+			capNote = fmt.Sprintf(", capped at %d", b.Cap)
+		}
+		log(ch, fmt.Sprintf("base: %s %s %d (%.0f%% of domain weight%s)",
+			b.Ticker, b.Direction, b.Confidence, b.CoveredWeight*100, capNote))
+	}
+
 	prompt, err := reg.AssemblePrompt(agents.PromptParams{
-		Role:       "chief-analyst",
-		Mode:       cfg.Mode,
-		RunTS:      run.TS,
-		Shortlist:  shortlist,
-		Ticker:     cfg.Ticker,
-		Reports:    specReports,
-		Missing:    missingDomains,
-		Weights:    cfg.Weights,
-		QuantBlock: quantPack.CompactBlock(),
+		Role:           "chief-analyst",
+		Mode:           cfg.Mode,
+		RunTS:          run.TS,
+		Shortlist:      shortlist,
+		Ticker:         cfg.Ticker,
+		Reports:        specReports,
+		Missing:        missingDomains,
+		Weights:        cfg.Weights,
+		QuantBlock:     quantPack.CompactBlock(),
+		BaseScoreBlock: baseScoreBlock(bases, cfg.ChiefAdjustBand),
 	})
 	if err != nil {
 		return fmt.Errorf("assemble chief-analyst prompt: %w", err)
@@ -767,10 +802,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		var parseErr error
 		ideas, parseErr = parseIdeas(r.Stdout)
 		if parseErr == nil {
-			warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist)
+			warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist, bases)
 
 			// Corrective re-prompt for violations worth a second model call:
-			// concentration and inverted stop/target levels.
+			// concentration, inverted stop/target levels, and a confidence
+			// scored against a different thesis than the domains reported.
 			var repromptReasons []string
 			for _, w := range warnings {
 				if strings.Contains(w.Message, "diversification fail") {
@@ -778,6 +814,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				}
 				if strings.Contains(w.Message, "level ordering") {
 					repromptReasons = append(repromptReasons, fmt.Sprintf("fix %s: stop/entry/target must be ordered for the trade direction (BUY: stop < entry < target; SELL: target < entry < stop)", w.Ticker))
+				}
+				if strings.Contains(w.Message, "far confidence") {
+					repromptReasons = append(repromptReasons, fmt.Sprintf(
+						"%s: your confidence was more than %d points outside its computed base score — re-score it from the base in the \"Computed base scores\" table and name each adjustment",
+						w.Ticker, 2*cfg.ChiefAdjustBand))
 				}
 			}
 
@@ -788,7 +829,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				if r.Status != model.StatusFailed {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas
-						warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist)
+						warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist, bases)
 					}
 				}
 			}

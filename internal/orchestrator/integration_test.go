@@ -727,6 +727,65 @@ func TestOffUniverseNominationsNeverReachTheShortlist(t *testing.T) {
 	}
 }
 
+// Confidence used to be whatever the Chief asserted. The base score is computed
+// from the same reports the Chief read, so a number scored against a different
+// thesis than the domains reported is now caught and corrected.
+func TestChiefConfidenceIsAnchoredToTheComputedBase(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "off-base")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+	cfg.ChiefAdjustBand = 10 // stated, not defaulted, so the assertions can use it
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+
+	byTicker := map[string]model.TradeIdea{}
+	for _, idea := range complete.Ideas.Ideas {
+		byTicker[idea.Ticker] = idea
+	}
+	nvda, ok := byTicker["NVDA"]
+	if !ok {
+		t.Fatalf("NVDA missing from ideas %+v", complete.Ideas.Ideas)
+	}
+	// This run has no provider keys, so coverage enforcement leaves only the
+	// computed quant domain standing: 35% of the weight, which caps the base at
+	// 40. The fake chief asserted 99. A run that can only see one domain does
+	// not get to be certain, and that is now arithmetic rather than a request.
+	if nvda.Confidence > nvda.BaseConfidence+cfg.ChiefAdjustBand {
+		t.Errorf("NVDA confidence %d exceeds base %d + band %d",
+			nvda.Confidence, nvda.BaseConfidence, cfg.ChiefAdjustBand)
+	}
+	if nvda.DomainScores["quant"] != 8 {
+		t.Errorf("the per-domain scores behind the base must travel with the idea, got %v", nvda.DomainScores)
+	}
+
+	// NKE is bearish in every domain, so a BUY on it starts from zero.
+	if nke, ok := byTicker["NKE"]; ok && nke.Direction == model.DirectionBuy {
+		if nke.Confidence > cfg.ChiefAdjustBand {
+			t.Errorf("a BUY against five bearish domains scored %d, want at most the band %d",
+				nke.Confidence, cfg.ChiefAdjustBand)
+		}
+	}
+
+	joined := strings.Join(complete.Meta.Warnings, "\n")
+	if !strings.Contains(joined, "outside the computed base") {
+		t.Errorf("clamping a confidence must be recorded in the run's warnings, got %v", complete.Meta.Warnings)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "corrective re-prompt") {
+		t.Errorf("a confidence far outside the band should have triggered one re-prompt:\n%s", strings.Join(logs, "\n"))
+	}
+	// The Chief was actually shown the arithmetic it is being held to.
+	ideasJSON := readFile(t, filepath.Join(runDir(t, cfg.RunsDir), "ideas.json"))
+	if !strings.Contains(ideasJSON, "base_confidence") || !strings.Contains(ideasJSON, "domain_scores") {
+		t.Errorf("ideas.json should record the base and per-domain scores each idea was anchored to:\n%s", ideasJSON)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -87,6 +87,7 @@ type PromptParams struct {
 	Missing              []string            // chief-analyst: domains that failed
 	DataBlock            string              // verified market data block (full quant pack for the quant role)
 	QuantBlock           string              // chief-analyst: compact verified quant lines per ticker
+	BaseScoreBlock       string              // chief-analyst: computed weighted domain scores per ticker
 	Weights              model.DomainWeights // structured weights
 	IndexConstituentList string              // scout only: formatted constituent list
 	PrescreenTable       string              // scout only: Stage 0.5 ranked table for this index
@@ -159,6 +160,14 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 		sb.WriteString(fmt.Sprintf("- **News:** %.0f%%\n", p.Weights.News*100))
 		sb.WriteString(fmt.Sprintf("- **Macro:** %.0f%%\n", p.Weights.Macro*100))
 		sb.WriteString(fmt.Sprintf("- **Sentiment:** %.0f%%\n", p.Weights.Sentiment*100))
+
+		// The computed scores come before the reports they summarise: the Chief
+		// starts from the arithmetic and reads the prose to adjust it, not the
+		// other way round.
+		if p.BaseScoreBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.BaseScoreBlock)
+		}
 
 		if p.QuantBlock != "" {
 			sb.WriteString("\n### Quant reference (verified)\n\n")
