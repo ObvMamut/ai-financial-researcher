@@ -67,6 +67,10 @@ type Settings struct {
 	API              model.APIConfig
 	Local            model.APIConfig
 	LocalConcurrency int
+
+	// FillWindowDays is how many sessions the scoreboard's replay keeps a limit
+	// entry live before calling the idea unfilled. Zero means 3.
+	FillWindowDays int
 }
 
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
@@ -157,6 +161,11 @@ type fileFormat struct {
 		APIKey    string `toml:"api_key"`
 		MaxTokens int    `toml:"max_tokens"`
 	} `toml:"api"`
+
+	// Scoreboard tunes how past ideas are replayed.
+	Scoreboard struct {
+		FillWindowDays int `toml:"fill_window_days"`
+	} `toml:"scoreboard"`
 
 	// Local configures a local OpenAI-compatible server (Ollama/llama.cpp). The
 	// key is optional — local servers don't authenticate.
@@ -318,6 +327,7 @@ func (s *Settings) applyFile(path string) error {
 		s.CheapEngine = model.CLI(f.CheapEngine)
 	}
 	setInt(&s.LocalConcurrency, f.LocalConcurrency)
+	setInt(&s.FillWindowDays, f.Scoreboard.FillWindowDays)
 	setStr(&s.API.BaseURL, f.API.BaseURL)
 	setStr(&s.API.Model, f.API.Model)
 	setStr(&s.API.APIKey, f.API.APIKey)
@@ -364,6 +374,11 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_LOCAL_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.LocalConcurrency = n
+		}
+	}
+	if v := os.Getenv("CFR_FILL_WINDOW_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			s.FillWindowDays = n
 		}
 	}
 

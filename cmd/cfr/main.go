@@ -2,7 +2,7 @@
 //
 //	cfr                  launch the TUI
 //	cfr run [flags]      headless run (JSON/exit-code friendly)
-//	cfr scoreboard       performance of past ideas
+//	cfr scoreboard       performance of past ideas (path replay; --legacy for the old math)
 package main
 
 import (
@@ -33,7 +33,7 @@ func main() {
 		case "scoreboard":
 			os.Exit(runScoreboard(settings, os.Args[2:]))
 		case "-h", "--help", "help":
-			fmt.Println("usage: cfr [run|scoreboard] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr scoreboard  performance of past ideas (see cfr scoreboard -h)")
+			fmt.Println("usage: cfr [run|scoreboard] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)")
 			os.Exit(0)
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard)\n", os.Args[1])
@@ -51,7 +51,7 @@ func main() {
 	}
 	sbFn := func(ctx context.Context) (*scoreboard.Summary, error) {
 		yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
-		return scoreboard.Build(ctx, settings.RunsDir, yc)
+		return scoreboard.Replay(ctx, settings.RunsDir, yc, settings.FillWindowDays)
 	}
 
 	app := tui.New(runFn, settings.RunsDir, sbFn)

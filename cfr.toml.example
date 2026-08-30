@@ -186,6 +186,14 @@
 # +10 to +64bps. Phase 5 replaces this prior with the system's realized hit rate.
 #edge_sigma_daily = 0.02
 
+# How past ideas are replayed by `cfr scoreboard`.
+#[scoreboard]
+# Sessions an idea's entry limit stays live before the idea counts as unfilled
+# rather than as a trade. Past that, the setup the idea described is not the
+# setup in front of you. Unfilled ideas are excluded from the win rate: they are
+# trades that did not happen, not flat trades.
+#fill_window_days = 3
+
 # Optional keyed data providers. Yahoo needs no key; these enrich the packs.
 #[providers]
 #contact_email    = "you@example.com"  # sent to SEC EDGAR as User-Agent contact

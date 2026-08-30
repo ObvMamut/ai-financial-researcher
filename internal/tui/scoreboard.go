@@ -77,12 +77,16 @@ func (m scoreboardModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(titleStyle.Render("Scoreboard"))
 	sb.WriteString("\n")
-	sb.WriteString(subtitleStyle.Render("Past ideas vs current prices (direction-aware)"))
+	subtitle := "Past ideas vs current prices (direction-aware)"
+	if m.sum != nil && m.sum.Replay {
+		subtitle = "Each idea replayed through its own daily bars: fill, then whichever barrier came first"
+	}
+	sb.WriteString(subtitleStyle.Render(subtitle))
 	sb.WriteString("\n\n")
 
 	switch {
 	case m.loading:
-		sb.WriteString(runningStyle.Render("  Fetching current prices…"))
+		sb.WriteString(runningStyle.Render("  Replaying past ideas through their price history…"))
 		sb.WriteString("\n\n")
 		sb.WriteString(mutedStyle.Render("  esc back"))
 		return sb.String()
@@ -91,7 +95,7 @@ func (m scoreboardModel) View() string {
 		sb.WriteString("\n\n")
 		sb.WriteString(mutedStyle.Render("  esc back"))
 		return sb.String()
-	case m.sum == nil || m.sum.Scored == 0:
+	case m.sum == nil || len(m.sum.Entries) == 0:
 		sb.WriteString(mutedStyle.Render("  Nothing to score yet — ideas need a stored baseline price."))
 		if m.sum != nil && m.sum.Skipped > 0 {
 			sb.WriteString("\n")
@@ -103,13 +107,24 @@ func (m scoreboardModel) View() string {
 	}
 
 	s := m.sum
-	head := fmt.Sprintf("  Win rate %.0f%%  (%dW/%dL)   avg P&L %+.2f%%   %d idea(s) / %d run(s)",
-		s.WinRate*100, s.Wins, s.Losses, s.AvgPnL, s.Scored, s.RunCount)
+	var head string
+	if s.Replay {
+		head = fmt.Sprintf("  Win rate %.0f%%  (%dW/%dL) over %d closed   avg P&L %+.2f%%   avg R %+.2f   %d idea(s) / %d run(s)",
+			s.WinRate*100, s.Wins, s.Losses, s.Closed, s.AvgPnL, s.AvgR, len(s.Entries), s.RunCount)
+	} else {
+		head = fmt.Sprintf("  Win rate %.0f%%  (%dW/%dL)   avg P&L %+.2f%%   %d idea(s) / %d run(s)",
+			s.WinRate*100, s.Wins, s.Losses, s.AvgPnL, s.Scored, s.RunCount)
+	}
 	if s.Skipped > 0 {
 		head += fmt.Sprintf("   %d skipped", s.Skipped)
 	}
 	sb.WriteString(selectedStyle.Render(head))
-	sb.WriteString("\n\n")
+	sb.WriteString("\n")
+	if s.Replay {
+		sb.WriteString(mutedStyle.Render("  " + outcomeTally(s)))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
 
 	maxRows := m.height - 10
 	if maxRows < 5 {
@@ -135,9 +150,27 @@ func (m scoreboardModel) View() string {
 			dirStyled = sellStyle.Render(fmt.Sprintf("%-4s", e.Direction))
 		}
 
-		if e.Err != "" {
+		if e.Err != "" && (!s.Replay || e.Outcome == scoreboard.OutcomeError) {
+			note := "price unavailable"
+			if s.Replay {
+				note = e.Err
+			}
 			sb.WriteString(fmt.Sprintf("%s%-21s %-8s %s %s\n", prefix, e.RunName, e.Ticker, dirStyled,
-				mutedStyle.Render("price unavailable")))
+				mutedStyle.Render(note)))
+			continue
+		}
+		if e.Outcome == scoreboard.OutcomeOpen && e.EntryFilled == 0 {
+			sess := "sessions"
+			if e.BarsHeld == 1 {
+				sess = "session"
+			}
+			sb.WriteString(fmt.Sprintf("%s%-21s %-8s %s %s\n", prefix, e.RunName, e.Ticker, dirStyled,
+				mutedStyle.Render(fmt.Sprintf("waiting on the %.2f entry — %d %s so far", e.EntryPlanned, e.BarsHeld, sess))))
+			continue
+		}
+		if e.Outcome == scoreboard.OutcomeUnfilled {
+			sb.WriteString(fmt.Sprintf("%s%-21s %-8s %s %s\n", prefix, e.RunName, e.Ticker, dirStyled,
+				mutedStyle.Render(fmt.Sprintf("never filled — the %.2f limit did not trade", e.EntryPlanned))))
 			continue
 		}
 
@@ -148,6 +181,18 @@ func (m scoreboardModel) View() string {
 		case e.PnLPct < 0:
 			pnl = failedStyle.Render(pnl)
 		}
+
+		if s.Replay {
+			r := "       "
+			if e.Stop > 0 && e.EntryFilled > 0 {
+				r = fmt.Sprintf(" %+5.2fR", e.RiskAdjPnL)
+			}
+			sb.WriteString(fmt.Sprintf("%s%-21s %-8s %s %8.2f → %8.2f  %s%s  %s\n",
+				prefix, e.RunName, e.Ticker, dirStyled, e.EntryFilled, e.ExitPrice, pnl, r,
+				outcomeStyled(e)))
+			continue
+		}
+
 		marks := ""
 		if e.TargetHit {
 			marks += doneStyle.Render(" ✓target")
@@ -160,6 +205,43 @@ func (m scoreboardModel) View() string {
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(mutedStyle.Render("  ↑/↓ browse · esc back · target/stop judged on current price only"))
+	hint := "  ↑/↓ browse · esc back · target/stop judged on current price only"
+	if s.Replay {
+		hint = "  ↑/↓ browse · esc back · win rate counts closed trades only"
+	}
+	sb.WriteString(mutedStyle.Render(hint))
 	return sb.String()
+}
+
+// outcomeTally renders the one-line distribution of how the replayed positions
+// ended. It is the fastest read on whether the ideas are being *taken* at all:
+// a column of "unfilled" is a levels problem, not a thesis problem.
+func outcomeTally(s *scoreboard.Summary) string {
+	order := []scoreboard.Outcome{
+		scoreboard.OutcomeTarget, scoreboard.OutcomeStop, scoreboard.OutcomeExpired,
+		scoreboard.OutcomeOpen, scoreboard.OutcomeUnfilled, scoreboard.OutcomeError,
+	}
+	var parts []string
+	for _, o := range order {
+		if n := s.ByOutcome[o]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", o, n))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " · ")
+}
+
+func outcomeStyled(e scoreboard.Entry) string {
+	label := fmt.Sprintf("%s (%dd)", e.Outcome, e.BarsHeld)
+	switch e.Outcome {
+	case scoreboard.OutcomeTarget:
+		return doneStyle.Render(label)
+	case scoreboard.OutcomeStop:
+		return failedStyle.Render(label)
+	case scoreboard.OutcomeOpen:
+		return runningStyle.Render(label)
+	}
+	return mutedStyle.Render(label)
 }

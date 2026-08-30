@@ -14,11 +14,13 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
 )
 
-// runScoreboard implements `cfr scoreboard`: score past runs' ideas against
-// current prices. Exit codes: 0 ok, 1 error, 2 bad usage.
+// runScoreboard implements `cfr scoreboard`: replay past runs' ideas through
+// their own daily bars. Exit codes: 0 ok, 1 error, 2 bad usage.
 func runScoreboard(settings *config.Settings, args []string) int {
 	fs := flag.NewFlagSet("scoreboard", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print the scoreboard as JSON on stdout")
+	legacy := fs.Bool("legacy", false, "use the old mark-to-current-price math instead of the path replay")
+	fillWindow := fs.Int("fill-window", settings.FillWindowDays, "sessions a limit entry stays live before the idea counts as unfilled")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -27,7 +29,10 @@ func runScoreboard(settings *config.Settings, args []string) int {
 	defer stop()
 
 	yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
-	sum, err := scoreboard.Build(ctx, settings.RunsDir, yc)
+	sum, err := scoreboard.Replay(ctx, settings.RunsDir, yc, *fillWindow)
+	if *legacy {
+		sum, err = scoreboard.Build(ctx, settings.RunsDir, yc)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1

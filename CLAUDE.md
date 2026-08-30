@@ -72,7 +72,9 @@ internal/
   store/        run artifacts under runs/<timestamp>/ (reports, prices/, quant.json,
                 prescreen.json)
   config/       settings: defaults → ~/.config/cfr/config.toml → ./cfr.toml → env
-  scoreboard/   past-idea performance vs current prices (win rate, P&L)
+  scoreboard/   past-idea performance: each idea replayed through its own daily
+                bars (fill, then first barrier touched); `--legacy` keeps the old
+                mark-to-current-price math
 agents/*.md     agent persona prompts (runtime data)
 testdata/fakebin/ fake agy/claude CLIs for hermetic tests + cheap manual TUI runs
 docs/workflow/  workflow + scoring + schema specs (source of truth for behavior)
@@ -124,7 +126,7 @@ go build ./...        # build
 go test ./...         # unit tests
 go run ./cmd/cfr      # launch the TUI
 go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3 degraded)
-go run ./cmd/cfr scoreboard                        # past-idea performance
+go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
 ```
 
 Configuration: `cfr.toml.example` documents every key. Precedence: defaults →
