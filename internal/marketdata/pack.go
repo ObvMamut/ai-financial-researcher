@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // DataPack is a collection of verified facts for a set of tickers.
@@ -21,15 +22,22 @@ type DataPack struct {
 	// cite from, and the orchestrator enforces that against the written report.
 	Citable map[string]bool
 	Errors  []string // provider failures encountered while building the pack
+
+	// EventDates maps a ticker to its next verified scheduled binary event
+	// (currently earnings). It is derived from the same fact the prompt renders,
+	// so the date the model reads and the date the validator gates on cannot
+	// disagree. Absent means no verified date — never "no event".
+	EventDates map[string]time.Time `json:"event_dates,omitempty"`
 }
 
 func NewDataPack(domain string) *DataPack {
 	return &DataPack{
-		Domain:   domain,
-		ByTicker: make(map[string]TickerData),
-		Coverage: make(map[string]bool),
-		Sources:  make(map[string]bool),
-		Citable:  make(map[string]bool),
+		Domain:     domain,
+		ByTicker:   make(map[string]TickerData),
+		Coverage:   make(map[string]bool),
+		Sources:    make(map[string]bool),
+		Citable:    make(map[string]bool),
+		EventDates: make(map[string]time.Time),
 	}
 }
 
@@ -342,6 +350,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			if len(data.Facts) > 0 {
 				pack.ByTicker[t] = data
 				pack.Coverage[t] = true
+				recordEventDate(pack, t, data.Facts)
 				pack.addCitable(prov.Source())
 				for _, f := range data.Facts {
 					pack.Sources[f.Source] = true
@@ -354,4 +363,20 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 	}
 
 	return pack
+}
+
+// recordEventDate lifts a verified earnings date out of the facts into the
+// pack's typed map. It reads the same fact the prompt renders rather than a
+// parallel channel, so the risk checks and the model are never looking at two
+// different dates.
+func recordEventDate(p *DataPack, ticker string, facts []Fact) {
+	for _, f := range facts {
+		if f.Label != EarningsFactLabel {
+			continue
+		}
+		if d, err := time.Parse("2006-01-02", strings.TrimSpace(f.Value)); err == nil {
+			p.EventDates[strings.ToUpper(ticker)] = d
+		}
+		return
+	}
 }

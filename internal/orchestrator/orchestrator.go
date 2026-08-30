@@ -560,6 +560,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		{"macro", cheapCLI},
 	}
 
+	eventDates := map[string]time.Time{}
 	specChans := make([]<-chan model.Report, len(specialists))
 	grounded := make([]bool, len(specialists))
 	ungrounded := make([][]string, len(specialists))
@@ -570,6 +571,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 	for i, sp := range specialists {
 		pack := dataSvc.BuildPack(ctx, sp.role, tickers)
+		// The verified earnings dates ride in on the news pack; the validator and
+		// the risk checks read the same map the news prompt renders.
+		for t, d := range pack.EventDates {
+			eventDates[t] = d
+		}
 		logPackErrors(ch, sp.role, pack.Errors)
 		dataErrors = append(dataErrors, prefixed(sp.role, pack.Errors)...)
 		// No provider serves the quant domain — its evidence is the computed
@@ -742,6 +748,13 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// start from, and enforced afterwards as the level it may only move by the
 	// configured band.
 	bases := computeBaseScores(cfg.Weights, specReports, shortlist)
+	verifiedCtx := verified{
+		Universe:  uni,
+		Quant:     quantPack,
+		Shortlist: shortlist,
+		Bases:     bases,
+		Events:    eventDates,
+	}
 	for _, b := range bases {
 		if b.Direction == "" {
 			log(ch, fmt.Sprintf("base: %s — no domain scored it", b.Ticker))
@@ -802,7 +815,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		var parseErr error
 		ideas, parseErr = parseIdeas(r.Stdout)
 		if parseErr == nil {
-			warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist, bases)
+			warnings = validateIdeas(ideas, cfg, verifiedCtx)
 
 			// Corrective re-prompt for violations worth a second model call:
 			// concentration, inverted stop/target levels, and a confidence
@@ -829,7 +842,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				if r.Status != model.StatusFailed {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas
-						warnings = validateIdeas(ideas, cfg, uni, quantPack, shortlist, bases)
+						warnings = validateIdeas(ideas, cfg, verifiedCtx)
 					}
 				}
 			}

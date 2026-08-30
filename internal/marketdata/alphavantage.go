@@ -14,10 +14,11 @@ import (
 )
 
 type alphaVantageProvider struct {
-	client  *http.Client
-	apiKey  string
-	baseURL string // overridable in tests
-	limiter *Limiter
+	client   *http.Client
+	apiKey   string
+	baseURL  string // overridable in tests
+	limiter  *Limiter
+	calendar *earningsCalendar
 }
 
 // NewAlphaVantageProvider builds the provider for the free tier (25 requests per
@@ -29,17 +30,33 @@ func NewAlphaVantageProvider(apiKey, dataDir string) Provider {
 	if v := os.Getenv("CFR_AV_BASE"); v != "" {
 		base = v
 	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	// 25/day is the tier's hard cap; the burst of 1 is the important part.
+	// AlphaVantage also polices roughly one request per second, and firing a
+	// whole minute's allowance at once had it answering "please consider
+	// spreading out your free API requests" instead of serving news — 8 of
+	// 12 tickers came back empty in a full run. One every two seconds costs
+	// half a minute across a shortlist and is answered every time.
+	//
+	// One limiter, shared: the daily budget belongs to the key, so the news
+	// requests and the calendar request must draw from the same count.
+	limiter := NewPersistentLimiter(25, 30, 1, dataDir, "alphavantage")
+	var cache *Cache
+	if dataDir != "" {
+		cache = NewCache(dataDir)
+	}
 	return &alphaVantageProvider{
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  client,
 		apiKey:  apiKey,
 		baseURL: base,
-		// 25/day is the tier's hard cap; the burst of 1 is the important part.
-		// AlphaVantage also polices roughly one request per second, and firing a
-		// whole minute's allowance at once had it answering "please consider
-		// spreading out your free API requests" instead of serving news — 8 of
-		// 12 tickers came back empty in a full run. One every two seconds costs
-		// half a minute across a shortlist and is answered every time.
-		limiter: NewPersistentLimiter(25, 30, 1, dataDir, "alphavantage"),
+		limiter: limiter,
+		calendar: &earningsCalendar{
+			client:  client,
+			apiKey:  apiKey,
+			baseURL: base,
+			limiter: limiter,
+			cache:   cache,
+		},
 	}
 }
 
@@ -58,11 +75,47 @@ func (p *alphaVantageProvider) Fetch(ctx context.Context, domain string, ticker 
 	switch domain {
 	case "technicals":
 		return p.fetchGlobalQuote(ctx, ticker)
-	case "news", "sentiment":
+	case "news":
+		return p.fetchNews(ctx, ticker)
+	case "sentiment":
 		return p.fetchNewsSentiment(ctx, ticker)
 	default:
 		return TickerData{}, ErrNotApplicable
 	}
+}
+
+// fetchNews is the headline flow plus the one fact that outranks all of it: the
+// next scheduled earnings date. The calendar is a single bulk request for the
+// whole run, so a name with no headlines still gets its date, and a name whose
+// headlines fail to arrive does not lose it.
+func (p *alphaVantageProvider) fetchNews(ctx context.Context, ticker string) (TickerData, error) {
+	td, newsErr := p.fetchNewsSentiment(ctx, ticker)
+	td.Ticker = ticker
+
+	date, ok, calErr := p.calendar.next(ctx, ticker)
+	switch {
+	case calErr != nil:
+		td.Warnings = append(td.Warnings, "earnings calendar unavailable: "+calErr.Error())
+	case ok:
+		// First in the list: it is the fact that decides whether the trade can
+		// be held through the window at all.
+		td.Facts = append([]Fact{{
+			Label:  EarningsFactLabel,
+			Value:  date.Format("2006-01-02"),
+			AsOf:   time.Now(),
+			Source: "AlphaVantage earnings calendar",
+		}}, td.Facts...)
+	}
+
+	// A news failure with a date in hand is a partial result, not a failure:
+	// returning the error would discard the date with it.
+	if newsErr != nil {
+		if len(td.Facts) == 0 {
+			return td, newsErr
+		}
+		td.Warnings = append(td.Warnings, "news feed unavailable: "+newsErr.Error())
+	}
+	return td, nil
 }
 
 // CacheDomain collapses "news" and "sentiment" onto one key: both are served by

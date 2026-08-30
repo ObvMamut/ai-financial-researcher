@@ -88,6 +88,10 @@ func TestAlphaVantageFollowsTheUSLine(t *testing.T) {
 	var asked []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sym := r.URL.Query().Get("tickers")
+		if r.URL.Query().Get("function") == "EARNINGS_CALENDAR" {
+			w.Write([]byte("symbol,name,reportDate,fiscalDateEnding,estimate,currency\n"))
+			return
+		}
 		asked = append(asked, sym)
 		json.NewEncoder(w).Encode(map[string]any{
 			"feed": []map[string]any{{

@@ -16,26 +16,42 @@ type warning struct {
 	Message string
 }
 
-// validateIdeas normalises and checks the Chief Analyst's ideas against the
-// shortlist the run actually analysed and the verified price data it computed.
+// verified is everything the run computed or fetched that an idea has to be
+// consistent with. It is a struct rather than a parameter list because each
+// phase of this project has added another authority the Chief's output is
+// checked against, and a seven-argument validator invites callers to pass them
+// in the wrong order.
+type verified struct {
+	// Universe is the fallback authority on a name's identity.
+	Universe *universe.Universe
+	// Quant is the computed price/vol pack; nil when no prices were available.
+	Quant *quant.Pack
+	// Shortlist is the authority on a name's index and full name — it records
+	// which index *this run* screened the name out of.
+	Shortlist []model.Candidate
+	// Bases are the deterministic weighted domain scores confidence is anchored
+	// to.
+	Bases []BaseScore
+	// Events maps a ticker to its next verified scheduled binary event.
+	Events map[string]time.Time
+}
+
+// validateIdeas normalises and checks the Chief Analyst's ideas against
+// everything the run itself established.
 //
-// shortlist is the authority on a name's index and full name. Enrichment used
-// to come from the universe files and only ever filled an *empty* field, so an
-// idea the Chief labelled nq100 for a name the run screened out of sp500 kept
-// the wrong label all the way into the scoreboard's per-index attribution.
-//
-// bases carries the deterministic weighted domain scores. Confidence is an
-// adjustment to those, not a free assertion, so anything outside the configured
-// band is clamped here and reported.
-func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, qp *quant.Pack, shortlist []model.Candidate, bases []BaseScore) []warning {
+// Enrichment used to come from the universe files and only ever filled an
+// *empty* field, so an idea the Chief labelled nq100 for a name the run screened
+// out of sp500 kept the wrong label all the way into the scoreboard's per-index
+// attribution. Confidence used to be unchecked entirely.
+func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 	var warnings []warning
 
-	byTicker := make(map[string]model.Candidate, len(shortlist))
-	for _, c := range shortlist {
+	byTicker := make(map[string]model.Candidate, len(v.Shortlist))
+	for _, c := range v.Shortlist {
 		byTicker[strings.ToUpper(strings.TrimSpace(c.Ticker))] = c
 	}
-	baseByTicker := make(map[string]BaseScore, len(bases))
-	for _, b := range bases {
+	baseByTicker := make(map[string]BaseScore, len(v.Bases))
+	for _, b := range v.Bases {
 		baseByTicker[strings.ToUpper(strings.TrimSpace(b.Ticker))] = b
 	}
 
@@ -90,7 +106,7 @@ func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, q
 				idea.Index = c.Index
 			}
 		}
-		if c, ok := uni.Lookup(idea.Ticker); ok {
+		if c, ok := v.Universe.Lookup(idea.Ticker); ok {
 			if idea.Name == "" {
 				idea.Name = c.Name
 			}
@@ -104,14 +120,17 @@ func validateIdeas(res *model.IdeasResult, cfg Config, uni *universe.Universe, q
 		warnings = append(warnings, anchorConfidence(idea, baseByTicker, cfg.ChiefAdjustBand)...)
 
 		// 5. Trade mechanics: ordering, plausibility vs verified data, RR.
-		warnings = append(warnings, validateLevels(idea, qp)...)
+		warnings = append(warnings, validateLevels(idea, v.Quant)...)
+
+		// 6. A scheduled binary event inside the holding window.
+		warnings = append(warnings, checkEventWindow(idea, v.Events, res.GeneratedAt)...)
 
 		validIdeas = append(validIdeas, *idea)
 	}
 
 	res.Ideas = validIdeas
 
-	// 6. Diversification check (simplistic: > 3 ideas in same sector)
+	// 7. Diversification check (simplistic: > 3 ideas in same sector)
 	if cfg.Mode == model.ModeIndependent && len(res.Ideas) >= 4 {
 		for sector, count := range sectors {
 			if count > 3 {
@@ -256,4 +275,51 @@ func anchorConfidence(idea *model.TradeIdea, bases map[string]BaseScore, band in
 		msg += fmt.Sprintf(" — the domains read %s, so a %s starts from zero", b.Direction, idea.Direction)
 	}
 	return []warning{{Ticker: idea.Ticker, Message: msg}}
+}
+
+// eventAcknowledgement is what an idea must contain somewhere in its own words
+// for a scheduled event inside the window to count as accounted for. This is
+// deliberately generous: the check exists to catch silence, not to grade prose.
+var eventAcknowledgement = []string{"earnings", "report", "results", "event", "catalyst"}
+
+// checkEventWindow flags an idea whose holding period spans a verified earnings
+// date that the idea never mentions.
+//
+// An unresolved binary event inside the window is the largest uncontrolled risk
+// a swing trade carries, and until the calendar existed the pipeline had no way
+// to know about one: the news persona asked the model for earnings dates, and on
+// a search-less engine it supplied them from memory. Now the date is verified,
+// so an idea that holds through it silently is a real finding.
+func checkEventWindow(idea *model.TradeIdea, events map[string]time.Time, generatedAt string) []warning {
+	if len(events) == 0 {
+		return nil
+	}
+	date, ok := events[strings.ToUpper(strings.TrimSpace(idea.Ticker))]
+	if !ok {
+		return nil
+	}
+	from := time.Now().UTC()
+	if t, err := time.Parse(time.RFC3339, generatedAt); err == nil {
+		from = t.UTC()
+	}
+	h := idea.TimeframeDays
+	if h <= 0 {
+		h = 10
+	}
+	// Trading days to calendar days: five sessions a week, rounded up so the
+	// window is never understated.
+	end := from.AddDate(0, 0, (h*7+4)/5)
+	if date.Before(from.Truncate(24*time.Hour)) || date.After(end) {
+		return nil
+	}
+
+	text := strings.ToLower(idea.PositionNote + " " + idea.Why)
+	for _, word := range eventAcknowledgement {
+		if strings.Contains(text, word) {
+			return nil
+		}
+	}
+	return []warning{{Ticker: idea.Ticker, Message: fmt.Sprintf(
+		"earnings on %s falls inside the %d-day window and neither position_note nor why acknowledges it",
+		date.Format("2006-01-02"), h)}}
 }

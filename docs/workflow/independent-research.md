@@ -93,21 +93,28 @@ shape, dollar volume, beta vs the index benchmark, and vol-scaled stop/target di
 (k·σ_daily·√h). Raw series land in `runs/<ts>/prices/<ticker>.json`, metrics in
 `runs/<ts>/quant.json`. Fetch failures degrade that ticker to ungrounded — never abort.
 
-## Stage 2 — Deep analysis (5 Gemini Specialists, parallel)
+## Stage 2 — Deep analysis (5 specialists, parallel)
 
 Each specialist produces **one report covering the entire shortlist** (5 subprocess calls
 total — not per ticker):
 
 | Specialist    | Persona                  | Focus                                             |
 |---------------|--------------------------|---------------------------------------------------|
-| News          | `agents/news.md`         | Catalysts, headlines, earnings dates              |
+| News          | `agents/news.md`         | Headline flow + the verified earnings calendar    |
 | Fundamentals  | `agents/fundamentals.md` | Valuation, growth, balance-sheet health           |
 | Quant         | `agents/quant.md`        | Interprets the computed statistical pack (no TA)  |
 | Sentiment     | `agents/sentiment.md`    | Positioning, analyst/social sentiment, options    |
 | Macro         | `agents/macro.md`        | Regime, rates, sector/region tailwinds & risks    |
 
 The quant specialist receives the full computed pack as ground truth; news and sentiment
-get compact verified price lines so their narratives stay anchored. Every specialist — and
+get compact verified price lines so their narratives stay anchored. The news pack also
+carries a **verified next-earnings date** per name, fetched as a single bulk
+`EARNINGS_CALENDAR` request covering the whole shortlist (one of the free tier's 25 daily
+requests, cached per UTC day). The persona may state a date **only** if it appears there:
+previously it was asked for earnings dates it had no way to know, and on a search-less
+engine it supplied plausible ones from memory. An unresolved earnings date inside the
+window caps that ticker's news strength at 5, and the validator flags any idea whose
+holding period spans one without acknowledging it. Every specialist — and
 the Chief Analyst — receives the shortlist as a block carrying each name's sector, source
 index, and the scout's bias and reason, so a domain can confirm or contradict the thesis
 the name was nominated on instead of describing the company from scratch. Each report
@@ -116,9 +123,10 @@ measure confluence.
 
 ## Stage 3 — Synthesis (Claude Chief Analyst)
 
-Persona: `agents/chief-analyst.md`. Reads all 5 specialist reports plus a compact verified
-quant reference, applies the rubric in `scoring.md`, ranks the shortlist by cross-domain
-confluence, and emits the **top 5** ideas — including entry/stop/target derived from the
+Persona: `agents/chief-analyst.md`. Reads all 5 specialist reports, the **computed base
+scores** (the weighted domain confluence, already calculated — see `scoring.md`) and a
+compact verified quant reference; adjusts each base by at most `chief_adjust_band` points
+with a named reason, ranks, and emits the **top 5** ideas — including entry/stop/target derived from the
 vol-scaled distances — as a fenced ```json block (schema in `output-schema.md`). Go parses
 it into `[]model.TradeIdea`, validates the mechanics, and the TUI renders the results.
 
@@ -134,9 +142,14 @@ merged shortlist (validated, deduped, trimmed to 12 by merit)
         │
 Stage 1.5: quant metrics for the shortlist (cache hits from Stage 0.5)
         │
-5 Specialists (parallel, each covers shortlist; quant gets the computed pack)
+5 Specialists (parallel, each covers shortlist; quant gets the computed pack,
+              news gets the bulk earnings calendar)
+        │
+computed base scores (weighted domain confluence, no model call)
         │
 Chief Analyst (Claude) → top 5 ideas (direction, confidence, entry/stop/target, why)
+        │
+validation: confidence clamped to base ± band, levels, events, attribution
 ```
 
 ## Quality / degradation
@@ -145,5 +158,9 @@ Chief Analyst (Claude) → top 5 ideas (direction, confidence, entry/stop/target
   error; if it cannot price anything for an index, that scout falls back to the plain
   constituent list rather than being handed an empty table.
 - If a scout fails, the run proceeds with the remaining indices.
-- If a specialist fails, the Chief Analyst is told and lowers confidence for affected names.
+- If a specialist fails, the Chief Analyst is told; the confidence effect is automatic —
+  weighted coverage caps the computed base score for every name that domain would have
+  covered.
+- If the earnings calendar cannot be fetched, the run keeps its headlines and records the
+  failure; no name gets a guessed date.
 - Minimum to produce results: at least 2 specialist reports and a non-empty shortlist.

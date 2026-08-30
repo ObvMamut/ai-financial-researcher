@@ -18,6 +18,12 @@ func serveAVFixture(t *testing.T, body []byte) (*httptest.Server, *string) {
 	t.Helper()
 	var lastQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The news domain also fetches the bulk earnings calendar; serve it an
+		// empty one so the assertions below stay about the NEWS_SENTIMENT call.
+		if r.URL.Query().Get("function") == "EARNINGS_CALENDAR" {
+			w.Write([]byte("symbol,name,reportDate,fiscalDateEnding,estimate,currency\n"))
+			return
+		}
 		lastQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
@@ -162,6 +168,10 @@ func TestNewsSentimentSkipsForeignListingsWithoutSpendingBudget(t *testing.T) {
 func TestNewsSentimentHyphenatesShareClasses(t *testing.T) {
 	var query string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("function") == "EARNINGS_CALENDAR" {
+			w.Write([]byte("symbol,name,reportDate,fiscalDateEnding,estimate,currency\n"))
+			return
+		}
 		query = r.URL.Query().Get("tickers")
 		w.Write([]byte(`{"feed":[{"title":"Berkshire news","url":"https://reuters.com/x",
 			"time_published":"20260828T120000","source":"Reuters","source_domain":"reuters.com",

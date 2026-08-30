@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/agents"
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -266,7 +267,7 @@ func TestValidateIdeasClampsConfidenceToTheBand(t *testing.T) {
 		{Ticker: "BBB", Direction: model.DirectionSell, Confidence: 55},
 		{Ticker: "CCC", Direction: model.DirectionBuy, Confidence: 70},
 	}}
-	ws := validateIdeas(res, cfg, testUniverse(t), nil, shortlistOf("AAA", "BBB", "CCC"), bases)
+	ws := validateIdeas(res, cfg, verified{Universe: testUniverse(t), Shortlist: shortlistOf("AAA", "BBB", "CCC"), Bases: bases})
 
 	if got := res.Ideas[0].Confidence; got != 51 {
 		t.Errorf("AAA confidence = %d, want 51 (base 41 + band 10)", got)
@@ -297,7 +298,7 @@ func TestValidateIdeasClampsAContrarianCallToTheFloor(t *testing.T) {
 	res := &model.IdeasResult{Ideas: []model.TradeIdea{
 		{Ticker: "AAA", Direction: model.DirectionBuy, Confidence: 75},
 	}}
-	validateIdeas(res, cfg, testUniverse(t), nil, shortlistOf("AAA"), bases)
+	validateIdeas(res, cfg, verified{Universe: testUniverse(t), Shortlist: shortlistOf("AAA"), Bases: bases})
 	if got := res.Ideas[0].Confidence; got != 10 {
 		t.Errorf("contrarian confidence = %d, want 10 (base 0 for BUY + band)", got)
 	}
@@ -310,8 +311,49 @@ func TestValidateIdeasHonoursTheCoverageCap(t *testing.T) {
 	res := &model.IdeasResult{Ideas: []model.TradeIdea{
 		{Ticker: "AAA", Direction: model.DirectionBuy, Confidence: 90},
 	}}
-	validateIdeas(res, cfg, testUniverse(t), nil, shortlistOf("AAA"), bases)
+	validateIdeas(res, cfg, verified{Universe: testUniverse(t), Shortlist: shortlistOf("AAA"), Bases: bases})
 	if got := res.Ideas[0].Confidence; got != 55 {
 		t.Errorf("confidence = %d, want 55 — the coverage cap binds over the band", got)
+	}
+}
+
+func TestValidateIdeasFlagsAnUnacknowledgedEarningsDate(t *testing.T) {
+	// The largest uncontrolled risk a swing trade carries is a scheduled binary
+	// event inside the window. Until the calendar existed the pipeline had no
+	// verified dates at all, so an idea could hold straight through earnings
+	// without anything noticing.
+	now := time.Now().UTC()
+	inside := now.AddDate(0, 0, 7)
+	outside := now.AddDate(0, 0, 60)
+	cfg := Config{Mode: model.ModeIndependent, Weights: testWeights, ChiefAdjustBand: 10}
+	res := &model.IdeasResult{
+		GeneratedAt: now.Format(time.RFC3339),
+		Ideas: []model.TradeIdea{
+			{Ticker: "AAA", Direction: model.DirectionBuy, TimeframeDays: 15,
+				PositionNote: "full size", Why: "momentum"},
+			{Ticker: "BBB", Direction: model.DirectionBuy, TimeframeDays: 15,
+				PositionNote: "half size into earnings on " + inside.Format("Jan 2"), Why: "momentum"},
+			{Ticker: "CCC", Direction: model.DirectionBuy, TimeframeDays: 15,
+				PositionNote: "full size", Why: "momentum"},
+		},
+	}
+	ws := validateIdeas(res, cfg, verified{
+		Universe:  testUniverse(t),
+		Shortlist: shortlistOf("AAA", "BBB", "CCC"),
+		Events: map[string]time.Time{
+			"AAA": inside,  // unacknowledged, inside the window
+			"BBB": inside,  // acknowledged in the position note
+			"CCC": outside, // outside the window
+		},
+	})
+
+	if !hasWarning(ws, "AAA", "falls inside the 15-day window") {
+		t.Errorf("holding through earnings unacknowledged must be flagged: %+v", ws)
+	}
+	if hasWarning(ws, "BBB", "falls inside") {
+		t.Errorf("an acknowledged event is not a finding: %+v", ws)
+	}
+	if hasWarning(ws, "CCC", "falls inside") {
+		t.Errorf("an event 60 days out is not inside a 15-day window: %+v", ws)
 	}
 }

@@ -77,7 +77,7 @@ func TestParseIdeasValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseIdeas: %v", err)
 	}
-	validateIdeas(ideas, cfg, uni, nil, nil, nil)
+	validateIdeas(ideas, cfg, verified{Universe: uni})
 	if len(ideas.Ideas) != 0 {
 		t.Errorf("expected 0 ideas after dropping HOLD, got %d", len(ideas.Ideas))
 	}
@@ -88,7 +88,7 @@ func TestParseIdeasValidation(t *testing.T) {
 	if err2 != nil {
 		t.Fatalf("parseIdeas: %v", err2)
 	}
-	validateIdeas(ideas2, cfg, uni, nil, nil, nil)
+	validateIdeas(ideas2, cfg, verified{Universe: uni})
 	if len(ideas2.Ideas) != 1 {
 		t.Fatalf("expected 1 idea, got %d", len(ideas2.Ideas))
 	}

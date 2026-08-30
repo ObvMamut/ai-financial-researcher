@@ -110,7 +110,7 @@ func TestValidateIdeasCorrectsIndexAttribution(t *testing.T) {
 		{Ticker: "MU", Direction: "BUY"}, // not shortlisted: falls back to the universe
 	}}
 
-	ws := validateIdeas(res, Config{Mode: model.ModeIndependent}, uni, nil, shortlist, nil)
+	ws := validateIdeas(res, Config{Mode: model.ModeIndependent}, verified{Universe: uni, Shortlist: shortlist})
 
 	if got := res.Ideas[0].Index; got != "sp500" {
 		t.Errorf("NVDA index = %q, want sp500 — the shortlist is authoritative", got)
