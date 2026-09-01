@@ -164,11 +164,58 @@ func TestSimulateFillGivesUpAfterTheWindow(t *testing.T) {
 
 // stubbedCache pre-loads the series cache so replayIdea never touches the network.
 func stubbedCache(series map[string]*quant.Series) *seriesCache {
-	c := &seriesCache{bySymbol: map[string]*quant.Series{}}
+	c := &seriesCache{bySymbol: map[string]*quant.Series{}, byRun: map[string]*quant.Series{}}
 	for k, v := range series {
 		c.bySymbol[k] = v
 	}
 	return c
+}
+
+// The saved-snapshot fallback shared the symbol-keyed cache, so a ticker
+// appearing in two runs got exactly one shot at a saved copy: whichever run
+// asked first had its snapshot reused to replay the *other* run's idea. An older
+// run's snapshot necessarily lacks the bars a newer idea needs, so that idea
+// replayed as `open` forever — a closed trade quietly missing from the record
+// the Chief and the risk gate both read.
+func TestSeriesCacheAsksEveryRunForItsOwnSnapshot(t *testing.T) {
+	write := func(dir string, bars []quant.Bar) string {
+		t.Helper()
+		run := &store.Run{Dir: dir}
+		if err := run.WritePrices("AAA", &quant.Series{Symbol: "AAA", Bars: bars}); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	older := write(t.TempDir(), []quant.Bar{bar("2026-01-05", 100, 101, 99, 100)})
+	newer := write(t.TempDir(), []quant.Bar{
+		bar("2026-01-05", 100, 101, 99, 100),
+		bar("2026-02-05", 100, 111, 100, 110),
+	})
+
+	// The live fetch has already failed for this symbol — the state the bug
+	// lives in. There is no network here and none is attempted.
+	c := &seriesCache{bySymbol: map[string]*quant.Series{"AAA": nil}, byRun: map[string]*quant.Series{}}
+
+	first, err := c.get(context.Background(), "AAA", older)
+	if err != nil || first == nil {
+		t.Fatalf("older run's own snapshot not found: %v", err)
+	}
+	second, err := c.get(context.Background(), "AAA", newer)
+	if err != nil || second == nil {
+		t.Fatalf("newer run got no snapshot at all: %v", err)
+	}
+	if len(second.Bars) != 2 {
+		t.Errorf("newer run replayed against %d bars, want 2 — it was handed the older run's copy",
+			len(second.Bars))
+	}
+	// Each run's copy is still cached: the second ask for the same run does not
+	// re-read the file, and a run with no snapshot stays an honest error.
+	if again, _ := c.get(context.Background(), "AAA", newer); again != second {
+		t.Error("a run's snapshot was re-read instead of cached")
+	}
+	if _, err := c.get(context.Background(), "AAA", t.TempDir()); err == nil {
+		t.Error("a run with no saved prices reported a series")
+	}
 }
 
 func TestReplayIdeaMeasuresExcessOverTheBenchmark(t *testing.T) {

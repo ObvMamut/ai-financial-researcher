@@ -169,6 +169,7 @@ type fileFormat struct {
 		MaxPairCorr      float64 `toml:"max_pair_corr"`
 		MaxPortfolioBeta float64 `toml:"max_portfolio_beta"`
 		EdgeSigmaDaily   float64 `toml:"edge_sigma_daily"`
+		MinExpectancyBps float64 `toml:"min_expectancy_bps"`
 	} `toml:"risk"`
 
 	// API configures the remote OpenAI-compatible cheap-research engine. Prefer
@@ -295,6 +296,7 @@ func (s *Settings) applyFile(path string) error {
 	setPosFloat(&s.Risk.MaxPairCorr, f.Risk.MaxPairCorr)
 	setPosFloat(&s.Risk.MaxPortfolioBeta, f.Risk.MaxPortfolioBeta)
 	setPosFloat(&s.Risk.EdgeSigmaDaily, f.Risk.EdgeSigmaDaily)
+	setPosFloat(&s.Risk.MinExpectancyBps, f.Risk.MinExpectancyBps)
 	if len(f.Indices) > 0 {
 		s.Indices = f.Indices
 	}
@@ -515,4 +517,5 @@ func (s *Settings) applyEnv() {
 	envFloat(&s.Risk.RiskPerTradePct, "CFR_RISK_PER_TRADE_PCT")
 	envFloat(&s.Risk.RRMin, "CFR_RR_MIN")
 	envFloat(&s.Risk.EdgeSigmaDaily, "CFR_EDGE_SIGMA_DAILY")
+	envFloat(&s.Risk.MinExpectancyBps, "CFR_MIN_EXPECTANCY_BPS")
 }

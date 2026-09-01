@@ -25,10 +25,11 @@ func buildQuantPack(ctx context.Context, ch chan<- Event, run *store.Run, yc *ma
 	pack := quant.NewPack()
 	series := map[string]*quant.Series{}
 
-	// Fetch each benchmark once.
+	// Fetch each benchmark once. Keyed by symbol, not by index: asia100 resolves
+	// to one benchmark per exchange, and several of those are shared.
 	benches := map[string]*quant.Series{}
-	benchFor := func(indexKey string) *quant.Series {
-		sym := universe.BenchmarkSymbol(indexKey)
+	benchFor := func(indexKey, ticker string) *quant.Series {
+		sym := universe.BenchmarkFor(indexKey, ticker)
 		if s, ok := benches[sym]; ok {
 			return s
 		}
@@ -92,7 +93,7 @@ func buildQuantPack(ctx context.Context, ch chan<- Event, run *store.Run, yc *ma
 		if err := run.WritePrices(c.Ticker, s); err != nil {
 			log(ch, fmt.Sprintf("warn: write prices for %s: %v", c.Ticker, err))
 		}
-		m := quant.Compute(s, benchFor(c.Index))
+		m := quant.Compute(s, benchFor(c.Index, c.Ticker))
 		m.ApplyFX(fxFor(ctx, fx, c.Ticker))
 		if staleSet[t] {
 			// The Chief Analyst reads Flags in the compact block, so the

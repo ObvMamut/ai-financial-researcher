@@ -62,7 +62,7 @@ func Replay(ctx context.Context, runsDir string, yc *marketdata.YahooClient, fil
 	}
 
 	sum := &Summary{Replay: true}
-	series := &seriesCache{yc: yc, bySymbol: map[string]*quant.Series{}}
+	series := &seriesCache{yc: yc, bySymbol: map[string]*quant.Series{}, byRun: map[string]*quant.Series{}}
 
 	for _, r := range runs {
 		ideas, err := store.LoadIdeas(r.Dir)
@@ -166,7 +166,7 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 
 	// Benchmark-relative return over the same window: a long that made 4% while
 	// its index made 6% did not work.
-	if b, err := cache.get(ctx, universe.BenchmarkSymbol(idea.Index), ""); err == nil && b != nil {
+	if b, err := cache.get(ctx, universe.BenchmarkFor(idea.Index, idea.Ticker), ""); err == nil && b != nil {
 		if br, ok := returnBetween(b, e.EntryDate, e.ExitDate); ok {
 			e.BenchmarkPnLPct = round2(br * 100)
 			if idea.Direction == model.DirectionSell {
@@ -266,36 +266,59 @@ func walkToExit(bars []quant.Bar, idea model.TradeIdea, timeframe int) exitResul
 // seriesCache fetches each symbol's daily bars once, preferring the live series
 // and falling back to whatever the run itself saved. The saved copy is what
 // makes an old run scorable after a ticker is delisted or renamed.
+//
+// The two caches are keyed differently on purpose. A live series is the same
+// series whoever asks for it, so it is keyed by symbol alone. A saved snapshot
+// belongs to one run and holds only the bars that run had, so it is keyed by
+// run as well — and the fallback used to share the symbol-keyed map, which meant
+// a ticker appearing in two runs got exactly one shot at a saved copy. Whichever
+// run asked first had its snapshot reused to replay the *other* run's idea, and
+// an older snapshot necessarily lacks the bars a newer idea needs: it replayed
+// as `open` forever, which is a closed trade quietly missing from the record the
+// Chief and the risk gate both read.
 type seriesCache struct {
 	yc       *marketdata.YahooClient
 	bySymbol map[string]*quant.Series
+	byRun    map[string]*quant.Series
 }
 
 func (c *seriesCache) get(ctx context.Context, symbol, runDir string) (*quant.Series, error) {
 	key := strings.ToUpper(symbol)
-	if s, ok := c.bySymbol[key]; ok {
-		if s == nil {
-			return nil, fmt.Errorf("no history for %s", symbol)
-		}
-		return s, nil
+	live, tried := c.bySymbol[key]
+	if tried && live != nil {
+		return live, nil
 	}
-	s, err := c.yc.History(ctx, symbol)
-	if err != nil || s == nil || len(s.Bars) == 0 {
-		if runDir != "" {
-			var saved quant.Series
-			if ok, rerr := store.ReadPrices(runDir, symbol, &saved); ok && rerr == nil && len(saved.Bars) > 0 {
-				c.bySymbol[key] = &saved
-				return &saved, nil
-			}
+	if !tried {
+		s, err := c.yc.History(ctx, symbol)
+		if err == nil && s != nil && len(s.Bars) > 0 {
+			c.bySymbol[key] = s
+			return s, nil
 		}
 		c.bySymbol[key] = nil
-		if err == nil {
-			err = fmt.Errorf("no history for %s", symbol)
-		}
-		return nil, err
 	}
-	c.bySymbol[key] = s
-	return s, nil
+
+	// The live fetch has failed, now or on an earlier call. Ask this run for its
+	// own snapshot — every run gets asked, not just the first.
+	if runDir == "" {
+		return nil, fmt.Errorf("no history for %s", symbol)
+	}
+	runKey := key + "\x00" + runDir
+	if saved, ok := c.byRun[runKey]; ok {
+		if saved == nil {
+			return nil, fmt.Errorf("no history for %s", symbol)
+		}
+		return saved, nil
+	}
+	if c.byRun == nil {
+		c.byRun = map[string]*quant.Series{}
+	}
+	var saved quant.Series
+	if ok, err := store.ReadPrices(runDir, symbol, &saved); ok && err == nil && len(saved.Bars) > 0 {
+		c.byRun[runKey] = &saved
+		return &saved, nil
+	}
+	c.byRun[runKey] = nil
+	return nil, fmt.Errorf("no history for %s", symbol)
 }
 
 // barsAfter returns the bars strictly later than date (YYYY-MM-DD).

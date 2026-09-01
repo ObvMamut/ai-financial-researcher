@@ -226,6 +226,49 @@ func TestCapMerit(t *testing.T) {
 	})
 }
 
+// asia100 is this project's own grouping across eight exchanges with no index in
+// common, and every one of them was benchmarked against ^N225. O39.SI, a
+// Singapore bank, had its beta, its correlation and its displayed RS63 computed
+// against the Nikkei.
+func TestBenchmarkForMultiMarketIndices(t *testing.T) {
+	cases := []struct{ index, ticker, want string }{
+		{"asia100", "O39.SI", "^STI"},
+		{"asia100", "8035.T", "^N225"},
+		{"asia100", "005930.KS", "^KS11"},
+		{"asia100", "2330.TW", "^TWII"},
+		{"asia100", "HDFCBANK.NS", "^NSEI"},
+		{"asia100", "0700.HK", "^HSI"},
+		{"asia100", "BHP.AX", "^AXJO"},
+		// An unrecognised suffix, or none, falls back to the index default.
+		{"asia100", "SOMETHING.ZZ", "^N225"},
+		{"asia100", "PLAIN", "^N225"},
+		// A single-market index is answered by the index, ticker or not: ^GSPC,
+		// ^NDX and ^STOXX50E each describe one market their members belong to.
+		{"sp500", "NVDA", "^GSPC"},
+		{"nq100", "MU", "^NDX"},
+		{"eu50", "ASML.AS", "^STOXX50E"},
+		{"eu50", "BMW.DE", "^STOXX50E"},
+		{"", "NVDA", "^GSPC"},
+	}
+	for _, c := range cases {
+		if got := BenchmarkFor(c.index, c.ticker); got != c.want {
+			t.Errorf("BenchmarkFor(%q, %q) = %s, want %s", c.index, c.ticker, got, c.want)
+		}
+	}
+
+	// Every suffix asia100 actually contains has a benchmark of its own, or the
+	// map has fallen behind the CSV.
+	u, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range u.Constituents("asia100") {
+		if got := BenchmarkFor("asia100", c.Ticker); got == "^N225" && !strings.HasSuffix(strings.ToUpper(c.Ticker), ".T") {
+			t.Errorf("%s falls back to the Nikkei — marketBenchmarks has no entry for its exchange", c.Ticker)
+		}
+	}
+}
+
 // The merge ranked on the pre-screen composite alone, with no notion of whether
 // the run's providers could reach a name. SEC EDGAR and AlphaVantage are US-only,
 // so a non-US listing with no US line is graded by quant alone — one domain of

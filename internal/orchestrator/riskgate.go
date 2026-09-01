@@ -42,6 +42,17 @@ const (
 	// from +10 to +64 bps and the ordering is informative. Phase 5 replaces the
 	// prior with this system's own realized hit rate.
 	defaultEdgeSigmaDaily = 0.02
+	// defaultMinExpectancyBps is the floor a geometry's simulated expectancy has
+	// to clear.
+	//
+	// The gate rejected only `ev <= 0`, which is a test for a geometry that is
+	// provably suicidal rather than one that is worth doing. The 2026-09-01 run
+	// shipped ideas at +3.0 bps (NESTE.HE) and +5.7 bps (O39.SI) on that test:
+	// against a 30 bps cost assumption and an *assumed* edge, three basis points
+	// is zero. The observed spread across that book ran 3.0–24.1, so ten sits
+	// inside it — it refuses the two that were noise without demanding an edge
+	// the top of the book did not show.
+	defaultMinExpectancyBps = 10
 )
 
 // riskFinding is one gate violation.
@@ -163,6 +174,9 @@ func riskDefaults(c model.RiskConfig) model.RiskConfig {
 	if c.EdgeSigmaDaily <= 0 {
 		c.EdgeSigmaDaily = defaultEdgeSigmaDaily
 	}
+	if c.MinExpectancyBps <= 0 {
+		c.MinExpectancyBps = defaultMinExpectancyBps
+	}
 	return c
 }
 
@@ -196,7 +210,9 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	risk := math.Abs(idea.Entry - idea.Stop)
 	reward := math.Abs(idea.Target - idea.Entry)
 	if risk > 0 {
-		idea.BreakevenWinRate = risk / (risk + reward)
+		// Rounded like every neighbouring field: the raw quotient shipped as
+		// 0.3511450381679389 in ideas.json beside notionals rounded to the cent.
+		idea.BreakevenWinRate = math.Round(risk/(risk+reward)*10000) / 10000
 		if rr := reward / risk; rr < cfg.RRMin {
 			hard("%s: reward:risk is %.2f, below the hard floor of %.2f — move the target out or the stop in",
 				idea.Ticker, rr, cfg.RRMin)
@@ -269,9 +285,13 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	}
 	ev := simulateExpectancy(idea, m, ec, int(h))
 	idea.ExpectancyBps = math.Round(ev*10) / 10
-	if ev <= 0 {
-		hard("%s: simulated expectancy is %+.0f bps net of %.0f bps costs — the geometry loses money at the assumed edge (breakeven win rate %.0f%%)",
-			idea.Ticker, ev, cfg.CostBps, idea.BreakevenWinRate*100)
+	if ev < cfg.MinExpectancyBps {
+		verdict := "the geometry loses money at the assumed edge"
+		if ev > 0 {
+			verdict = "which is indistinguishable from zero at this cost assumption"
+		}
+		hard("%s: simulated expectancy is %+.1f bps net of %.0f bps costs, under the %.0f bps floor — %s (breakeven win rate %.0f%%)",
+			idea.Ticker, ev, cfg.CostBps, cfg.MinExpectancyBps, verdict, idea.BreakevenWinRate*100)
 	}
 	return out
 }

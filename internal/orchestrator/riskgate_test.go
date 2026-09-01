@@ -160,9 +160,38 @@ func TestRiskGateRejectsALosingGeometry(t *testing.T) {
 	if hasHard(fs, "BBB", "expectancy") {
 		t.Errorf("a sound geometry should survive: %v", findingsFor(fs, "BBB"))
 	}
-	// Breakeven win rate is risk / (risk + reward) = 10 / 30.
-	if got := good.Ideas[0].BreakevenWinRate; math.Abs(got-1.0/3.0) > 1e-6 {
-		t.Errorf("breakeven win rate = %.4f, want %.4f", got, 1.0/3.0)
+	// Breakeven win rate is risk / (risk + reward) = 10 / 30, rounded like every
+	// neighbouring field in ideas.json rather than shipped as 0.3333333333333333.
+	if got := good.Ideas[0].BreakevenWinRate; got != 0.3333 {
+		t.Errorf("breakeven win rate = %v, want 0.3333", got)
+	}
+}
+
+// The gate rejected only a negative expectancy, so it asked whether a geometry
+// was provably suicidal rather than whether it was worth doing. The 2026-09-01
+// run shipped ideas at +3.0 and +5.7 bps against a 30 bps cost assumption.
+func TestRiskGateEnforcesAnExpectancyFloor(t *testing.T) {
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 85, 130)}}
+	cfg := model.RiskConfig{MinExpectancyBps: 100}
+	fs := applyRiskGate(res, gateVerified(t, "AAA"), cfg)
+
+	if !hasHard(fs, "AAA", "under the 100 bps floor") {
+		t.Errorf("a positive expectancy below the floor was accepted: %+.1f bps, findings %v",
+			res.Ideas[0].ExpectancyBps, findingsFor(fs, "AAA"))
+	}
+	if got := res.Ideas[0].ExpectancyBps; got <= 0 {
+		t.Fatalf("fixture expectancy = %+.1f bps; this test needs a *positive* one under the floor", got)
+	}
+	// The wording has to distinguish the two: "loses money" is false about a
+	// geometry earning +33 bps, it is merely not earning enough.
+	if !hasHard(fs, "AAA", "indistinguishable from zero") {
+		t.Errorf("a positive-but-thin expectancy was reported as a loss: %v", findingsFor(fs, "AAA"))
+	}
+
+	// The same geometry clears a floor it actually beats.
+	clear := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 85, 130)}}
+	if fs := applyRiskGate(clear, gateVerified(t, "AAA"), model.RiskConfig{}); hasHard(fs, "AAA", "expectancy") {
+		t.Errorf("a sound geometry was refused by the default floor: %v", findingsFor(fs, "AAA"))
 	}
 }
 
@@ -607,12 +636,20 @@ func TestRiskGateSpotsOneBetInTwoTickets(t *testing.T) {
 		"BBB": seriesOf("BBB", 50, rets), // identical path: ρ = 1
 		"CCC": seriesOf("CCC", 20, shiftedReturns(rets)),
 	}
+	// A 1.5σ stop against a 3σ target, which all three clear on expectancy: the
+	// point here is the correlation finding, and a geometry sitting near the
+	// expectancy floor would drop an idea for an unrelated reason.
 	res := &model.IdeasResult{Ideas: []model.TradeIdea{
-		gateIdeaAt("AAA", 88, 124), gateIdeaAt("BBB", 88, 124), gateIdeaAt("CCC", 88, 124),
+		gateIdeaAt("AAA", 85, 130), gateIdeaAt("BBB", 85, 130), gateIdeaAt("CCC", 85, 130),
 	}}
 	fs := applyRiskGate(res, v, model.RiskConfig{})
 	if !hasBookFinding(fs, "one bet in two tickets") {
 		t.Errorf("two perfectly correlated longs must be flagged: %v", fs)
+	}
+	for _, f := range fs {
+		if f.Hard {
+			t.Fatalf("fixture has a per-idea violation, which this test is not about: %s", f.Message)
+		}
 	}
 	// A book-level finding never costs an idea its place: dropping a sound idea
 	// because of its neighbour is not a risk control.

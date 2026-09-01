@@ -463,10 +463,11 @@ func sameSign(a, b float64) bool {
 func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClient, fx *marketdata.FXRates, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
 	ps := &Prescreen{Indices: indices, Params: params}
 
-	// One benchmark fetch per distinct symbol; several indices may share one.
+	// One benchmark fetch per distinct symbol; several indices, and several
+	// exchanges within asia100, may share one.
 	benchRet63 := map[string]float64{}
-	benchFor := func(indexKey string) float64 {
-		sym := universe.BenchmarkSymbol(indexKey)
+	benchFor := func(indexKey, ticker string) float64 {
+		sym := universe.BenchmarkFor(indexKey, ticker)
 		if v, ok := benchRet63[sym]; ok {
 			return v
 		}
@@ -486,7 +487,6 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClie
 		if len(cs) == 0 {
 			continue
 		}
-		bench := benchFor(idx)
 		fetched, failed := 0, 0
 		for _, c := range cs {
 			if err := ctx.Err(); err != nil {
@@ -506,7 +506,10 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClie
 			fetched++
 			m := quant.Compute(s, nil)
 			m.ApplyFX(fxFor(ctx, fx, c.Ticker))
-			r := newPrescreenRow(c, m, bench, params)
+			// RS63 is a displayed column, not a term in the composite (see
+			// scorePrescreen), so measuring each name against its own market
+			// changes what the scout reads without moving the ranking.
+			r := newPrescreenRow(c, m, benchFor(idx, c.Ticker), params)
 			if r.AsOf > ps.AsOf {
 				ps.AsOf = r.AsOf
 			}

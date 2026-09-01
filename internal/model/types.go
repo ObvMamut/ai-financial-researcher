@@ -221,6 +221,13 @@ type RiskConfig struct {
 	// optimistic one is vacuous the other way, so the prior is explicit and
 	// configurable rather than hidden. P5 replaces it with realized hit rates.
 	EdgeSigmaDaily float64 `json:"edge_sigma_daily"`
+	// MinExpectancyBps is the simulated expectancy, in basis points of entry and
+	// net of costs, below which a geometry is refused. The gate rejected only
+	// `ev <= 0`, which let the 2026-09-01 run ship ideas at +3.0 and +5.7 bps —
+	// numbers indistinguishable from zero against a 30 bps cost assumption and a
+	// prior for the edge. A floor makes the check say "this geometry has to earn
+	// something" rather than "this geometry must not be provably suicidal".
+	MinExpectancyBps float64 `json:"min_expectancy_bps"`
 }
 
 // IdeasResult is the Chief Analyst's final JSON payload.

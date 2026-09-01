@@ -223,6 +223,12 @@
 # replaces this prior entirely and the value below stops being used.
 #edge_sigma_daily = 0.02
 
+# Simulated expectancy floor, in basis points of entry and net of costs. The gate
+# used to reject only a negative expectancy, so a run shipped ideas at +3.0 and
+# +5.7bps — numbers indistinguishable from zero against a 30bps cost assumption
+# and an assumed edge. Ten sits inside the observed 3.0–24.1 spread.
+#min_expectancy_bps = 10
+
 # How past ideas are replayed by `cfr scoreboard`.
 #[scoreboard]
 # Sessions an idea's entry limit stays live before the idea counts as unfilled

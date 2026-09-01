@@ -69,13 +69,58 @@ var benchmarkSymbols = map[string]string{
 	"asia100": "^N225",
 }
 
+// marketBenchmarks maps an exchange suffix to the index a listing on that
+// exchange actually moves with.
+//
+// It exists for asia100. The other three index keys name a real index their
+// members belong to — ^GSPC, ^NDX and ^STOXX50E are each a single tradeable
+// market — but "asia100" is this project's own grouping across eight exchanges
+// with no common index, and it was benchmarked entirely against ^N225. So
+// O39.SI, a Singapore bank, had its beta, its correlation and its displayed RS63
+// computed against the Nikkei: three numbers that describe the relationship
+// between Singaporean banking and Japanese equities, presented as a read on the
+// stock.
+//
+// Only the suffixes asia100 actually contains are listed; an unlisted one falls
+// back to the index default, which is the previous behaviour.
+var marketBenchmarks = map[string]string{
+	"T":  "^N225",   // Tokyo
+	"HK": "^HSI",    // Hong Kong
+	"NS": "^NSEI",   // India, NSE
+	"AX": "^AXJO",   // Australia, ASX 200
+	"TW": "^TWII",   // Taiwan
+	"KS": "^KS11",   // Korea, KOSPI
+	"SI": "^STI",    // Singapore
+	"BK": "^SET.BK", // Thailand
+}
+
+// multiMarketIndices are the index keys whose members span exchanges with no
+// index in common, and which therefore have to be benchmarked per listing.
+var multiMarketIndices = map[string]bool{"asia100": true}
+
 // BenchmarkSymbol returns the Yahoo benchmark symbol for an index key, falling
-// back to ^GSPC for unknown or empty keys.
+// back to ^GSPC for unknown or empty keys. Prefer BenchmarkFor where the ticker
+// is known: this answers for the index as a whole.
 func BenchmarkSymbol(indexKey string) string {
 	if s, ok := benchmarkSymbols[indexKey]; ok {
 		return s
 	}
 	return "^GSPC"
+}
+
+// BenchmarkFor returns the benchmark one listing should be measured against.
+// For a single-market index that is the index's own benchmark; for asia100 it is
+// the ticker's own exchange index. See marketBenchmarks.
+func BenchmarkFor(indexKey, ticker string) string {
+	if !multiMarketIndices[indexKey] {
+		return BenchmarkSymbol(indexKey)
+	}
+	if i := strings.LastIndex(ticker, "."); i > 0 {
+		if s, ok := marketBenchmarks[strings.ToUpper(ticker[i+1:])]; ok {
+			return s
+		}
+	}
+	return BenchmarkSymbol(indexKey)
 }
 
 // splitSuffix returns the ticker stem and whether a known exchange suffix was

@@ -134,6 +134,22 @@ func (p *edgarProvider) fetchInsiderActivity(ctx context.Context, ticker string)
 	browse := fmt.Sprintf("%s/cgi-bin/browse-edgar?action=getcompany&CIK=%s&type=4&dateb=&owner=include&count=40",
 		p.tickersBase, cik)
 	if len(filings) == 0 {
+		// A foreign private issuer is exempt from Section 16: it files 20-F, not
+		// Form 4. "No Form 4 filings in the last 45 days" is then a statement
+		// about US filing law dressed up as a statement about insider behaviour —
+		// and classifyInsiderActivity(nil) reads it as "no signal", which is
+		// reassurance this source never offered. ASML.AS got exactly that.
+		//
+		// Only the *empty* case is converted: an issuer that does file Form 4s
+		// has real activity to report whatever its suffix says. The test is the
+		// requested listing, so a foreign issuer reached through its own US line
+		// is not covered — separating those needs an FPI registry this pipeline
+		// does not have.
+		if !IsUSListing(ticker) {
+			return TickerData{}, fmt.Errorf(
+				"%w: %s is a foreign private issuer — exempt from Section 16, so it files 20-F rather than Form 4 and an empty result says nothing about its insiders",
+				ErrNotApplicable, ticker)
+		}
 		td.Facts = append(td.Facts, Fact{
 			Label:  InsiderActivityLabel,
 			Value:  fmt.Sprintf("no Form 4 filings in the last %d days", form4LookbackDays),

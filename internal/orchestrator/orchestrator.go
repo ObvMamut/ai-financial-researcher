@@ -16,6 +16,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/parse"
+	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
 	"github.com/mamut/claude-financial-researcher/internal/store"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
@@ -900,8 +901,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Series:    quantSeries,
 	}
 	if cal != nil && cal.NClosed > 0 {
-		log(ch, fmt.Sprintf("track record: %d closed idea(s), %.0f%% profitable, avg %+.2fR",
-			cal.NClosed, cal.WinRate*100, cal.AvgR))
+		// Calibration.Block() returns "" below MinClosedForFeedback, so the log
+		// used to announce a track record the Chief was never shown. Say which
+		// it is: a run log that reports context the model did not receive is a
+		// worse artifact than one that reports nothing.
+		if cal.NClosed < scoreboard.MinClosedForFeedback {
+			log(ch, fmt.Sprintf("track record: %d closed idea(s), %.0f%% profitable, avg %+.2fR — withheld from the Chief (%d of %d closed)",
+				cal.NClosed, cal.WinRate*100, cal.AvgR, cal.NClosed, scoreboard.MinClosedForFeedback))
+		} else {
+			log(ch, fmt.Sprintf("track record: %d closed idea(s), %.0f%% profitable, avg %+.2fR",
+				cal.NClosed, cal.WinRate*100, cal.AvgR))
+		}
 		if err := cal.Save(run.Dir); err != nil {
 			log(ch, fmt.Sprintf("warn: copy the track record into the run: %v", err))
 		}

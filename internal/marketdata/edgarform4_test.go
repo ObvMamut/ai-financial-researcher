@@ -2,6 +2,7 @@ package marketdata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -163,6 +164,56 @@ func TestForm4FetchesTheXMLNotTheRenderedHTML(t *testing.T) {
 		if strings.Contains(path, "xslF345X05") {
 			t.Errorf("fetched the rendered HTML instead of the XML: %s", path)
 		}
+	}
+}
+
+// A foreign private issuer is exempt from Section 16: it files 20-F, not Form 4.
+// "No Form 4 filings in the last 45 days" is then a statement about US filing
+// law rendered as a statement about insider behaviour — and the computed leg
+// reads it as "no signal", which is reassurance this source never offered.
+// ASML.AS reached the 2026-09-01 sentiment pack with exactly that.
+func TestForm4IsInapplicableToAForeignPrivateIssuer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/submissions/"):
+			// ASML files with the SEC — it just never files a Form 4.
+			fmt.Fprint(w, `{"cik":"937966","filings":{"recent":{
+				"accessionNumber":["0000937966-26-000001"],"filingDate":["2026-08-30"],
+				"form":["20-F"],"primaryDocument":["asml-20f.htm"]}}}`)
+		case strings.HasPrefix(r.URL.Path, "/files/"):
+			fmt.Fprint(w, `{"0":{"cik_str":937966,"ticker":"ASML","title":"ASML Holding NV"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	td, err := NewEdgarProvider("test@example.com", nil).
+		Fetch(context.Background(), "sentiment", "ASML.AS")
+	if err == nil {
+		t.Fatalf("want the leg absent, got facts %+v", td.Facts)
+	}
+	if !errors.Is(err, ErrNotApplicable) {
+		t.Errorf("a Section 16 exemption is not a fetch failure, got %v", err)
+	}
+	for _, f := range td.Facts {
+		if strings.Contains(f.Value, "no Form 4 filings") {
+			t.Errorf("the false reassurance survived: %q", f.Value)
+		}
+	}
+
+	// A US issuer with no recent filings still says so: that is a real
+	// observation about a company that would have had to report a trade.
+	us, _ := serveSEC(t, []string{"10-Q"}, []string{time.Now().Format("2006-01-02")})
+	t.Setenv("CFR_SEC_BASE", us.URL)
+	td, err = NewEdgarProvider("test@example.com", nil).
+		Fetch(context.Background(), "sentiment", "NVDA")
+	if err != nil {
+		t.Fatalf("Fetch sentiment: %v", err)
+	}
+	if !strings.Contains(fmt.Sprintf("%+v", td.Facts), "no Form 4 filings") {
+		t.Errorf("a US issuer's quiet window stopped being reported:\n%+v", td.Facts)
 	}
 }
 
