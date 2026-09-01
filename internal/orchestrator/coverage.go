@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -171,6 +172,101 @@ func coverageGaps(statuses []model.DomainStatus) []domainGap {
 		}
 		sort.Strings(missed)
 		out = append(out, domainGap{Domain: s.Domain, Missing: missed})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
+	return out
+}
+
+// confabulationThreshold is the share of a domain's own scored names that has to
+// be invented before the run stops describing itself as complete. Half is chosen
+// because it is the point past which the report is more assertion than evidence:
+// on 2026-09-01 macro scored twelve names and six of them were deleted.
+const confabulationThreshold = 0.5
+
+// domainConfabulation is what one domain's structured tail asserted that its
+// evidence did not support.
+//
+// enforceSpecialistTail already deleted every one of these scores and logged a
+// warn: line about it — and then it stopped. The run's own verdict was driven
+// only by coverage gaps, so metadata.json for that run carried
+// domains[macro].corrected_scores with six names in it alongside "warnings": []
+// and "outcome": "complete". Half a domain's output was invented and the
+// headline said everything was fine. A gap and a confabulation are the same class
+// of fact, and the confabulation is the worse of the two, because a gap is
+// honest.
+type domainConfabulation struct {
+	Domain string
+	// NoData lists names the domain scored with no verified data behind them.
+	NoData []string
+	// OffShortlist lists symbols it scored that the run never asked about.
+	OffShortlist []string
+	// SelfContradicted lists names it scored and declared missing in the same
+	// report.
+	SelfContradicted []string
+	// Overridden lists names it scored after the app's computed verdict said to
+	// stand down. The score is deleted like the rest, but this is a disagreement
+	// about a verdict rather than an invention — the data was there — so it is
+	// reported and never degrades the run.
+	Overridden []string
+	// Scored is how many names the tail scored in total: the denominator without
+	// which none of the above means anything.
+	Scored int
+}
+
+func (c domainConfabulation) invented() int {
+	return len(c.NoData) + len(c.OffShortlist) + len(c.SelfContradicted)
+}
+
+// severe reports whether enough of this domain's output was invented to degrade
+// the run.
+func (c domainConfabulation) severe() bool {
+	return c.Scored > 0 && float64(c.invented()) >= confabulationThreshold*float64(c.Scored)
+}
+
+// messages renders one line per kind of removal, each naming its own names.
+// Lumping them together would say the untrue thing about at least two of them.
+func (c domainConfabulation) messages() []string {
+	var out []string
+	add := func(names []string, what string) {
+		if len(names) == 0 {
+			return
+		}
+		out = append(out, fmt.Sprintf("%s scored %d of its %d name(s) %s — scores removed: %s",
+			c.Domain, len(names), c.Scored, what, strings.Join(names, ", ")))
+	}
+	add(c.NoData, "with no verified data behind them")
+	add(c.OffShortlist, "that were never on the shortlist")
+	add(c.SelfContradicted, "that its own report also declared missing")
+	add(c.Overridden, "the computed verdict told it to stand down on")
+	return out
+}
+
+// confabulations lists the domains whose tails had to be corrected, worst first
+// by domain name for a stable artifact.
+func confabulations(statuses []model.DomainStatus) []domainConfabulation {
+	var out []domainConfabulation
+	for _, s := range statuses {
+		abstained := make(map[string]bool, len(s.Abstained))
+		for _, t := range s.Abstained {
+			abstained[strings.ToUpper(t)] = true
+		}
+		c := domainConfabulation{
+			Domain:           s.Domain,
+			OffShortlist:     s.OffShortlistScores,
+			SelfContradicted: s.SelfContradictedScores,
+			Scored:           s.ScoredNames,
+		}
+		for _, t := range s.CorrectedScores {
+			if abstained[strings.ToUpper(t)] {
+				c.Overridden = append(c.Overridden, t)
+			} else {
+				c.NoData = append(c.NoData, t)
+			}
+		}
+		if c.invented() == 0 && len(c.Overridden) == 0 {
+			continue
+		}
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out

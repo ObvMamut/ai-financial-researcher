@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
+	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
 
 // nyClose is the US close hour, taken from the real table so this test cannot
@@ -74,6 +76,26 @@ func TestStaleTickersDoesNotJudgeNewYorkByTokyosClock(t *testing.T) {
 	asOf["8035.T"] = "2026-08-31"
 	if got, want := staleTickers(asOf, now), []string{"8035.T", "ORCL"}; !equalStrings(got, want) {
 		t.Errorf("staleTickers = %v, want %v", got, want)
+	}
+}
+
+// Stale prices reached data_errors and stopped there, so a run could ship an
+// entry, a stop and a target computed to the cent off a superseded session with
+// nothing in `warnings` about it. A stale name no idea rests on is a data note; a
+// stale name in the output is a caveat on a level someone would trade.
+func TestStaleIdeasNamesOnlyTheOnesThatShipped(t *testing.T) {
+	pack := &quant.Pack{Stale: []string{"8035.T", "ORCL"}}
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{
+		{Ticker: "MU"}, {Ticker: "orcl"}, {Ticker: "BAYN.DE"},
+	}}
+	if got, want := staleIdeas(pack, res), []string{"ORCL"}; !equalStrings(got, want) {
+		t.Errorf("staleIdeas = %v, want %v — 8035.T was dropped before shipping", got, want)
+	}
+	if got := staleIdeas(&quant.Pack{}, res); len(got) != 0 {
+		t.Errorf("staleIdeas = %v on a fresh pack, want none", got)
+	}
+	if got := staleIdeas(pack, &model.IdeasResult{}); len(got) != 0 {
+		t.Errorf("staleIdeas = %v with no ideas, want none", got)
 	}
 }
 

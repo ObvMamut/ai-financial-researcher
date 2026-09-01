@@ -814,6 +814,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			OffShortlistScores:     enf.OffShortlist,
 			SelfContradictedScores: enf.SelfContradicted,
 			FabricatedCitations:    fabricated,
+			ScoredNames:            enf.Scored,
 		}
 
 		if r.Status == model.StatusFailed {
@@ -836,6 +837,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	covGaps := coverageGaps(domainStatuses)
 	for _, g := range covGaps {
 		log(ch, fmt.Sprintf("warn: %s has no verified data for %s — names it could have covered", g.Domain, strings.Join(g.Missing, ", ")))
+	}
+
+	// What each domain asserted that its evidence did not support. The tail
+	// enforcement above already deleted these scores and logged them; nothing
+	// carried them into the run's own verdict, so a run in which half of macro's
+	// output was invented still reported `warnings: []` and `outcome: complete`.
+	confab := confabulations(domainStatuses)
+	for _, c := range confab {
+		if c.severe() {
+			log(ch, fmt.Sprintf("warn: %s invented %d of its %d score(s) — over the %.0f%% mark, so this run is degraded",
+				c.Domain, c.invented(), c.Scored, confabulationThreshold*100))
+		}
 	}
 
 	// Minimum check
@@ -943,6 +956,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	outcome := "complete"
 	if len(covGaps) > 0 {
 		outcome = "degraded"
+	}
+	for _, c := range confab {
+		if c.severe() {
+			outcome = "degraded"
+		}
 	}
 
 	var synthesisFallbackEngine string
@@ -1092,6 +1110,20 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		warnings = append(warnings, warning{
 			Message: fmt.Sprintf("%s: no verified data for %s — names it could have covered", g.Domain, strings.Join(g.Missing, ", ")),
 		})
+	}
+	for _, c := range confab {
+		for _, m := range c.messages() {
+			warnings = append(warnings, warning{Message: m})
+		}
+	}
+	// Stale prices reached data_errors and stopped there. Every entry, stop and
+	// target is computed to the cent off the last close, so a stale name that
+	// survives into the shipped ideas is priced off a session that has already
+	// been superseded — which is a fact about the output, not about the fetch.
+	if stale := staleIdeas(quantPack, ideas); len(stale) > 0 {
+		warnings = append(warnings, warning{Message: fmt.Sprintf(
+			"%s shipped with levels computed from a last bar that trails its own market's last completed session — re-price before acting",
+			strings.Join(stale, ", "))})
 	}
 
 	warnMsgs := []string{} // serialize as [] rather than null in metadata.json

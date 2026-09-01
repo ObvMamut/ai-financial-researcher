@@ -66,6 +66,7 @@ func buildQuantPack(ctx context.Context, ch chan<- Event, run *store.Run, yc *ma
 	}
 
 	stale := staleTickers(asOfDates(series), now)
+	pack.Stale = stale
 	staleSet := map[string]bool{}
 	for _, t := range stale {
 		staleSet[t] = true

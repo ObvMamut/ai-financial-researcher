@@ -2,9 +2,12 @@ package orchestrator
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
+	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
 
 // lastTradingDay returns the ISO date of the most recent session whose daily bar
@@ -21,6 +24,30 @@ func lastTradingDay(now time.Time, closeUTC int) string {
 		d = d.AddDate(0, 0, -1)
 	}
 	return d.Format("2006-01-02")
+}
+
+// staleIdeas lists the shipped ideas priced off a stale bar, sorted. A stale
+// name that no idea rests on is a data note; one that reaches the output is a
+// caveat on a level a trader would act at.
+func staleIdeas(p *quant.Pack, res *model.IdeasResult) []string {
+	if p == nil || res == nil || len(p.Stale) == 0 {
+		return nil
+	}
+	stale := make(map[string]bool, len(p.Stale))
+	for _, t := range p.Stale {
+		stale[strings.ToUpper(t)] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, idea := range res.Ideas {
+		t := strings.ToUpper(strings.TrimSpace(idea.Ticker))
+		if stale[t] && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // staleTickers lists the names whose newest bar trails the last completed

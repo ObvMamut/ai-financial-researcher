@@ -18,6 +18,11 @@ type Pack struct {
 	// FRED series and no market prices at all.
 	Benchmarks map[string]Metrics `json:"benchmarks,omitempty"`
 	Errors     []string           `json:"errors,omitempty"` // fetch/compute failures per symbol
+	// Stale lists the symbols whose newest bar still trails their own market's
+	// last completed session after the forced refetch. Every level in an idea is
+	// computed to the cent off that bar, so this has to be readable downstream
+	// rather than only findable by string-matching the caveat in Metrics.Flags.
+	Stale []string `json:"stale,omitempty"`
 }
 
 func NewPack() *Pack {

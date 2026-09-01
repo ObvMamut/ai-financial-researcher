@@ -303,6 +303,40 @@ func TestEnforceNoticeDistinguishesAbstentionFromAbsentData(t *testing.T) {
 	}
 }
 
+// A self-contradicted name landed in the "This run had no verified X data for …"
+// sentence, which is false about it: the run *did* have data, and the agent's own
+// `missing` array is what took the score away. In a block whose whole purpose is
+// keeping the Chief's picture of the evidence accurate, that sentence was a lie
+// about the only name it named.
+func TestEnforceNoticeSeparatesADisownedScoreFromAbsentData(t *testing.T) {
+	in := report("Positioning notes.", `{"domain":"sentiment","scores":[
+	  {"ticker":"ORCL","bias":"bearish","strength":5,"note":"crowded calls"},
+	  {"ticker":"BAYN.DE","bias":"bearish","strength":5,"note":"no data at all"}
+	],"missing":["ORCL"]}`)
+
+	out, res, err := enforceSpecialistTail("sentiment", in,
+		[]string{"BAYN.DE"}, nil, []string{"ORCL", "BAYN.DE"})
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if !equalStrings(res.SelfContradicted, []string{"ORCL"}) {
+		t.Errorf("SelfContradicted = %v, want [ORCL]", res.SelfContradicted)
+	}
+	if res.Scored != 2 {
+		t.Errorf("Scored = %d, want 2 — the denominator counts what the agent wrote", res.Scored)
+	}
+
+	if strings.Contains(out, "no verified sentiment data for ORCL") {
+		t.Errorf("a name the run had data for was reported as uncovered:\n%s", out)
+	}
+	if !strings.Contains(out, "no verified sentiment data for BAYN.DE") {
+		t.Errorf("the genuinely uncovered name lost its own sentence:\n%s", out)
+	}
+	if !strings.Contains(out, "placed ORCL in *both* its `scores` and its own `missing` array") {
+		t.Errorf("the disowned score is not explained:\n%s", out)
+	}
+}
+
 // An abstention-free run must read exactly as it did before.
 func TestEnforceNoticeUnchangedWithoutAbstentions(t *testing.T) {
 	in := report("prose", `{"domain":"macro","scores":[{"ticker":"AAPL","strength":8}],"missing":[]}`)

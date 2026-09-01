@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
@@ -153,6 +154,111 @@ func TestCoverageGapsMeasureTheAchievableSubset(t *testing.T) {
 	got := coverageGaps(quantMissedForeign)
 	if len(got) != 1 || !reflect.DeepEqual(got[0].Missing, []string{"AIR.PA"}) {
 		t.Errorf("coverageGaps = %v, want quant missing AIR.PA (Yahoo covers foreign listings)", got)
+	}
+}
+
+// TestConfabulationIsReportedAndDegradesTheRun is the 2026-09-01 metadata.json:
+// domains[macro].corrected_scores held six names, and the same file said
+// "warnings": [] and "outcome": "complete". Half a domain's output was invented
+// and the run's headline reported it as fine.
+func TestConfabulationIsReportedAndDegradesTheRun(t *testing.T) {
+	macro := model.DomainStatus{
+		Domain:      "macro",
+		ScoredNames: 12,
+		CorrectedScores: []string{
+			"8035.T", "ASML.AS", "BAYN.DE", "BMW.DE", "NESTE.HE", "STLAM.MI",
+		},
+	}
+	got := confabulations([]model.DomainStatus{{Domain: "quant", ScoredNames: 12}, macro})
+	if len(got) != 1 || got[0].Domain != "macro" {
+		t.Fatalf("confabulations = %v, want macro alone", got)
+	}
+	c := got[0]
+	if c.invented() != 6 {
+		t.Errorf("invented = %d, want 6", c.invented())
+	}
+	if !c.severe() {
+		t.Error("six of twelve scores invented did not degrade the run")
+	}
+	msgs := c.messages()
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "6 of its 12") || !strings.Contains(msgs[0], "BAYN.DE") {
+		t.Errorf("messages = %v, want one line naming the count and the names", msgs)
+	}
+
+	// A domain that overreached on a couple of names out of many is reported but
+	// does not degrade: the threshold is about a report being more assertion than
+	// evidence, not about any correction at all.
+	mild := confabulations([]model.DomainStatus{
+		{Domain: "news", ScoredNames: 12, CorrectedScores: []string{"GE"}},
+	})
+	if len(mild) != 1 {
+		t.Fatalf("a single corrected score must still be reported, got %v", mild)
+	}
+	if mild[0].severe() {
+		t.Error("one corrected score in twelve degraded the run")
+	}
+
+	// A clean domain produces nothing at all.
+	if got := confabulations([]model.DomainStatus{{Domain: "quant", ScoredNames: 12}}); len(got) != 0 {
+		t.Errorf("a clean domain produced %v", got)
+	}
+}
+
+// An abstention is not a confabulation. Sentiment scoring a name whose computed
+// verdict said to stand down is a disagreement about a verdict — the data was
+// there — while macro scoring a name it had no data for is an invention. Both
+// lose their scores; only one is evidence the run went wrong.
+func TestAbstentionOverrideIsReportedButNeverDegrades(t *testing.T) {
+	got := confabulations([]model.DomainStatus{{
+		Domain:          "sentiment",
+		ScoredNames:     4,
+		Abstained:       []string{"AMGN", "MRK", "ORCL"},
+		CorrectedScores: []string{"AMGN", "MRK", "ORCL"},
+	}})
+	if len(got) != 1 {
+		t.Fatalf("an override went unreported: %v", got)
+	}
+	c := got[0]
+	if c.invented() != 0 {
+		t.Errorf("invented = %d, want 0 — the data was there", c.invented())
+	}
+	if len(c.Overridden) != 3 {
+		t.Errorf("Overridden = %v, want all three", c.Overridden)
+	}
+	if c.severe() {
+		t.Error("three of four abstention overrides degraded the run — a healthy sentiment run would never be complete")
+	}
+	if msgs := c.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], "stand down") {
+		t.Errorf("messages = %v, want the override worded as an override", msgs)
+	}
+}
+
+// Each kind of removal gets its own line, because one sentence covering all of
+// them would say the untrue thing about at least two.
+func TestConfabulationSeparatesItsKinds(t *testing.T) {
+	got := confabulations([]model.DomainStatus{{
+		Domain:                 "news",
+		ScoredNames:            6,
+		Abstained:              []string{"MRK"},
+		CorrectedScores:        []string{"GE", "MRK"},
+		OffShortlistScores:     []string{"FAKE"},
+		SelfContradictedScores: []string{"ORCL"},
+	}})
+	if len(got) != 1 {
+		t.Fatalf("confabulations = %v", got)
+	}
+	c := got[0]
+	if !reflect.DeepEqual(c.NoData, []string{"GE"}) {
+		t.Errorf("NoData = %v, want [GE] — MRK was an abstention", c.NoData)
+	}
+	if c.invented() != 3 {
+		t.Errorf("invented = %d, want 3 (GE, FAKE, ORCL)", c.invented())
+	}
+	if !c.severe() {
+		t.Error("three of six invented is at the threshold and must degrade")
+	}
+	if got := len(c.messages()); got != 4 {
+		t.Errorf("messages = %d lines, want one per kind of removal", got)
 	}
 }
 

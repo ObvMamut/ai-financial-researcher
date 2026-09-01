@@ -347,6 +347,11 @@ type DomainStatus struct {
 	// search-less engine. Non-empty means the report's sourcing was invented and
 	// the orchestrator has rewritten those tags to [unverified].
 	FabricatedCitations []string `json:"fabricated_citations,omitempty"`
+	// ScoredNames is how many names the agent's structured tail scored before
+	// any were removed. It is the denominator the corrected lists above are only
+	// meaningful against: six deletions out of six is a domain that invented its
+	// entire output, and six out of forty is a domain that overreached.
+	ScoredNames int `json:"scored_names,omitempty"`
 }
 
 // RunMeta captures all parameters and outcomes of a run for audit.

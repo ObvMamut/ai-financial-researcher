@@ -32,6 +32,10 @@ type enforcement struct {
 	// and a full chain is a false statement in the one place this pipeline works
 	// hardest to keep honest.
 	Abstained []string
+	// Scored is how many names the tail scored before any were removed. Without
+	// it the lists above have no denominator, and "six corrected" reads the same
+	// whether the domain scored six names or forty.
+	Scored int
 }
 
 // Any reports whether anything at all had to be corrected.
@@ -131,10 +135,12 @@ func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist
 	selfContradicted := map[string]bool{}
 	for _, s := range scores {
 		t := normTicker(jsonString(s["ticker"]))
-		switch {
-		case t == "":
+		if t == "" {
 			// A score with no ticker names nothing; it cannot be attributed.
 			continue
+		}
+		res.Scored++
+		switch {
 		case !onShortlist[t]:
 			offShortlist[t] = true
 		case isUngrounded[t]:
@@ -235,11 +241,20 @@ func withRemovalNote(report, role string, e enforcement) string {
 	for _, t := range e.Abstained {
 		abstained[t] = true
 	}
-	var noData, stoodDown []string
+	disowned := map[string]bool{}
+	for _, t := range e.SelfContradicted {
+		disowned[t] = true
+	}
+	var noData, stoodDown, selfDisclaimed []string
 	for _, t := range removed {
-		if abstained[t] {
+		switch {
+		case abstained[t]:
 			stoodDown = append(stoodDown, t)
-		} else {
+		case disowned[t]:
+			// The run had data and the agent had a score; the agent's own
+			// `missing` array is what took the score away.
+			selfDisclaimed = append(selfDisclaimed, t)
+		default:
 			noData = append(noData, t)
 		}
 	}
@@ -267,6 +282,21 @@ func withRemovalNote(report, role string, e enforcement) string {
 		b.WriteString(" Treat ")
 		b.WriteString(thatOrThose(len(stoodDown)))
 		b.WriteString(" as evidence of no signal, which is not the same as absent evidence. ")
+	}
+	// A self-contradicted name gets its own sentence for the same reason an
+	// abstention does. The run had data for it; the report scored it and *also*
+	// listed it as missing, so its own author disclaimed the number. Saying "this
+	// run had no verified data for it" — which is where these names used to land —
+	// is a false statement in the one block whose whole job is keeping the Chief's
+	// picture of the evidence accurate.
+	if len(selfDisclaimed) > 0 {
+		b.WriteString("The ")
+		b.WriteString(role)
+		b.WriteString(" report placed ")
+		b.WriteString(strings.Join(selfDisclaimed, ", "))
+		b.WriteString(" in *both* its `scores` and its own `missing` array, disclaiming the number it had just written, so ")
+		b.WriteString(scoreOrScores(len(selfDisclaimed)))
+		b.WriteString(" ")
 	}
 	b.WriteString("Any prose in this report about ")
 	b.WriteString(thatOrThose(len(removed)))
