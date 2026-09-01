@@ -51,7 +51,7 @@ const (
 	prescreenVolTrendFlag = 1.5
 	// prescreenFormula is written into the artifact so a row's Score is legible
 	// without reading this file.
-	prescreenFormula = "z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
+	prescreenFormula = "z(mom12-1) + 0.5·z(ret63d) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
 	// defaultADVMinUSD is the tradeable-size floor, in 20-day average dollar
 	// volume. A swing position sized off a real account cannot be entered or
 	// exited in a name that trades a few million a day, so such names are
@@ -83,16 +83,21 @@ type PrescreenRow struct {
 	Bars  int     `json:"bars,omitempty"`
 	Close float64 `json:"close,omitempty"`
 
-	Mom12_1        float64 `json:"mom_12_1"`
-	Ret63d         float64 `json:"ret_63d"`
-	Ret21d         float64 `json:"ret_21d"`
-	Ret5d          float64 `json:"ret_5d"`
-	RS63           float64 `json:"rs_63"` // Ret63d less the index benchmark's 63d return
-	STRZ           float64 `json:"str_z"`
-	VolYZ20        float64 `json:"vol_yz_20"`
-	VolTrend       float64 `json:"vol_trend"`
-	Regime         string  `json:"regime,omitempty"`
+	Mom12_1  float64 `json:"mom_12_1"`
+	Ret63d   float64 `json:"ret_63d"`
+	Ret21d   float64 `json:"ret_21d"`
+	Ret5d    float64 `json:"ret_5d"`
+	RS63     float64 `json:"rs_63"` // Ret63d less the index benchmark's 63d return
+	STRZ     float64 `json:"str_z"`
+	VolYZ20  float64 `json:"vol_yz_20"`
+	VolTrend float64 `json:"vol_trend"`
+	Regime   string  `json:"regime,omitempty"`
+	// ADV is the 20d average turnover converted to USD; ADVLocal is the same
+	// figure in the listing's own currency, which is what Close is quoted in.
+	// The field used to be named adv_usd and hold the local number.
 	ADV            float64 `json:"adv_usd"`
+	ADVLocal       float64 `json:"adv_local,omitempty"`
+	Currency       string  `json:"currency,omitempty"`
 	PriceTo52wHigh float64 `json:"price_to_52w_high"`
 
 	// Score is the within-index composite. Excluded rows keep 0 and are never
@@ -172,19 +177,22 @@ func (p *Prescreen) Table(index string, top, bottom int) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("| rank | ticker | name | sector | close (as of) | score | mom12-1 | 63d | 21d | 5d | RS63 | vol20 | volTrend | regime | ADV$M | p/52wH |\n")
-	sb.WriteString("|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n")
+	// `close` is in the listing's own currency (the ccy column) because that is
+	// what an order is placed in; ADV is converted, because a floor stated in
+	// dollars has to be met in dollars.
+	sb.WriteString("| rank | ticker | name | sector | close (as of) | ccy | score | mom12-1 | 63d | 21d | 5d | RS63 | vol20 | volTrend | regime | ADV$M (USD) | p/52wH |\n")
+	sb.WriteString("|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n")
 	writeRows := func(rows []PrescreenRow, offset int) {
 		for i, r := range rows {
-			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %.2f (%s) | %+.2f | %s | %s | %s | %s | %s | %.0f%% | %.2f | %s | %.0f | %.2f |\n",
-				offset+i+1, r.Ticker, r.Name, r.Sector, r.Close, r.AsOf, r.Score,
+			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %.2f (%s) | %s | %+.2f | %s | %s | %s | %s | %s | %.0f%% | %.2f | %s | %.0f | %.2f |\n",
+				offset+i+1, r.Ticker, r.Name, r.Sector, r.Close, r.AsOf, r.Currency, r.Score,
 				pctStr(r.Mom12_1), pctStr(r.Ret63d), pctStr(r.Ret21d), pctStr(r.Ret5d), pctStr(r.RS63),
 				r.VolYZ20*100, r.VolTrend, r.Regime, r.ADV/1e6, r.PriceTo52wHigh))
 		}
 	}
 	writeRows(head, 0)
 	if len(tail) > 0 {
-		sb.WriteString(fmt.Sprintf("| … | *(%d mid-ranked names omitted)* | | | | | | | | | | | | | | |\n",
+		sb.WriteString(fmt.Sprintf("| … | *(%d mid-ranked names omitted)* | | | | | | | | | | | | | | | |\n",
 			len(ranked)-len(head)-len(tail)))
 		writeRows(tail, len(ranked)-len(tail))
 	}
@@ -214,7 +222,9 @@ func newPrescreenRow(c model.Constituent, m quant.Metrics, benchRet63 float64, p
 		VolYZ20:        m.VolYZ20,
 		VolTrend:       m.VolTrend,
 		Regime:         m.Regime,
-		ADV:            m.AvgDollarVol20,
+		ADV:            m.AvgDollarVol20USD,
+		ADVLocal:       m.AvgDollarVol20,
+		Currency:       m.Currency,
 		PriceTo52wHigh: m.PriceTo52wHigh,
 	}
 	if params.VolTrendFlag > 0 && m.VolTrend > params.VolTrendFlag {
@@ -234,6 +244,12 @@ func applyPrescreenExclusions(rows []PrescreenRow, params PrescreenParams) {
 		switch {
 		case params.MinBars > 0 && rows[i].Bars < params.MinBars:
 			rows[i].Excluded = fmt.Sprintf("insufficient history (%d bars, need %d)", rows[i].Bars, params.MinBars)
+		case params.ADVMinUSD > 0 && rows[i].ADVLocal > 0 && rows[i].ADV <= 0:
+			// The turnover is known but its currency is not convertible, so the
+			// floor cannot be applied. Excluding is the conservative reading: a
+			// name whose tradeable size cannot be established is not a candidate.
+			rows[i].Excluded = fmt.Sprintf("liquidity not verifiable (20d ADV %.1fM %s, no USD rate)",
+				rows[i].ADVLocal/1e6, rows[i].Currency)
 		case params.ADVMinUSD > 0 && rows[i].ADV < params.ADVMinUSD:
 			rows[i].Excluded = fmt.Sprintf("illiquid (20d ADV $%.1fM, floor $%.0fM)",
 				rows[i].ADV/1e6, params.ADVMinUSD/1e6)
@@ -253,6 +269,18 @@ func applyPrescreenExclusions(rows []PrescreenRow, params PrescreenParams) {
 // a strong short. Excluded rows are left at 0 and, more importantly, are left
 // out of the mean and standard deviation — an illiquid microcap's 400% year
 // would otherwise flatten every real name's z-score toward zero.
+//
+// There is no separate relative-strength term, and there never really was one.
+// The formula read `z(mom) + 0.5·z(ret63d) + 0.5·z(rs63)`, but RS63 is
+// `Ret63d − benchRet63` with a benchmark fetched *once per index*, and these
+// z-scores are taken *within* an index — so every member had the same constant
+// subtracted, and subtracting a constant leaves a z-score exactly unchanged.
+// `z(rs63) ≡ z(ret63d)` identically: the 2026-09-01 artifact has `ret_63d − rs_63`
+// taking one distinct value per index, to nine decimals. The third signal was the
+// second signal counted twice, so the real weight on the 63-day return was 1.0
+// rather than the documented 0.5. Standardising within the index *is* the
+// relative-strength adjustment; RS63 remains a displayed column because it reads
+// more directly than a z-score, but it cannot earn its own term here.
 func scorePrescreen(rows []PrescreenRow) {
 	byIndex := map[string][]int{}
 	var order []string
@@ -278,11 +306,10 @@ func scorePrescreen(rows []PrescreenRow) {
 		}
 		zMom := zscores(pick(func(r PrescreenRow) float64 { return r.Mom12_1 }))
 		zR63 := zscores(pick(func(r PrescreenRow) float64 { return r.Ret63d }))
-		zRS := zscores(pick(func(r PrescreenRow) float64 { return r.RS63 }))
 		zSTR := zscores(pick(func(r PrescreenRow) float64 { return r.STRZ }))
 
 		for k, i := range members {
-			score := zMom[k] + 0.5*zR63[k] + 0.5*zRS[k]
+			score := zMom[k] + 0.5*zR63[k]
 			// Short-term reversal only argues against the trend when the recent
 			// move ran *with* it: a name that has just spiked on top of an
 			// uptrend is the classic thing that gives the spike back, while an
@@ -404,7 +431,7 @@ func sameSign(a, b float64) bool {
 // few hundred JSON files per run for names that never reach the shortlist. They
 // land in the shared data cache, where Stage 1.5 reads the dozen it needs back
 // for free.
-func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClient, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
+func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClient, fx *marketdata.FXRates, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
 	ps := &Prescreen{Indices: indices, Params: params}
 
 	// One benchmark fetch per distinct symbol; several indices may share one.
@@ -448,7 +475,9 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClie
 				continue
 			}
 			fetched++
-			r := newPrescreenRow(c, quant.Compute(s, nil), bench, params)
+			m := quant.Compute(s, nil)
+			m.ApplyFX(fxFor(ctx, fx, c.Ticker))
+			r := newPrescreenRow(c, m, bench, params)
 			if r.AsOf > ps.AsOf {
 				ps.AsOf = r.AsOf
 			}
@@ -457,11 +486,24 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClie
 		log(ch, fmt.Sprintf("pre-screen %s: %d of %d names priced%s", idx, fetched, len(cs),
 			plural(failed, ", %d unavailable")))
 	}
+	ps.Errors = append(ps.Errors, fx.Failures()...)
 
 	applyPrescreenExclusions(rows, params)
 	scorePrescreen(rows)
 	ps.Rows = sortPrescreenRows(rows)
 	return ps
+}
+
+// fxFor resolves one ticker's currency and USD rate in the argument order
+// quant.Metrics.ApplyFX wants. A failed lookup yields a zero rate, which ApplyFX
+// records as "not computable" rather than silently treating the local figure as
+// dollars.
+func fxFor(ctx context.Context, fx *marketdata.FXRates, ticker string) (string, float64) {
+	rate, code, err := fx.ToUSD(ctx, ticker)
+	if err != nil {
+		return code, 0
+	}
+	return code, rate
 }
 
 // plural renders an optional count clause, or nothing when the count is zero.

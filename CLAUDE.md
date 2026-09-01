@@ -81,7 +81,10 @@ internal/
   agents/       persona registry: load agents/*.md, assemble prompts
   universe/     index constituents (data/*.csv), dedupe/cap, benchmark symbols
   quant/        pure-stdlib statistical metrics (momentum, YZ vol, VR, …) — no TA
-  marketdata/   HTTP data providers: Yahoo chart API (keyless), EDGAR/FRED/AV (keyed)
+  marketdata/   HTTP data providers: Yahoo chart API (keyless), EDGAR/FRED/AV (keyed);
+                exchange.go maps a ticker suffix to its currency and market close,
+                fx.go converts turnover/sizing to USD, yahoocrumb.go does the
+                cookie+crumb handshake the option chain now requires
   model/        shared types: Report, TradeIdea, RunState, AgentStatus
   store/        run artifacts under runs/<timestamp>/ (reports, prices/, quant.json,
                 prescreen.json)
@@ -103,9 +106,12 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 
 0. **Stage 0.5 — pre-screen (in-process, no model):** fetch 2y daily OHLCV for *every*
    constituent of the selected indices, compute `internal/quant` metrics, and rank each
-   index on a composite (`z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63)`, minus a short-term
-   reversal penalty when the recent move runs with the trend). Illiquid and short-history
-   names are excluded. Persists `prescreen.json`; the price series stay in the data cache.
+   index on a composite (`z(mom12-1) + 0.5·z(ret63d)`, minus a short-term reversal penalty
+   when the recent move runs with the trend; standardising within the index *is* the
+   relative-strength adjustment, so there is no separate `rs63` term — it was arithmetically
+   identical to `z(ret63d)`). Illiquid and short-history names are excluded, against turnover
+   **converted to USD** (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price
+   series stay in the data cache.
 1. **Scouts (cheap engine):** one call per index, each screening *its index's ranked
    table* → ~5–10 nominations each. Nominations outside the index's constituent list are
    dropped. Orchestrator merges/dedupes (incl. cross-listings) and trims to
@@ -119,9 +125,12 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    News additionally carries a bulk-fetched verified earnings calendar; sentiment reads
    SEC Form 4 insider filings and the Yahoo option chain, not news tone.
 3.5. **Base scores (in-process, no model):** `basescore.go` does the weighting itself —
-   `Σ w·sign·strength/10` over the domains that actually scored each name, renormalized,
-   with weighted-coverage caps. The result is both shown to the Chief and enforced against
-   its output.
+   `Σ w·sign·strength/10` over the **full** domain weight, so a domain with no data for a
+   name votes 0 and thin coverage lowers the score directly (weighted-coverage caps remain
+   as a redundant floor). Dividing by the *covered* weight instead inverted the ordering:
+   one loud domain kept its full magnitude and landed on its cap while five partly
+   disagreeing domains averaged down. The result is both shown to the Chief and enforced
+   against its output.
 4. **Chief Analyst (Claude):** reads the 5 reports + the computed base-score table +
    compact verified quant lines + — once ≥10 past ideas have closed — the pipeline's own
    replayed track record, adjusts each base by at most `chief_adjust_band` points with a

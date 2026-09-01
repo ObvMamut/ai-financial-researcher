@@ -45,14 +45,15 @@ indices, ranked best-composite-first with excluded rows last:
   "params": {
     "top_per_index": 15, "bottom_per_index": 5,
     "adv_min_usd": 20000000, "min_bars": 60, "vol_trend_flag": 1.5,
-    "formula": "z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
+    "formula": "z(mom12-1) + 0.5·z(ret63d) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
   },
   "rows": [
     { "ticker": "NVDA", "name": "NVIDIA Corporation", "sector": "Information Technology",
       "index": "sp500", "as_of": "2026-08-28", "bars": 501, "close": 176.42,
       "mom_12_1": 0.482, "ret_63d": 0.191, "ret_21d": 0.064, "ret_5d": 0.012,
       "rs_63": 0.114, "str_z": 0.4, "vol_yz_20": 0.38, "vol_trend": 1.12,
-      "regime": "trending", "adv_usd": 3.1e10, "price_to_52w_high": 0.94,
+      "regime": "trending", "adv_usd": 3.1e10, "adv_local": 3.1e10, "currency": "USD",
+      "price_to_52w_high": 0.94,
       "score": 2.31 }
   ],
   "errors": ["005930.KS: yahoo 005930.KS: empty chart result"]
@@ -113,6 +114,15 @@ compares `scores` against the coverage it actually assembled and rewrites the ta
 - a score for a ticker that was never on the shortlist is **deleted** and nothing
   is added to `missing` — the run never asked about it (recorded in
   `domains[].off_shortlist_scores`);
+- a score for a ticker the agent *itself* put in `missing` is **deleted**: a report
+  that disclaims its own number should not have that number weighted (recorded in
+  `domains[].self_contradicted_scores`);
+- when any score is deleted, an **enforcement notice** is prepended to the report
+  naming those tickers and stating that any prose about them is unscored context.
+  Deleting the number is not enough on its own: on 2026-09-01 macro's scores for
+  four non-US names were correctly removed while its paragraphs about them stayed,
+  and the Chief read the prose and took two −3 adjustments from a domain the app had
+  just ruled could not see those names;
 - a report with no parseable JSON tail is not a report. The domain is marked
   `failed`, whatever the process exit code said.
 
@@ -147,6 +157,7 @@ The deliverable: direction, confidence, trade mechanics, quick why.
       "price_at_generation": 211.4,
       "base_confidence": 72,
       "domain_scores": {"quant": 8, "news": 6, "fundamentals": 4, "sentiment": 0, "macro": -2},
+      "currency": "USD",
       "shares": 47,
       "notional": 9964.0,
       "risk_amount": 493.5,
@@ -182,8 +193,16 @@ overwritten):
   `scoring.md`.
 - `domain_scores`: the per-domain signed strengths (−10…+10) behind that base, recorded so
   the scoreboard can attribute a result to the domains that called it.
+- `currency`: the ISO code `entry`, `stop` and `target` are quoted in — what an order is
+  actually placed in.
 - `shares` / `notional` / `risk_amount`: the computed position — the account's risk budget
-  divided by the idea's own stop distance, capped at 25% of equity.
+  divided by the idea's own stop distance, capped at 25% of equity. The budget is converted
+  into `currency` before it meets the stop distance, and `notional`/`risk_amount` come back
+  **in USD** so a book spanning four exchanges adds up to one exposure. An absent `shares`
+  means no whole share could be bought; the run says so in its warnings rather than shipping
+  an idea that merely looks complete. (Doing this arithmetic in mixed units is how the
+  2026-09-01 run shipped its first and third ideas — both Tokyo listings — with no position
+  at all.)
 - `expectancy_bps`: the simulated expected value in basis points of entry, net of costs.
 - `breakeven_win_rate`: `risk / (risk + reward)`, the hit rate the geometry alone demands.
 
@@ -219,9 +238,10 @@ type TradeIdea struct {
     BaseConfidence    int            `json:"base_confidence,omitempty"`
     DomainScores      map[string]int `json:"domain_scores,omitempty"`
 
+    Currency         string  `json:"currency,omitempty"`
     Shares           int     `json:"shares,omitempty"`
-    Notional         float64 `json:"notional,omitempty"`
-    RiskAmount       float64 `json:"risk_amount,omitempty"`
+    Notional         float64 `json:"notional,omitempty"`  // USD
+    RiskAmount       float64 `json:"risk_amount,omitempty"` // USD
     ExpectancyBps    float64 `json:"expectancy_bps,omitempty"`
     BreakevenWinRate float64 `json:"breakeven_win_rate,omitempty"`
 }

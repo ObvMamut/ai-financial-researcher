@@ -124,7 +124,10 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 
 	// Sizing is computed whatever else is wrong: a share count is what makes an
 	// idea actionable, and "half size" is not a position.
-	sizeIdea(idea, cfg)
+	m, haveQuant := quantFor(v, idea.Ticker)
+	if msg := sizeIdea(idea, m, cfg); msg != "" {
+		soft("%s", msg)
+	}
 
 	if idea.Entry <= 0 || idea.Stop <= 0 || idea.Target <= 0 {
 		hard("%s has no usable levels (entry %.2f / stop %.2f / target %.2f) — every idea needs all three",
@@ -142,15 +145,22 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 		}
 	}
 
-	m, haveQuant := quantFor(v, idea.Ticker)
 	if !haveQuant {
 		soft("%s has no verified price data, so its levels cannot be checked against realized volatility", idea.Ticker)
 		return out
 	}
 
-	if m.AvgDollarVol20 > 0 && m.AvgDollarVol20 < cfg.ADVMinUSD {
+	// The floor is stated in dollars, so it is compared against the converted
+	// figure. Comparing it against the raw one — which is Σ close·volume in the
+	// listing's own currency — let a Tokyo name turning over ¥20M a day clear a
+	// $20M floor by a factor of 150.
+	switch {
+	case m.AvgDollarVol20USD > 0 && m.AvgDollarVol20USD < cfg.ADVMinUSD:
 		hard("%s trades $%.0fM a day, under the $%.0fM liquidity floor — it cannot be sized",
-			idea.Ticker, m.AvgDollarVol20/1e6, cfg.ADVMinUSD/1e6)
+			idea.Ticker, m.AvgDollarVol20USD/1e6, cfg.ADVMinUSD/1e6)
+	case m.AvgDollarVol20USD <= 0 && m.AvgDollarVol20 > 0:
+		hard("%s turns over %.0fM %s a day but no %s/USD rate was available, so its tradeable size cannot be established against the $%.0fM floor",
+			idea.Ticker, m.AvgDollarVol20/1e6, m.Currency, m.Currency, cfg.ADVMinUSD/1e6)
 	}
 
 	h := float64(idea.TimeframeDays)
@@ -229,24 +239,63 @@ func realizedEdgeSigma(idea *model.TradeIdea, m quant.Metrics, avgR, days float6
 // sizeIdea converts the account's risk budget and the idea's own stop distance
 // into a share count. The Chief used to write "half size" and "full size", which
 // are not positions; this is.
-func sizeIdea(idea *model.TradeIdea, cfg model.RiskConfig) {
+//
+// The account is in USD and the levels are in whatever the listing trades in, so
+// the budget is converted into the local currency before it meets the local stop
+// distance, and the resulting exposure is reported back in USD. Doing this
+// arithmetic in mixed units is how the 2026-09-01 run shipped its first and
+// third ideas with no position at all: Tokyo Electron's ¥8,000 stop distance
+// against a "500" budget floors to zero shares, as does SoftBank's ¥840.
+//
+// It returns a message when no whole share can be bought, because that outcome
+// used to be a bare `return` — and Shares/Notional/RiskAmount are `omitempty`,
+// so the idea shipped looking complete with the sizing simply absent.
+func sizeIdea(idea *model.TradeIdea, m quant.Metrics, cfg model.RiskConfig) string {
 	stopDist := math.Abs(idea.Entry - idea.Stop)
 	if idea.Entry <= 0 || stopDist <= 0 {
-		return
+		return ""
 	}
-	budget := cfg.AccountEquity * cfg.RiskPerTradePct / 100
-	shares := math.Floor(budget / stopDist)
+
+	// An empty currency means no metrics at all for this name — quantFor returned
+	// a zero value — and the gate has already said so in its own finding. Falling
+	// back to the account's currency is the pre-FX behaviour and right for the US
+	// names that dominate. It is *not* the silent default this change removes:
+	// a name whose currency is known but unconvertible carries the code with a
+	// zero rate, and is refused below rather than assumed to be dollars.
+	ccy, rate := m.Currency, m.FXToUSD
+	if ccy == "" {
+		ccy, rate = "USD", 1
+	}
+	if rate <= 0 {
+		return fmt.Sprintf("%s cannot be sized: its levels are in %s and no %s/USD rate was available this run",
+			idea.Ticker, ccy, ccy)
+	}
+	idea.Currency = ccy
+
+	// The budget is USD; entry and stop are local. Convert the budget, not the
+	// prices — the prices are what an order is placed at.
+	budgetLocal := cfg.AccountEquity * cfg.RiskPerTradePct / 100 / rate
+	shares := math.Floor(budgetLocal / stopDist)
 	// No single idea may become the book. A tight stop on a cheap stock would
 	// otherwise size to many times the account.
-	if maxShares := math.Floor(cfg.AccountEquity * 0.25 / idea.Entry); shares > maxShares {
+	maxShares := math.Floor(cfg.AccountEquity * 0.25 / rate / idea.Entry)
+	if shares > maxShares {
 		shares = maxShares
 	}
 	if shares < 1 {
-		return
+		limit, why := budgetLocal, "the per-trade risk budget"
+		if maxShares < 1 {
+			limit, why = cfg.AccountEquity*0.25/rate, "the 25%-of-account position cap"
+		}
+		return fmt.Sprintf(
+			"%s cannot be sized at one whole share: %s is %.0f %s against an entry of %.2f and a stop %.2f away — raise account_equity or risk_per_trade_pct, or drop the idea",
+			idea.Ticker, why, limit, ccy, idea.Entry, stopDist)
 	}
 	idea.Shares = int(shares)
-	idea.Notional = math.Round(shares*idea.Entry*100) / 100
-	idea.RiskAmount = math.Round(shares*stopDist*100) / 100
+	// Exposure is reported in USD so five ideas across four currencies add up.
+	idea.Notional = math.Round(shares*idea.Entry*rate*100) / 100
+	idea.RiskAmount = math.Round(shares*stopDist*rate*100) / 100
+	return ""
 }
 
 // simulateExpectancy estimates the trade's expected value in basis points of

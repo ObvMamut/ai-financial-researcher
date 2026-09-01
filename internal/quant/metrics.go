@@ -57,8 +57,15 @@ type Metrics struct {
 	Skew252        float64 `json:"skew_252"`
 	Kurt252        float64 `json:"kurt_252"` // excess kurtosis
 
-	// Liquidity.
-	AvgDollarVol20 float64 `json:"avg_dollar_vol_20"`
+	// Liquidity. AvgDollarVol20 is Σ close·volume in the listing's *own*
+	// currency, which is the only thing the bars can say. AvgDollarVol20USD is
+	// that figure converted, and it is the one every threshold compares against —
+	// a floor stated in dollars has to be met in dollars. It is 0 when no FX rate
+	// was available, which callers must read as "unknown", not as "illiquid".
+	Currency          string  `json:"currency,omitempty"`
+	FXToUSD           float64 `json:"fx_to_usd,omitempty"`
+	AvgDollarVol20    float64 `json:"avg_dollar_vol_20"`
+	AvgDollarVol20USD float64 `json:"avg_dollar_vol_20_usd,omitempty"`
 
 	// Benchmark relation over up to 252 aligned daily returns.
 	Benchmark string  `json:"benchmark,omitempty"`
@@ -200,6 +207,8 @@ func Compute(s *Series, bench *Series) Metrics {
 	if len(bars20) > 0 {
 		m.AvgDollarVol20 = dv / float64(len(bars20))
 	}
+	// Currency/FXToUSD/AvgDollarVol20USD stay zero here: bars carry no currency
+	// and guessing one is the whole defect. ApplyFX fills them in.
 
 	// Benchmark relation.
 	if bench != nil && len(bench.Bars) > 1 {
@@ -233,6 +242,25 @@ func Compute(s *Series, bench *Series) Metrics {
 	}
 
 	return m
+}
+
+// ApplyFX records the listing's currency and the rate that converts it to USD,
+// and derives the USD liquidity figure the thresholds compare against.
+//
+// It is separate from Compute because a price series does not say what currency
+// it is in — the exchange suffix does, and resolving that needs a network fetch
+// Compute has no business making. A rate of 0 or less leaves AvgDollarVol20USD
+// at zero and adds a flag, so an unconvertible name reads as "unknown", never as
+// a number in the wrong units.
+func (m *Metrics) ApplyFX(code string, rate float64) {
+	m.Currency, m.FXToUSD, m.AvgDollarVol20USD = code, 0, 0
+	if rate <= 0 {
+		m.Flags = append(m.Flags, fmt.Sprintf(
+			"no %s/USD rate — liquidity in USD not computable; avg_dollar_vol_20 is %s", code, code))
+		return
+	}
+	m.FXToUSD = rate
+	m.AvgDollarVol20USD = m.AvgDollarVol20 * rate
 }
 
 func tailBars(bars []Bar, n int) []Bar {

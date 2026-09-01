@@ -14,11 +14,15 @@ import (
 // σ_daily 3.1623% × √10 × 100 = 10.00. Every level in these tests is stated in
 // dollars so the σ arithmetic is legible.
 func gateMetrics(sym string) quant.Metrics {
-	return quant.Metrics{
+	m := quant.Metrics{
 		Symbol: sym, AsOf: "2026-08-28", LastClose: 100,
 		SigmaDaily: 0.1 / math.Sqrt(10), AvgDollarVol20: 500e6,
 		Benchmark: "SPY", Beta: 1.0,
 	}
+	// A US listing, so the same figure in USD — but stated the way the pipeline
+	// states it, through ApplyFX, rather than by leaving the currency blank.
+	m.ApplyFX("USD", 1)
+	return m
 }
 
 func gateVerified(t *testing.T, syms ...string) verified {
@@ -52,6 +56,17 @@ func findingsFor(fs []riskFinding, ticker string) []string {
 func hasHard(fs []riskFinding, ticker, substr string) bool {
 	for _, f := range fs {
 		if f.Hard && f.Ticker == ticker && strings.Contains(f.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasFinding is hasHard without the severity, for checks that must be reported
+// but must not cost the idea its place.
+func hasFinding(fs []riskFinding, ticker, substr string) bool {
+	for _, f := range fs {
+		if f.Ticker == ticker && strings.Contains(f.Message, substr) {
 			return true
 		}
 	}
@@ -183,6 +198,7 @@ func TestRiskGateRejectsIlliquidNames(t *testing.T) {
 	v := gateVerified(t, "AAA")
 	m := v.Quant.ByTicker["AAA"]
 	m.AvgDollarVol20 = 5e6
+	m.ApplyFX("USD", 1)
 	v.Quant.ByTicker["AAA"] = m
 
 	res := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 88, 124)}}
@@ -206,6 +222,107 @@ func TestRiskGateComputesPositionSize(t *testing.T) {
 	}
 	if idea.RiskAmount != 492 {
 		t.Errorf("risk amount = %.2f, want 41 × 12 = 492", idea.RiskAmount)
+	}
+}
+
+// The 2026-09-01 run shipped its first and third ideas — Tokyo Electron and
+// SoftBank — with no share count, no notional and no risk amount, and said
+// nothing about it: sizeIdea divided a USD budget by a JPY stop distance,
+// floored to zero, and returned. All three fields are `omitempty`, so the ideas
+// looked complete.
+func TestRiskGateSizesInTheCurrencyTheLevelsAreQuotedIn(t *testing.T) {
+	// Tokyo Electron as it actually shipped: ¥54,800 entry, ¥46,800 stop.
+	// At ¥150/$ the $500 risk budget is ¥75,000, which buys 9 shares of the
+	// ¥8,000 stop distance. The 25% cap allows ¥3.75M / ¥54,800 = 68, so the
+	// budget binds.
+	const yenPerUSD = 1.0 / 150
+	m := quant.Metrics{Symbol: "8035.T", LastClose: 54980, SigmaDaily: 0.0368,
+		AvgDollarVol20: 164.9e9}
+	m.ApplyFX("JPY", yenPerUSD)
+
+	v := verified{Universe: testUniverse(t), Quant: &quant.Pack{
+		ByTicker: map[string]quant.Metrics{"8035.T": m}}}
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{{
+		Ticker: "8035.T", Direction: model.DirectionBuy, Confidence: 40,
+		Entry: 54800, Stop: 46800, Target: 70800, TimeframeDays: 10,
+	}}}
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+
+	idea := res.Ideas[0]
+	if idea.Shares != 9 {
+		t.Errorf("shares = %d, want floor(75000/8000) = 9", idea.Shares)
+	}
+	if idea.Currency != "JPY" {
+		t.Errorf("currency = %q, want JPY — the levels are yen", idea.Currency)
+	}
+	// Exposure is reported in USD so a four-currency book adds up: 9 × ¥54,800.
+	if want := 9 * 54800.0 * yenPerUSD; math.Abs(idea.Notional-want) > 0.01 {
+		t.Errorf("notional = %.2f, want $%.2f", idea.Notional, want)
+	}
+	if want := 9 * 8000.0 * yenPerUSD; math.Abs(idea.RiskAmount-want) > 0.01 {
+		t.Errorf("risk amount = %.2f, want $%.2f", idea.RiskAmount, want)
+	}
+	// ¥164.9bn a day is ~$1.1bn: comfortably over the floor once converted, and
+	// the raw figure must not be what clears it.
+	if hasHard(fs, "8035.T", "liquidity floor") {
+		t.Errorf("a ¥164.9bn-a-day name is not illiquid: %v", findingsFor(fs, "8035.T"))
+	}
+}
+
+// The converse: a Tokyo name turning over ¥20M a day is about $135k and
+// untradeable, but cleared a $20M floor by a factor of 150 while the comparison
+// was made in mixed units.
+func TestRiskGateAppliesTheLiquidityFloorInDollars(t *testing.T) {
+	m := quant.Metrics{Symbol: "9999.T", LastClose: 1000, SigmaDaily: 0.02,
+		AvgDollarVol20: 20e6} // ¥20M
+	m.ApplyFX("JPY", 1.0/150)
+
+	v := verified{Universe: testUniverse(t), Quant: &quant.Pack{
+		ByTicker: map[string]quant.Metrics{"9999.T": m}}}
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{{
+		Ticker: "9999.T", Direction: model.DirectionBuy, Confidence: 40,
+		Entry: 1000, Stop: 940, Target: 1130, TimeframeDays: 10,
+	}}}
+	if fs := applyRiskGate(res, v, model.RiskConfig{}); !hasHard(fs, "9999.T", "liquidity floor") {
+		t.Errorf("¥20M/day is $133k, far under the $20M floor: %v", findingsFor(fs, "9999.T"))
+	}
+
+	// And a name whose currency will not convert is not silently assumed to be
+	// in dollars — it is reported as unverifiable.
+	m.ApplyFX("JPY", 0)
+	v.Quant.ByTicker["9999.T"] = m
+	res = &model.IdeasResult{Ideas: []model.TradeIdea{{
+		Ticker: "9999.T", Direction: model.DirectionBuy, Confidence: 40,
+		Entry: 1000, Stop: 940, Target: 1130, TimeframeDays: 10,
+	}}}
+	if fs := applyRiskGate(res, v, model.RiskConfig{}); !hasHard(fs, "9999.T", "no JPY/USD rate") {
+		t.Errorf("an unconvertible name must not be compared against a dollar floor: %v",
+			findingsFor(fs, "9999.T"))
+	}
+}
+
+// Sizing that cannot buy one whole share used to be a bare `return`.
+func TestRiskGateSaysSoWhenItCannotSizeAnIdea(t *testing.T) {
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{
+		// A $600 stop distance against a $500 per-trade budget.
+		{Ticker: "AAA", Direction: model.DirectionBuy, Entry: 5000, Stop: 4400,
+			Target: 6200, TimeframeDays: 10},
+	}}
+	m := gateMetrics("AAA")
+	m.LastClose = 5000
+	v := verified{Universe: testUniverse(t), Quant: &quant.Pack{
+		ByTicker: map[string]quant.Metrics{"AAA": m}}}
+
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+	if res.Ideas[0].Shares != 0 {
+		t.Fatalf("shares = %d, want 0 — the budget cannot buy one", res.Ideas[0].Shares)
+	}
+	if !hasFinding(fs, "AAA", "cannot be sized at one whole share") {
+		t.Errorf("an unsizeable idea must say so, got %v", findingsFor(fs, "AAA"))
+	}
+	// Soft, not hard: it is a budget fact, not a bad trade.
+	if hasHard(fs, "AAA", "cannot be sized at one whole share") {
+		t.Errorf("an unsizeable idea should not be dropped outright")
 	}
 }
 
@@ -470,7 +587,8 @@ func TestGateIdeaUsesTheRealizedEdgeWhenOneIsAvailable(t *testing.T) {
 		}
 	}
 	v := verified{Quant: &quant.Pack{ByTicker: map[string]quant.Metrics{
-		"AAA": {Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02, AvgDollarVol20: 5e8},
+		"AAA": {Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02,
+			AvgDollarVol20: 5e8, AvgDollarVol20USD: 5e8, Currency: "USD", FXToUSD: 1},
 	}}}
 	cfg := riskDefaults(model.RiskConfig{})
 

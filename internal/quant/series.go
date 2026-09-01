@@ -118,6 +118,14 @@ func AlignedReturns(a, b *Series) (ra, rb []float64) {
 // It is exported because the risk gate asks a question the metrics pack cannot:
 // not how each name relates to its benchmark, but how the ideas relate to each
 // other. Five ideas at ρ ≈ 0.9 are one position in five tickets.
+//
+// One known limit: a cross-market pair is measured on closes stamped with the
+// same calendar date but struck up to fourteen hours apart — Tokyo's 06:00 UTC
+// against New York's 21:00 — so a Tokyo/NYSE pair's correlation is systematically
+// understated and the gate's ρ ceiling rarely binds on one. Lagging one leg would
+// fix the sign of the error but not its size, and would need a per-market
+// calendar the pipeline does not keep. The correlation is read as a floor on how
+// related two ideas are, never as the measurement.
 func Correlation(a, b *Series) (float64, bool) {
 	ra, rb := AlignedReturns(a, b)
 	if len(ra) < 20 {

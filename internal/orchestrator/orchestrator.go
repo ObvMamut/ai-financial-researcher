@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -446,6 +447,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	yc := marketdata.NewYahooClient(cache)
 	yc.SetPriceTTL(cfg.PriceTTL)
+	// One FX table for the whole run: every liquidity floor and every position
+	// size is stated in USD, and half this universe does not trade in it.
+	fx := marketdata.NewFXRates(yc)
 
 	var indices []string
 	if cfg.Mode == model.ModeIndependent {
@@ -471,7 +475,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		log(ch, fmt.Sprintf("Stage 0.5: pre-screening %d names across %s (cold fetch, cached ~0s)…",
 			total, strings.Join(indices, ", ")))
-		prescreen = runPrescreen(ctx, ch, yc, uni, indices, prescreenParams)
+		prescreen = runPrescreen(ctx, ch, yc, fx, uni, indices, prescreenParams)
 		logPackErrors(ch, "prescreen", prescreen.Errors)
 		dataErrors = append(dataErrors, prefixed("prescreen", prescreen.Errors)...)
 		if err := run.WritePrescreen(prescreen); err != nil {
@@ -606,7 +610,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	agentStatus(ch, "quant-data", model.StatusRunning, nil)
 	// The pre-screen already fetched every one of these series; the shared cache
 	// serves them back here without a second round trip.
-	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, shortlist)
+	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, fx, shortlist)
 	logPackErrors(ch, "quant", quantPack.Errors)
 	dataErrors = append(dataErrors, prefixed("quant", quantPack.Errors)...)
 	if len(quantPack.ByTicker) > 0 {
@@ -769,10 +773,13 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 		}
 
-		// Computed coverage is the authority, not the agent's own `missing`
-		// array: delete scores for names this domain had no data for, or that
-		// were never on the shortlist, and say so in the tail. Done before the
-		// report is written so the artifact is exactly what the Chief read.
+		// Computed coverage is the authority: delete scores for names this domain
+		// had no data for, or that were never on the shortlist, and say so in the
+		// tail. The agent's own `missing` array is not the authority but it is
+		// binding on itself — a name in both arrays loses its score too — and the
+		// removals are named in a notice prepended to the prose, so a stripped
+		// score cannot be read back out of the paragraphs. Done before the report
+		// is written so the artifact is exactly what the Chief read.
 		var enf enforcement
 		if r.Status != model.StatusFailed {
 			corrected, e, err := enforceSpecialistTail(sp.role, r.Stdout, ungrounded[i], tickers)
@@ -794,6 +801,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 					log(ch, fmt.Sprintf("warn: %s scored %d ticker(s) not on the shortlist (%s) — scores removed",
 						sp.role, len(enf.OffShortlist), strings.Join(enf.OffShortlist, ", ")))
 				}
+				if len(enf.SelfContradicted) > 0 {
+					log(ch, fmt.Sprintf("warn: %s both scored and declared missing %d ticker(s) (%s) — scores removed",
+						sp.role, len(enf.SelfContradicted), strings.Join(enf.SelfContradicted, ", ")))
+				}
 			}
 		}
 
@@ -805,17 +816,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// Grounded means we actually injected verified data into the prompt —
 		// judged from the data we assembled, never from the model's own output.
 		status := model.DomainStatus{
-			Domain:              sp.role,
-			Status:              r.Status,
-			Err:                 r.Err,
-			Duration:            r.Duration,
-			Attempts:            r.Attempts,
-			Tokens:              r.Tokens,
-			Grounded:            grounded[i],
-			Ungrounded:          ungrounded[i],
-			CorrectedScores:     enf.Corrected,
-			OffShortlistScores:  enf.OffShortlist,
-			FabricatedCitations: fabricated,
+			Domain:                 sp.role,
+			Status:                 r.Status,
+			Err:                    r.Err,
+			Duration:               r.Duration,
+			Attempts:               r.Attempts,
+			Tokens:                 r.Tokens,
+			Grounded:               grounded[i],
+			Ungrounded:             ungrounded[i],
+			CorrectedScores:        enf.Corrected,
+			OffShortlistScores:     enf.OffShortlist,
+			SelfContradictedScores: enf.SelfContradicted,
+			FabricatedCitations:    fabricated,
 		}
 
 		if r.Status == model.StatusFailed {
@@ -1044,9 +1056,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	// Record the verified price each idea was generated at (scoreboard baseline).
+	// Rounded to the cent: Yahoo's closes arrive as float32, so writing them raw
+	// put "49.13999938964844" in the artifact for a €49.14 close.
 	for i := range ideas.Ideas {
 		if m, ok := quantPack.ByTicker[strings.ToUpper(ideas.Ideas[i].Ticker)]; ok && m.LastClose > 0 {
-			ideas.Ideas[i].PriceAtGeneration = m.LastClose
+			ideas.Ideas[i].PriceAtGeneration = math.Round(m.LastClose*100) / 100
 		}
 	}
 

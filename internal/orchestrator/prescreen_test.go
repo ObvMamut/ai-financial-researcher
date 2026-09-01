@@ -172,6 +172,43 @@ func TestPrescreenTableCarriesTopAndBottom(t *testing.T) {
 	}
 }
 
+// The composite used to read `z(mom) + 0.5·z(ret63d) + 0.5·z(rs63)`, which was
+// two terms wearing three names. RS63 is Ret63d minus a benchmark fetched once
+// per index, and these z-scores are taken within an index, so every member had
+// the same constant subtracted — and a z-score is invariant to that. The 63-day
+// return was silently carrying weight 1.0 rather than the documented 0.5.
+//
+// This test would have caught it: shifting the benchmark changes every RS63 and
+// must change no score at all.
+func TestPrescreenIsInvariantToTheBenchmarkLevel(t *testing.T) {
+	build := func(bench float64) []PrescreenRow {
+		var rows []PrescreenRow
+		for i, tk := range []string{"A", "B", "C", "D", "E", "F"} {
+			mom, r63 := 0.50-float64(i)*0.15, 0.30-float64(i)*0.08
+			rows = append(rows, row(tk, "sp500", func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d, r.RS63 = mom, r63, r63-bench
+			}))
+		}
+		scorePrescreen(rows)
+		return rows
+	}
+	flat, bull := build(0.0), build(0.25)
+	for i := range flat {
+		if math.Abs(flat[i].Score-bull[i].Score) > 1e-12 {
+			t.Errorf("%s scored %+.6f against a flat benchmark and %+.6f against a +25%% one — "+
+				"a within-index z-score cannot depend on a constant shift",
+				flat[i].Ticker, flat[i].Score, bull[i].Score)
+		}
+		if flat[i].RS63 == bull[i].RS63 {
+			t.Fatalf("the test is not exercising anything: RS63 unchanged at %.4f", flat[i].RS63)
+		}
+	}
+	// And the formula recorded in every artifact must describe what ran.
+	if strings.Contains(defaultPrescreenParams().Formula, "rs63") {
+		t.Errorf("prescreenFormula still advertises an rs63 term: %q", defaultPrescreenParams().Formula)
+	}
+}
+
 func TestPrescreenTableEmptyWithoutRows(t *testing.T) {
 	ps := &Prescreen{}
 	if got := ps.Table("sp500", 15, 5); got != "" {

@@ -19,17 +19,27 @@ nothing. No model is called.
 leaders instead of losing every slot to the strongest one:
 
 ```
-score = z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63) − 0.5·z(strZ)
+score = z(mom12-1) + 0.5·z(ret63d) − 0.5·z(strZ)
 ```
 
-where `rs63 = ret63d − benchmark ret63d`, and the last term applies **only when the recent
-move runs with the trend** (`sign(strZ) == sign(mom12-1)`). That is the short-term
+The last term applies **only when the recent move runs with the trend** (`sign(strZ) == sign(mom12-1)`). That is the short-term
 reversal case: a name that has just spiked on top of an uptrend gives the spike back,
 while an uptrend that has just dipped is a pullback entry. The rule is symmetric, so a
 name that has already collapsed is penalised as a short for the same reason.
 
 The composite is a **signed long ranking**: high means a strong long, low means a strong
 short.
+
+There is no separate relative-strength term, because standardising within the index *is*
+the relative-strength adjustment. The formula used to read
+`z(mom12-1) + 0.5·z(ret63d) + 0.5·z(rs63)` with `rs63 = ret63d − benchmark ret63d`, but the
+benchmark return is fetched once per index and these z-scores are taken within an index, so
+every member had the same constant subtracted — and a z-score is invariant to that.
+`z(rs63) ≡ z(ret63d)` identically: the 2026-09-01 artifact has `ret_63d − rs_63` taking
+exactly one distinct value per index, to nine decimals. The third signal was the second one
+counted twice, so the real weight on the 63-day return was 1.0 rather than the documented
+0.5. `RS63` remains a displayed column, because it reads more directly than a z-score, but
+it cannot earn its own term.
 
 Each term is **winsorised at the 2nd/98th percentile within the index** before
 standardising. Cross-sectional factor scores are routinely decided by one extreme value:
@@ -43,9 +53,17 @@ deviation so they cannot distort other names' z-scores):
 
 | Rule | Reason |
 |---|---|
-| `AvgDollarVol20 < risk.adv_min_usd` (default $20M) | A swing position sized off a real account cannot be entered or exited in it. |
+| `AvgDollarVol20USD < risk.adv_min_usd` (default $20M) | A swing position sized off a real account cannot be entered or exited in it. |
+| Turnover known but no FX rate for its currency | Tradeable size cannot be established, so the name is not a candidate. |
 | `Bars < 60` | Too little history for the momentum term to mean anything. |
 | No price history at all | Fetch failed; recorded as an error and an excluded row. |
+
+The floor is compared against **converted** turnover. `AvgDollarVol20` is `Σ close·volume`
+in the listing's own currency, and comparing it to a dollar floor excluded exactly one name
+out of 274 on 2026-09-01 while asia100's median read "$10,015M" — SK Hynix's ₩6.76tn
+printing as "$6,760,821M". A Tokyo name turning over ¥20M a day, about $135k and
+untradeable, cleared a $20M floor by a factor of 150. Rates come from Yahoo's keyless FX
+pairs, one request per distinct currency per run; London's GBp is divided by 100.
 
 `volTrend > 1.5` is flagged, not excluded: expanding volatility makes the level
 arithmetic downstream unstable and the scout is told to say so.

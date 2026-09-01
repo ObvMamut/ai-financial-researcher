@@ -168,9 +168,15 @@ type TradeIdea struct {
 	// Position size, computed in Go from the account's risk budget and the
 	// idea's own stop distance — never authored by the model. "Half size" is
 	// not a position; a share count is.
+	//
+	// Entry, Stop and Target are in Currency — what an order is actually placed
+	// in. Notional and RiskAmount are converted to USD, so a book spanning four
+	// exchanges adds up to one exposure. An absent Shares means sizing could not
+	// produce a whole share and the run says so in its warnings.
+	Currency   string  `json:"currency,omitempty"` // ISO code the levels are quoted in
 	Shares     int     `json:"shares,omitempty"`
-	Notional   float64 `json:"notional,omitempty"`
-	RiskAmount float64 `json:"risk_amount,omitempty"` // currency at risk if the stop fills
+	Notional   float64 `json:"notional,omitempty"`    // USD
+	RiskAmount float64 `json:"risk_amount,omitempty"` // USD at risk if the stop fills
 
 	// ExpectancyBps is the simulated expected value of the trade in basis
 	// points of the entry price, net of costs, under an explicit small edge.
@@ -327,6 +333,10 @@ type DomainStatus struct {
 	// OffShortlistScores lists tickers the agent scored that were never on the
 	// shortlist — hallucinated symbols, also deleted from the tail.
 	OffShortlistScores []string `json:"off_shortlist_scores,omitempty"`
+	// SelfContradictedScores lists tickers the agent placed in both `scores` and
+	// its own `missing` array. The score is deleted: a report that disclaims its
+	// own number should not have that number weighted.
+	SelfContradictedScores []string `json:"self_contradicted_scores,omitempty"`
 	// FabricatedCitations lists [source:] domains the agent cited on a
 	// search-less engine. Non-empty means the report's sourcing was invented and
 	// the orchestrator has rewritten those tags to [unverified].
