@@ -416,7 +416,7 @@ func gateBook(res *model.IdeasResult, v verified, cfg model.RiskConfig) []riskFi
 			sa := v.Series[strings.ToUpper(a.Ticker)]
 			sb := v.Series[strings.ToUpper(b.Ticker)]
 			c, ok := quant.Correlation(sa, sb)
-			if !ok || math.Abs(c) <= cfg.MaxPairCorr {
+			if !ok || c <= cfg.MaxPairCorr {
 				continue
 			}
 			out = append(out, riskFinding{Message: fmt.Sprintf(

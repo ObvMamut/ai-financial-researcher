@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type runModel struct {
 	mode    model.Mode
 	ticker  string
 	eventCh <-chan orchestrator.Event
+	cancel  context.CancelFunc
 
 	agents   []agentRow
 	agentIdx map[string]int // role → index in agents slice
@@ -45,7 +47,7 @@ type runModel struct {
 
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-func newRunModel(req model.RunRequest, eventCh <-chan orchestrator.Event) runModel {
+func newRunModel(req model.RunRequest, eventCh <-chan orchestrator.Event, cancel context.CancelFunc) runModel {
 	// Pre-populate agent rows in pipeline order
 	var roles []string
 	if req.Mode == model.ModeIndependent {
@@ -76,6 +78,7 @@ func newRunModel(req model.RunRequest, eventCh <-chan orchestrator.Event) runMod
 		mode:     req.Mode,
 		ticker:   req.Ticker,
 		eventCh:  eventCh,
+		cancel:   cancel,
 		agents:   rows,
 		agentIdx: idx,
 		viewport: vp,
@@ -180,6 +183,17 @@ func (m runModel) Update(msg tea.Msg) (runModel, tea.Cmd) {
 			if msg.String() == "ctrl+c" {
 				m.done = true
 				m.aborted = true
+				if m.cancel != nil {
+					m.cancel()
+				}
+				// Keep draining in the background so the orchestrator's
+				// goroutine — now failing fast on the cancelled context — can
+				// still deliver its final event and exit, instead of
+				// blocking forever on a send nobody is receiving.
+				go func(ch <-chan orchestrator.Event) {
+					for range ch {
+					}
+				}(m.eventCh)
 				return m, nil
 			}
 		}

@@ -42,12 +42,19 @@ var foreignExchanges = map[string]bool{
 	"VS": true, "WA": true,
 }
 
+// edgarRequestsPerSecond mirrors SEC's own stated guidance for automated
+// access: "10 requests/second at most" (see the form4MaxDocs comment in
+// edgarform4.go). SEC imposes no daily quota, unlike AlphaVantage — only the
+// per-second rate needs throttling.
+const edgarRequestsPerSecond = 10
+
 type edgarProvider struct {
 	client       *http.Client
 	contactEmail string
 	cache        *Cache
 	factsBase    string // companyfacts host
 	tickersBase  string // ticker directory host (a different SEC host)
+	limiter      *Limiter
 
 	mu        sync.Mutex
 	cikMap    map[string]string
@@ -65,6 +72,9 @@ func NewEdgarProvider(contactEmail string, cache *Cache) Provider {
 		cikMap:       make(map[string]string),
 		factsBase:    "https://data.sec.gov",
 		tickersBase:  "https://www.sec.gov",
+		// No daily budget to enforce (SEC doesn't quote one) — dailyLimit is
+		// set high enough to never bind, only the per-second rate matters.
+		limiter: NewLimiter(1<<30, edgarRequestsPerSecond*60, edgarRequestsPerSecond),
 	}
 	// CFR_SEC_BASE reroutes both SEC hosts at once (tests, proxies/mirrors).
 	if v := os.Getenv("CFR_SEC_BASE"); v != "" {
@@ -148,6 +158,9 @@ type secTickerEntry struct {
 }
 
 func (p *edgarProvider) fetchCIKMap(ctx context.Context) (map[string]string, error) {
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.tickersBase+secTickersPath, nil)
 	if err != nil {
 		return nil, err
@@ -233,6 +246,9 @@ func (p *edgarProvider) Fetch(ctx context.Context, domain string, ticker string)
 		return TickerData{}, fmt.Errorf("%w: ticker %s not in SEC CIK map", ErrUnavailable, symbol)
 	}
 
+	if err := p.limiter.Wait(ctx); err != nil {
+		return TickerData{}, err
+	}
 	url := fmt.Sprintf("%s/api/xbrl/companyfacts/CIK%s.json", p.factsBase, cik)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

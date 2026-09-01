@@ -304,6 +304,31 @@ func TestRiskGateSpotsOneBetInTwoTickets(t *testing.T) {
 	}
 }
 
+func TestRiskGateDoesNotFlagANegativelyCorrelatedPair(t *testing.T) {
+	rets := make([]float64, 200)
+	for i := range rets {
+		rets[i] = 0.01 * math.Sin(float64(i))
+	}
+	inverse := make([]float64, len(rets))
+	for i, r := range rets {
+		inverse[i] = -r
+	}
+	v := gateVerified(t, "AAA", "BBB")
+	v.Series = map[string]*quant.Series{
+		"AAA": seriesOf("AAA", 100, rets),
+		"BBB": seriesOf("BBB", 50, inverse), // exact mirror: ρ = -1
+	}
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{
+		gateIdeaAt("AAA", 88, 124), gateIdeaAt("BBB", 88, 124),
+	}}
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+	// Two same-direction ideas whose returns move opposite to each other
+	// diversify the book; they are not "one bet in two tickets".
+	if hasBookFinding(fs, "one bet in two tickets") {
+		t.Errorf("negatively correlated pair should not be flagged as concentrated: %v", fs)
+	}
+}
+
 func TestRiskGateNotesAOneSidedBook(t *testing.T) {
 	v := gateVerified(t, "AAA", "BBB")
 	v.Quant.Benchmarks = map[string]quant.Metrics{

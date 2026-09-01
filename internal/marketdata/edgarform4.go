@@ -252,6 +252,9 @@ func (p *edgarProvider) form4URL(cik, accession, document string) string {
 }
 
 func (p *edgarProvider) fetchForm4(ctx context.Context, cik, accession, document string) (*ownershipDocument, error) {
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.form4URL(cik, accession, document), nil)
 	if err != nil {
 		return nil, err
@@ -335,6 +338,9 @@ func (d *ownershipDocument) owner() (name, title string) {
 // getJSON is the SEC-identified GET used by both the fundamentals and the
 // insider paths.
 func (p *edgarProvider) getJSON(ctx context.Context, url string, out any) error {
+	if err := p.limiter.Wait(ctx); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err

@@ -62,8 +62,11 @@ func TestYahooHistoryParsesFixture(t *testing.T) {
 	if math.Abs(b0.Open-50.0) > 1e-9 {
 		t.Errorf("Open = %v, want rescaled 50.0", b0.Open)
 	}
-	if b0.Volume != 1000000 {
-		t.Errorf("Volume = %v, want 1000000", b0.Volume)
+	// Volume is rescaled by the same factor as OHLC (1/0.5 = 2×) so that
+	// Close×Volume still reconstructs the actual dollars traded that day:
+	// raw 101.0×1,000,000 == adjusted 50.5×2,000,000.
+	if b0.Volume != 2000000 {
+		t.Errorf("Volume = %v, want 2000000 (rescaled with OHLC)", b0.Volume)
 	}
 	if got := s.LastClose(); math.Abs(got-53.0) > 1e-9 {
 		t.Errorf("LastClose = %v, want 53.0", got)

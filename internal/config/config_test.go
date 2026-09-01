@@ -118,6 +118,36 @@ contact_email = "a@b.c"
 	}
 }
 
+func TestLoadFileCanExplicitlyDisableCachePruning(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("data_cache_days = 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// An explicit 0 in the file means "disable pruning" and must not be
+	// mistaken for "key absent" and silently overridden by the default (7).
+	if s.DataCacheDays != 0 {
+		t.Errorf("DataCacheDays = %d, want 0 (explicit disable)", s.DataCacheDays)
+	}
+}
+
+func TestLoadFileOmittingCacheDaysKeepsDefault(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("runs_dir = \"myruns\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.DataCacheDays != 7 {
+		t.Errorf("DataCacheDays = %d, want default 7 when the key is absent", s.DataCacheDays)
+	}
+}
+
 func TestLoadLocalFileBeatsGlobal(t *testing.T) {
 	home, cwd := isolate(t)
 	global := filepath.Join(home, ".config", "cfr")

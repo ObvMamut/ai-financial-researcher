@@ -4,6 +4,8 @@
 package tui
 
 import (
+	"context"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
@@ -23,8 +25,10 @@ const (
 )
 
 // RunFunc is the constructor for an orchestrator run channel; injected so the
-// TUI does not need to import orchestrator's Config directly.
-type RunFunc func(req model.RunRequest) <-chan orchestrator.Event
+// TUI does not need to import orchestrator's Config directly. It takes the
+// context the run should observe, so the TUI can cancel a live pipeline
+// instead of merely stopping listening to it.
+type RunFunc func(ctx context.Context, req model.RunRequest) <-chan orchestrator.Event
 
 // App is the top-level Bubble Tea model.
 type App struct {
@@ -40,6 +44,10 @@ type App struct {
 
 	runsDir string // where run artifacts live (history browsing)
 	lastReq model.RunRequest
+	// runCancel stops the run currently on the run screen, if any. Set every
+	// time a run starts, so ctrl+c can actually cancel the pipeline instead
+	// of just walking away from it.
+	runCancel context.CancelFunc
 
 	width  int
 	height int
@@ -62,6 +70,18 @@ func New(runFn RunFunc, runsDir string, sbFn ScoreboardFunc) *App {
 
 func (a *App) Init() tea.Cmd {
 	return a.home.Init()
+}
+
+// startRun begins a pipeline run and wires up its cancellation, so a later
+// abort can actually stop the pipeline rather than just stop listening to it.
+func (a *App) startRun(req model.RunRequest) tea.Cmd {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.runCancel = cancel
+	a.lastReq = req
+	eventCh := a.runFn(ctx, req)
+	a.run = newRunModel(req, eventCh, cancel)
+	a.page = pageRun
+	return a.run.Init()
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -87,17 +107,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
-		// Global quit shortcut
-		if msg.String() == "ctrl+c" {
+		// Global quit shortcut — except mid-run, where ctrl+c must cancel the
+		// pipeline (see below) rather than abandon it still running by
+		// exiting the whole program immediately.
+		if msg.String() == "ctrl+c" && !(a.page == pageRun && !a.run.done) {
 			return a, tea.Quit
 		}
 		// Results (list mode) or Run screen: "r" retries the last request.
 		if (a.page == pageRun || (a.page == pageResults && !a.results.inDetail())) && msg.String() == "r" {
 			if a.lastReq.Mode != "" {
-				eventCh := a.runFn(a.lastReq)
-				a.run = newRunModel(a.lastReq, eventCh)
-				a.page = pageRun
-				return a, a.run.Init()
+				return a, a.startRun(a.lastReq)
 			}
 		}
 		// Results (list mode) or Run screen: "b" goes back home
@@ -123,11 +142,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Home → Run transition
 	case startRunMsg:
-		a.lastReq = msg.req
-		eventCh := a.runFn(msg.req)
-		a.run = newRunModel(msg.req, eventCh)
-		a.page = pageRun
-		return a, a.run.Init()
+		return a, a.startRun(msg.req)
 
 	// Home → History
 	case openHistoryMsg:

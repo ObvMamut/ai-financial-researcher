@@ -168,14 +168,19 @@ func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Durat
 			break
 		}
 		o, h, l, c := at(q.Open, i), at(q.High, i), at(q.Low, i), at(q.Close, i)
+		vol := at(q.Volume, i)
 		if c <= 0 || o <= 0 || h <= 0 || l <= 0 {
 			continue // holiday/partial rows arrive as JSON nulls → zeros
 		}
 		// Rescale OHLC onto the adjusted close so splits/dividends don't show
-		// up as fake gaps in the volatility estimators.
+		// up as fake gaps in the volatility estimators. Volume is rescaled by
+		// the same factor (inversely) so Close×Volume still reconstructs the
+		// real dollars traded that day — otherwise an adjusted price times an
+		// unadjusted share count corrupts AvgDollarVol20 across a split.
 		if a := at(adj, i); a > 0 {
 			f := a / c
 			o, h, l, c = o*f, h*f, l*f, a
+			vol /= f
 		}
 		series.Bars = append(series.Bars, quant.Bar{
 			Date:   time.Unix(ts, 0).UTC().Format("2006-01-02"),
@@ -183,7 +188,7 @@ func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Durat
 			High:   h,
 			Low:    l,
 			Close:  c,
-			Volume: at(q.Volume, i),
+			Volume: vol,
 		})
 	}
 	if len(series.Bars) == 0 {
