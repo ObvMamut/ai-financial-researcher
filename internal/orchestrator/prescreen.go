@@ -117,16 +117,34 @@ type Prescreen struct {
 	Errors  []string        `json:"errors,omitempty"`
 }
 
-// Row returns one constituent's row. The scan is linear because the merge and
-// the shortlist together look up a few dozen tickers against a few hundred
-// rows; an index would be one more invariant to keep true for no gain.
-func (p *Prescreen) Row(ticker string) (PrescreenRow, bool) {
+// Row returns one constituent's row *within one index*. The scan is linear
+// because the merge and the shortlist together look up a few dozen tickers
+// against a few hundred rows; an index would be one more invariant to keep true
+// for no gain.
+//
+// The index is part of the identity, not a filter of convenience. A name in two
+// indices has two rows with two different composites, because the pre-screen
+// standardises within each index — MU scored +3.73 in sp500 and +2.59 in nq100
+// on 2026-09-01. Rows is sorted best-first, so a ticker-only scan returned
+// whichever row scored *higher*, and meritScore negates the composite for a
+// bearish nomination: the lookup handed every bullish dual-index nomination its
+// best score and every bearish one its least negative. 35 of that run's 232
+// rankable names sit in two indices, with gaps up to 1.14 in a merge whose whole
+// shortlist spanned +1.79 to +3.73.
+//
+// An empty index falls back to the ticker-only scan, which is what single-stock
+// mode has: a user-supplied ticker carries no index of its own.
+func (p *Prescreen) Row(index, ticker string) (PrescreenRow, bool) {
 	if p == nil {
 		return PrescreenRow{}, false
 	}
 	t := strings.ToUpper(strings.TrimSpace(ticker))
+	idx := strings.TrimSpace(index)
 	for _, r := range p.Rows {
-		if strings.ToUpper(r.Ticker) == t {
+		if strings.ToUpper(r.Ticker) != t {
+			continue
+		}
+		if idx == "" || r.Index == idx {
 			return r, true
 		}
 	}
@@ -529,13 +547,17 @@ func plural(n int, format string) string {
 // scout nominated it in. The composite is a signed long ranking, so a bearish
 // nomination is strongest exactly where the composite is most negative.
 //
+// The row is looked up under the candidate's *own* index, because the composite
+// is a within-index z-score and a dual-listed name has one per index. See
+// Prescreen.Row.
+//
 // A name with no computed row — an off-table pick, or one the pre-screen could
 // not price — scores 0: neither confirmed nor contradicted by the data, which
 // puts it between the two and lets the scout's own reasoning stand on its own.
 // A neutral nomination scores 0 for the same reason: the composite is
 // directional, and there is no direction to align it with.
 func meritScore(ps *Prescreen, c model.Candidate) float64 {
-	r, ok := ps.Row(c.Ticker)
+	r, ok := ps.Row(c.Index, c.Ticker)
 	if !ok || r.Excluded != "" {
 		return 0
 	}

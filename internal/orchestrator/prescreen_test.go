@@ -89,6 +89,53 @@ func TestPrescreenZScoresWithinIndex(t *testing.T) {
 	}
 }
 
+// A name in two indices has two rows with two different composites, because the
+// pre-screen standardises within each index. Prescreen.Row used to scan on the
+// ticker alone and return the first match, and Rows is sorted best-first — so the
+// lookup returned whichever index scored the name *higher*, whatever index the
+// scout actually nominated it from.
+//
+// meritScore negates the composite for a bearish nomination, which makes the bug
+// asymmetric: a bullish dual-index nomination collected max(z), and a bearish one
+// collected the least negative score available. It systematically promoted
+// bullish dual-index names and demoted bearish ones. On 2026-09-01, 35 of 232
+// rankable names sat in two indices, gaps averaging 0.30 and reaching 1.14, in a
+// merge whose whole shortlist spanned +1.79 to +3.73.
+func TestMeritScoreUsesTheCandidatesOwnIndex(t *testing.T) {
+	// MU's two rows from that run, in the order the artifact holds them.
+	ps := &Prescreen{Rows: sortPrescreenRows([]PrescreenRow{
+		row("MU", "sp500", func(r *PrescreenRow) { r.Score = 3.73 }),
+		row("MU", "nq100", func(r *PrescreenRow) { r.Score = 2.59 }),
+	})}
+	if ps.Rows[0].Index != "sp500" {
+		t.Fatalf("fixture assumes the higher-scoring row sorts first, got %s", ps.Rows[0].Index)
+	}
+
+	bull := model.Candidate{Ticker: "MU", Index: "nq100", Bias: model.BiasBullish}
+	if got := meritScore(ps, bull); math.Abs(got-2.59) > 1e-9 {
+		t.Errorf("bullish nq100 nomination scored %+.2f, want +2.59 — it took sp500's row", got)
+	}
+
+	// The bearish half of the asymmetry: negating the *right* index's score.
+	bear := model.Candidate{Ticker: "MU", Index: "nq100", Bias: model.BiasBearish}
+	if got := meritScore(ps, bear); math.Abs(got+2.59) > 1e-9 {
+		t.Errorf("bearish nq100 nomination scored %+.2f, want -2.59", got)
+	}
+	if got := meritScore(ps, model.Candidate{Ticker: "MU", Index: "sp500", Bias: model.BiasBearish}); math.Abs(got+3.73) > 1e-9 {
+		t.Errorf("bearish sp500 nomination scored %+.2f, want -3.73", got)
+	}
+
+	// Single-stock mode has no index to look up under, and must still find a row.
+	if _, ok := ps.Row("", "MU"); !ok {
+		t.Error("an empty index must fall back to the ticker-only scan")
+	}
+	// A row that exists, but not in the index the candidate was nominated from,
+	// is not this candidate's row.
+	if _, ok := ps.Row("eu50", "MU"); ok {
+		t.Error("Row returned a row from an index the candidate is not in")
+	}
+}
+
 func TestPrescreenPenalisesShortTermExtensionOnly(t *testing.T) {
 	// Two names with identical trend; one has just spiked (STR z high positive).
 	// The reversal penalty applies to the spiked one because its recent move

@@ -800,7 +800,7 @@ func TestPrescreenFeedsTheScouts(t *testing.T) {
 			t.Fatalf("scorable row %s at position %d follows an excluded one", r.Ticker, i)
 		}
 	}
-	if _, ok := ps.Row("NVDA"); !ok {
+	if _, ok := ps.Row("sp500", "NVDA"); !ok {
 		t.Error("prescreen has no row for NVDA")
 	}
 
