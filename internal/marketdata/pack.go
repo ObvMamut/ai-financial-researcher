@@ -143,7 +143,7 @@ func (p *DataPack) MacroMarkdown() string {
 	sb.WriteString("#### Macro Indicators\n")
 	for _, f := range p.MacroFacts {
 		sb.WriteString(fmt.Sprintf("- **%s**: %s (as of %s, source: %s)%s\n",
-			f.Label, f.Value, f.AsOf.Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
+			f.Label, f.Value, f.AsOf.UTC().Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
 	}
 	return sb.String()
 }
@@ -163,7 +163,7 @@ func (p *DataPack) Markdown() string {
 		sb.WriteString("#### Macro Indicators\n")
 		for _, f := range p.MacroFacts {
 			sb.WriteString(fmt.Sprintf("- **%s**: %s (as of %s, source: %s)%s\n",
-				f.Label, f.Value, f.AsOf.Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
+				f.Label, f.Value, f.AsOf.UTC().Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
 		}
 		sb.WriteString("\n")
 	}
@@ -182,7 +182,7 @@ func (p *DataPack) Markdown() string {
 		sb.WriteString(fmt.Sprintf("#### %s\n", t))
 		for _, f := range data.Facts {
 			sb.WriteString(fmt.Sprintf("- **%s**: %s (as of %s, source: %s)%s\n",
-				f.Label, f.Value, f.AsOf.Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
+				f.Label, f.Value, f.AsOf.UTC().Format("2006-01-02"), f.Source, urlSuffix(f.URL)))
 		}
 		sb.WriteString("\n")
 	}
@@ -229,6 +229,14 @@ func (p *DataPack) Markdown() string {
 
 	return sb.String()
 }
+
+// Every "as of" above renders in UTC, because that is the zone the risk gate
+// registers the same fact under (collectVerifiedDates does `t.UTC().Format`).
+// Rendering machine-local instead meant that on a machine at +02:00 — which this
+// one is — any fact collected between 22:00 and 24:00 UTC was *shown* to the
+// model as one date and *verified* as the day before, so quoting it truthfully
+// scored as an invention: 10 confidence points and the run's single corrective
+// re-prompt. The date shown and the date registered have to be the same date.
 
 // urlSuffix renders a fact's primary-source link, which is what makes the fact
 // citable by an agent that cannot browse.

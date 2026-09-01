@@ -633,9 +633,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	eventDates := map[string]time.Time{}
 	verifiedDates := map[string]bool{}
-	if quantPack.AsOf != "" {
-		verifiedDates[quantPack.AsOf] = true
-	}
+	collectQuantDates(verifiedDates, quantPack)
 	specChans := make([]<-chan model.Report, len(specialists))
 	grounded := make([]bool, len(specialists))
 	ungrounded := make([][]string, len(specialists))

@@ -436,6 +436,121 @@ func TestVerifiedDatesIncludeTheScheduledEventItself(t *testing.T) {
 	}
 }
 
+// Only the pack-level as_of — the newest bar across the whole shortlist — was
+// registered, while CompactLine shows every ticker its *own* as_of, RegimeBlock
+// shows every benchmark's, and the staleness flag names the session a name is
+// trailing. The Chief reads all of them and is told to reason about them, so
+// quoting one truthfully was scored as an invention. The 2026-09-01 run held
+// both 2026-08-31 and 2026-09-01 and escaped only because an AlphaVantage
+// headline happened to carry the older date.
+func TestVerifiedDatesCoverEveryQuantDateTheChiefIsShown(t *testing.T) {
+	qp := quant.NewPack()
+	qp.AsOf = "2026-09-01"
+	qp.ByTicker["MU"] = quant.Metrics{Symbol: "MU", AsOf: "2026-09-01"}
+	qp.ByTicker["8035.T"] = quant.Metrics{Symbol: "8035.T", AsOf: "2026-08-31", Flags: []string{
+		"stale: last bar 2026-08-31, behind 8035.T's last completed session 2026-08-28 — re-price before acting",
+	}}
+	qp.Benchmarks["^N225"] = quant.Metrics{Symbol: "^N225", AsOf: "2026-08-31"}
+
+	dates := map[string]bool{}
+	collectQuantDates(dates, qp)
+	for _, want := range []string{"2026-09-01", "2026-08-31", "2026-08-28"} {
+		if !dates[want] {
+			t.Errorf("%s is shown to the Chief but is not verified", want)
+		}
+	}
+
+	// End to end: an idea citing a per-ticker as_of that is not the pack maximum
+	// must not be flagged.
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 88, 124)}}
+	res.Ideas[0].Why = "priced off the 2026-08-31 close"
+	v := gateVerified(t, "AAA")
+	v.Dates = dates
+	if fs := applyRiskGate(res, v, model.RiskConfig{}); len(findingsFor(fs, "AAA")) > 0 {
+		t.Errorf("a date the app itself put in the prompt was called a fabrication: %v", findingsFor(fs, "AAA"))
+	}
+	if res.Ideas[0].Confidence != 70 {
+		t.Errorf("confidence = %d, want 70", res.Ideas[0].Confidence)
+	}
+}
+
+// The prompt rendered a fact's as_of machine-local while the gate registered it
+// in UTC. On this machine (+02:00) any fact collected between 22:00 and 24:00
+// UTC was shown as one date and verified as the day before, so a truthful
+// citation cost 10 points and the run's one corrective re-prompt.
+func TestFactDatesAreShownAndVerifiedInTheSameZone(t *testing.T) {
+	// 01:30 local on the 1st at +02:00 is 23:30 UTC on 2026-08-31 — the two
+	// renderings disagree by a day, which is the whole bug. time.Format uses the
+	// value's own location, so an explicit zone models the machine faithfully.
+	collected := time.Date(2026, 9, 1, 1, 30, 0, 0, time.FixedZone("CEST", 2*60*60))
+	if collected.Format("2006-01-02") == collected.UTC().Format("2006-01-02") {
+		t.Fatal("fixture does not straddle midnight UTC, so it cannot see the bug")
+	}
+	pack := marketdata.NewDataPack("news")
+	pack.ByTicker["AAA"] = marketdata.TickerData{Ticker: "AAA", Facts: []marketdata.Fact{
+		{Label: "Headline", Value: "something happened", AsOf: collected, Source: "AlphaVantage"},
+	}}
+	pack.Coverage["AAA"] = true
+
+	dates := map[string]bool{}
+	collectVerifiedDates(dates, pack)
+
+	shown := isoDate.FindAllString(pack.Markdown(), -1)
+	if len(shown) == 0 {
+		t.Fatal("the pack rendered no date at all")
+	}
+	for _, d := range shown {
+		if !dates[d] {
+			t.Errorf("the prompt shows %s but the gate verifies %v — a truthful citation scores as an invention", d, dates)
+		}
+	}
+}
+
+// checkFabricatedDates only ever read `why` and `position_note`. `notes` is the
+// one place the model writes freely and the part a reader trusts most: the
+// 2026-09-01 run shipped 1,400 characters of dated factual narrative there,
+// entirely unchecked.
+func TestRiskGateChecksTheDatesInTheBookNotes(t *testing.T) {
+	res := &model.IdeasResult{
+		Ideas: []model.TradeIdea{gateIdeaAt("AAA", 88, 124)},
+		Notes: "Coverage was the binding constraint. Prices are as of 2026-08-31; " +
+			"the Fed meets 2026-09-08 and 2026-11-04.",
+	}
+	v := gateVerified(t, "AAA")
+	v.Dates = map[string]bool{"2026-08-31": true}
+
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+	if !hasBookFinding(fs, "2026-09-08") || !hasBookFinding(fs, "2026-11-04") {
+		t.Errorf("unverified dates in `notes` went unreported: %v", fs)
+	}
+	if hasBookFinding(fs, "2026-08-31") {
+		t.Errorf("a verified date in `notes` was reported: %v", fs)
+	}
+	// It is book-level: there is no single idea to dock, so nothing loses
+	// confidence and nothing is dropped for it.
+	if res.Ideas[0].Confidence != 70 {
+		t.Errorf("confidence = %d, want 70 — a note is not one idea's fault", res.Ideas[0].Confidence)
+	}
+	if dropped := dropViolating(res, fs); len(dropped) > 0 {
+		t.Errorf("a book-level note finding dropped an idea: %v", dropped)
+	}
+	// But it is actionable: the Chief can rewrite its own notes.
+	for _, f := range fs {
+		if f.Ticker == "" && strings.Contains(f.Message, "2026-09-08") && !f.actionable() {
+			t.Error("the notes finding cannot reach the corrective re-prompt")
+		}
+	}
+
+	// Clean notes produce nothing.
+	quiet := &model.IdeasResult{
+		Ideas: []model.TradeIdea{gateIdeaAt("AAA", 88, 124)},
+		Notes: "Coverage was the binding constraint; prices are as of 2026-08-31.",
+	}
+	if fs := applyRiskGate(quiet, v, model.RiskConfig{}); hasBookFinding(fs, "appear") {
+		t.Errorf("clean notes produced a finding: %v", fs)
+	}
+}
+
 // TestRiskGateSeparatesFindingsTheChiefCanActuponFromThoseItCannot pins which
 // findings are allowed to spend the single corrective re-prompt.
 func TestRiskGateSeparatesFindingsTheChiefCanActUponFromThoseItCannot(t *testing.T) {

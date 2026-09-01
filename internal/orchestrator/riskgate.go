@@ -87,8 +87,44 @@ func applyRiskGate(res *model.IdeasResult, v verified, cfg model.RiskConfig) []r
 	for i := range res.Ideas {
 		out = append(out, gateIdea(&res.Ideas[i], v, cfg)...)
 	}
+	out = append(out, checkFabricatedNoteDates(res, v.Dates)...)
 	out = append(out, gateBook(res, v, cfg)...)
 	return out
+}
+
+// checkFabricatedNoteDates runs the same date scan over the book-level notes.
+//
+// checkFabricatedDates only ever read `why` and `position_note`, so `notes` — the
+// one place the model writes freely, and the part a reader trusts most — was
+// unchecked. The 2026-09-01 run shipped 1,400 characters of dated factual
+// narrative there, including two dates nothing had verified.
+//
+// It carries no confidence penalty because there is no single idea to dock: it is
+// a book-level finding, so it becomes a warning and a re-prompt reason.
+func checkFabricatedNoteDates(res *model.IdeasResult, verifiedDates map[string]bool) []riskFinding {
+	if len(verifiedDates) == 0 || strings.TrimSpace(res.Notes) == "" {
+		return nil
+	}
+	var unknown []string
+	seen := map[string]bool{}
+	for _, m := range isoDate.FindAllString(res.Notes, -1) {
+		if verifiedDates[m] || seen[m] {
+			continue
+		}
+		seen[m] = true
+		unknown = append(unknown, m)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	verb := "appears"
+	if len(unknown) > 1 {
+		verb = "appear"
+	}
+	return []riskFinding{{Message: fmt.Sprintf(
+		"your `notes` cite %s, which %s in no verified fact this run collected — remove the date or drop the claim; the notes are read as the run's own account of itself",
+		strings.Join(unknown, ", "), verb)}}
 }
 
 // riskDefaults fills a zero-valued policy so the gate is never silently
@@ -482,6 +518,47 @@ func collectVerifiedDates(into map[string]bool, pack *marketdata.DataPack) {
 
 // isoDate matches the dates an agent writes when it is being specific.
 var isoDate = regexp.MustCompile(`\b(20\d{2})-(\d{2})-(\d{2})\b`)
+
+// collectQuantDates registers every date the computed quant pack puts in front
+// of the Chief Analyst.
+//
+// Only Pack.AsOf — the newest bar across the whole shortlist — used to be
+// registered. But CompactLine renders each ticker's own AsOf, RegimeBlock
+// renders each benchmark's, and buildQuantPack writes a staleness flag naming
+// the session a name is trailing; the Chief reads all three, and
+// agents/chief-analyst.md tells it to reason about exactly those dates ("a
+// `flags:` entry … a stale last bar … is a reason to lower confidence"). The
+// 2026-09-01 run carried both 2026-08-31 and 2026-09-01 per-ticker and escaped a
+// false accusation only because an AlphaVantage headline happened to be stamped
+// with the older one. A run with no US names, or no AlphaVantage key, would have
+// docked the Chief 10 points and spent its one corrective re-prompt for quoting
+// a date the app itself wrote into the prompt.
+func collectQuantDates(into map[string]bool, p *quant.Pack) {
+	if p == nil {
+		return
+	}
+	add := func(m quant.Metrics) {
+		if m.AsOf != "" {
+			into[m.AsOf] = true
+		}
+		// The flags are app-written prose, and the dates in them are the app's
+		// own — a name trailing its market's last completed session.
+		for _, f := range m.Flags {
+			for _, d := range isoDate.FindAllString(f, -1) {
+				into[d] = true
+			}
+		}
+	}
+	for _, m := range p.ByTicker {
+		add(m)
+	}
+	for _, m := range p.Benchmarks {
+		add(m)
+	}
+	if p.AsOf != "" {
+		into[p.AsOf] = true
+	}
+}
 
 // checkFabricatedDates flags a specific date in an idea's prose that appears
 // nowhere in the run's verified data.
