@@ -1,6 +1,9 @@
 package universe
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -173,7 +176,7 @@ func TestCapMerit(t *testing.T) {
 	}
 
 	t.Run("drops nothing under the cap, still ranks", func(t *testing.T) {
-		out := CapMerit(input, 12, 5, score)
+		out := CapMerit(input, MeritCaps{Max: 12, PerIndex: 5, Score: score})
 		if len(out) != len(input) {
 			t.Fatalf("got %d names, want all %d kept", len(out), len(input))
 		}
@@ -183,7 +186,7 @@ func TestCapMerit(t *testing.T) {
 	})
 
 	t.Run("keeps the best, ordered by score", func(t *testing.T) {
-		out := CapMerit(input, 3, 5, score)
+		out := CapMerit(input, MeritCaps{Max: 3, PerIndex: 5, Score: score})
 		want := []string{"A2", "B2", "A3"}
 		if got := tickers(out); !equal(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -194,7 +197,7 @@ func TestCapMerit(t *testing.T) {
 		// sp500 owns three of the four best composites; a per-index cap of one
 		// forces the third slot to a third index instead of a second S&P name
 		// (uncapped the answer would be A2, B2, A3).
-		out := CapMerit(input, 3, 1, score)
+		out := CapMerit(input, MeritCaps{Max: 3, PerIndex: 1, Score: score})
 		want := []string{"A2", "B2", "C1"}
 		if got := tickers(out); !equal(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -206,7 +209,7 @@ func TestCapMerit(t *testing.T) {
 		// were asked for. The cap is a diversification preference, so the
 		// remaining slots are backfilled by pure merit.
 		only := []model.Candidate{mk("A1", "sp500"), mk("A2", "sp500"), mk("A3", "sp500"), mk("A4", "sp500")}
-		out := CapMerit(only, 4, 2, score)
+		out := CapMerit(only, MeritCaps{Max: 4, PerIndex: 2, Score: score})
 		want := []string{"A2", "A3", "A4", "A1"}
 		if got := tickers(out); !equal(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -215,12 +218,59 @@ func TestCapMerit(t *testing.T) {
 
 	t.Run("ties keep input order", func(t *testing.T) {
 		flat := func(model.Candidate) float64 { return 0 }
-		out := CapMerit(input, 3, 5, flat)
+		out := CapMerit(input, MeritCaps{Max: 3, PerIndex: 5, Score: flat})
 		want := []string{"A1", "A2", "A3"}
 		if got := tickers(out); !equal(got, want) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+}
+
+// The merge ranked on the pre-screen composite alone, with no notion of whether
+// the run's providers could reach a name. SEC EDGAR and AlphaVantage are US-only,
+// so a non-US listing with no US line is graded by quant alone — one domain of
+// five. On 2026-09-01 that put 7 quant-only names on a 12-name shortlist, and
+// three of the five shipped ideas rested on a single domain.
+func TestCapMeritBoundsTheNamesOnlyQuantCanGrade(t *testing.T) {
+	mk := func(ticker, index string, score float64) model.Candidate {
+		return model.Candidate{Ticker: ticker, Name: ticker, Index: index, Reason: fmt.Sprint(score)}
+	}
+	score := func(c model.Candidate) float64 {
+		v, _ := strconv.ParseFloat(c.Reason, 64)
+		return v
+	}
+	reachable := func(c model.Candidate) bool { return !strings.Contains(c.Ticker, ".") }
+
+	// The top six composites are all names four of the five domains cannot see.
+	input := []model.Candidate{
+		mk("8035.T", "asia100", 9), mk("O39.SI", "asia100", 8),
+		mk("BAYN.DE", "eu50", 7), mk("NESTE.HE", "eu50", 6),
+		mk("BMW.DE", "eu50", 5), mk("STLAM.MI", "eu50", 4),
+		mk("MU", "sp500", 3), mk("ORCL", "sp500", 2), mk("TTD", "sp500", 1),
+	}
+
+	out := CapMerit(input, MeritCaps{
+		Max: 6, PerIndex: 5, QuantOnly: 2, Score: score, Reachable: reachable,
+	})
+	got := tickers(out)
+	if want := []string{"8035.T", "O39.SI", "MU", "ORCL", "TTD"}; !equal(got, want) {
+		t.Errorf("got %v, want %v — two quant-only names, then every reachable one", got, want)
+	}
+	// The cap is hard in the backfill too. A soft one would be no cap at all:
+	// the second pass would refill exactly the slots the first just protected.
+	if len(out) >= 6 {
+		t.Errorf("got %d names, want fewer than max — the backfill ignored the cap", len(out))
+	}
+
+	// A nil Reachable or a zero cap leaves the old behaviour untouched.
+	for _, caps := range []MeritCaps{
+		{Max: 6, PerIndex: 5, QuantOnly: 2, Score: score},
+		{Max: 6, PerIndex: 5, Score: score, Reachable: reachable},
+	} {
+		if got := len(CapMerit(input, caps)); got != 6 {
+			t.Errorf("an unconfigured quant-only cap trimmed the shortlist to %d", got)
+		}
+	}
 }
 
 func tickers(cs []model.Candidate) []string {

@@ -18,9 +18,16 @@ import (
 // lost quant (35%). Weighted coverage is the honest measure and it is arithmetic.
 //
 // Since the score is divided by *total* weight (see computeBaseScores), coverage
-// already bounds the score arithmetically — a quant-only name cannot exceed 35
-// because quant is 35% of the weight. The caps stay as a redundant floor under
-// that: they cost nothing and they keep working if the weights are reconfigured.
+// already bounds the score arithmetically. But it does not bound it as tightly as
+// this comment used to claim: "a quant-only name cannot exceed 35 because quant
+// is 35% of the weight" was true before the ReferenceTotal rescaling below and is
+// not true after it — the ceiling is 0.35/0.77 ≈ 45, and on 2026-09-01 O39.SI's
+// single `quant 8` scored 36 against ORCL's five-domain 26. So scarceCap = 40
+// sits *above* what a scarce-coverage name reaches at the strengths the rubrics
+// actually use, and never binds. What bounds a lone domain outranking a consensus
+// is the funnel: universe.MeritCaps.QuantOnly stops the shortlist filling up with
+// names four of the five domains cannot see. The caps stay as a redundant floor:
+// they cost nothing and they keep working if the weights are reconfigured.
 const (
 	thinCoverage    = 0.6 // below this share of total domain weight → cap 55
 	scarceCoverage  = 0.4 // below this → cap 40

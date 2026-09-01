@@ -149,56 +149,107 @@ func Dedupe(candidates []model.Candidate) []model.Candidate {
 	return out
 }
 
-// CapMerit trims the shortlist to at most max names, keeping the highest-scoring
-// candidates and letting no single index contribute more than maxPerIndex until
-// the merit backfill below.
+// MeritCaps are the constraints CapMerit trims a merged shortlist under.
+type MeritCaps struct {
+	// Max is the size of the shortlist. Zero or less returns the input untouched.
+	Max int
+	// PerIndex caps one index's share of the shortlist, before the merit
+	// backfill. It is a diversification preference: the backfill overrides it
+	// rather than hand back a five-name shortlist when twelve were asked for.
+	PerIndex int
+	// QuantOnly caps the names Reachable returns false for — the ones only the
+	// quant domain can grade. Unlike PerIndex this one is hard, in both passes:
+	// a soft cap here would be no cap at all, since the backfill would refill
+	// exactly the slots the first pass had protected. Zero or less, or a nil
+	// Reachable, disables it.
+	QuantOnly int
+	// Score ranks a candidate. Supplied by the caller (the orchestrator aligns
+	// each candidate's pre-screen composite with the direction it was nominated
+	// in), which keeps this package free of scoring policy.
+	Score func(model.Candidate) float64
+	// Reachable reports whether the run's per-ticker providers can see a name at
+	// all. Also the caller's to answer: this package knows about index
+	// membership, not about which endpoints a run has keys for.
+	Reachable func(model.Candidate) bool
+}
+
+func (c MeritCaps) unreachable(cand model.Candidate) bool {
+	return c.QuantOnly > 0 && c.Reachable != nil && !c.Reachable(cand)
+}
+
+// CapMerit trims the shortlist to at most caps.Max names, keeping the
+// highest-scoring candidates under the caps above.
 //
 // It replaces the old round-robin cap, which took each index's candidates in the
 // order its scout happened to emit them. That treated "first name the model
 // typed" as a ranking, so a strongly-supported nomination could be dropped for a
-// throwaway one from another index. score is supplied by the caller (the
-// orchestrator aligns each candidate's pre-screen composite with the direction
-// it was nominated in), keeping this package free of scoring policy.
+// throwaway one from another index.
 //
-// Two passes. The first respects maxPerIndex, which is what spreads the book
-// across regions. The second fills any slots the cap left empty, in pure score
-// order — the cap is a diversification preference, not a reason to hand back a
-// five-name shortlist when twelve were asked for and twelve exist. Ties keep
-// their input order.
+// Ranking on the composite alone had no notion of whether the run's providers
+// could reach a name. SEC EDGAR and AlphaVantage are US-only, so a non-US listing
+// without a US line can only ever be graded by quant — 35% of the domain weight,
+// one of five domains. On 2026-09-01 that put 7 quant-only names on a shortlist
+// of 12, and three of the five shipped ideas rested on a single domain; the
+// arithmetic even let the lone domain outrank a consensus, O39.SI's one `quant 8`
+// scoring 36 against ORCL's five-domain 26. QuantOnly bounds how much of the
+// shortlist can be evidence the run cannot gather. The pre-screen ranking is
+// untouched — this only decides who reaches the specialists.
+//
+// Two passes. The first respects PerIndex, which is what spreads the book across
+// regions. The second fills any slots that cap left empty, in pure score order.
+// Ties keep their input order.
 //
 // The result is always ordered best-first, including when nothing needed
 // trimming: everything downstream — the shortlist block each specialist reads,
 // the Chief's ranking prompt, shortlist.json — is more useful ranked than in
 // whatever order the scouts were collected in.
-func CapMerit(candidates []model.Candidate, max, maxPerIndex int, score func(model.Candidate) float64) []model.Candidate {
-	if max <= 0 {
+func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
+	if caps.Max <= 0 {
 		return candidates
+	}
+	score := caps.Score
+	if score == nil {
+		score = func(model.Candidate) float64 { return 0 }
 	}
 	ranked := make([]model.Candidate, len(candidates))
 	copy(ranked, candidates)
 	sort.SliceStable(ranked, func(i, j int) bool { return score(ranked[i]) > score(ranked[j]) })
 
-	out := make([]model.Candidate, 0, max)
+	out := make([]model.Candidate, 0, caps.Max)
 	taken := make([]bool, len(ranked))
 	perIndex := map[string]int{}
+	quantOnly := 0
 	for i, c := range ranked {
-		if len(out) == max {
+		if len(out) == caps.Max {
 			break
 		}
-		if maxPerIndex > 0 && perIndex[c.Index] >= maxPerIndex {
+		if caps.PerIndex > 0 && perIndex[c.Index] >= caps.PerIndex {
 			continue
+		}
+		if caps.unreachable(c) {
+			if quantOnly >= caps.QuantOnly {
+				continue
+			}
+			quantOnly++
 		}
 		perIndex[c.Index]++
 		taken[i] = true
 		out = append(out, c)
 	}
 	for i, c := range ranked {
-		if len(out) == max {
+		if len(out) == caps.Max {
 			break
 		}
-		if !taken[i] {
-			out = append(out, c)
+		if taken[i] {
+			continue
 		}
+		if caps.unreachable(c) {
+			if quantOnly >= caps.QuantOnly {
+				continue
+			}
+			quantOnly++
+		}
+		out = append(out, c)
 	}
 	return out
 }

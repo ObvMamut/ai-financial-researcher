@@ -35,11 +35,14 @@ type Settings struct {
 
 	// Funnel geometry. PrescreenTopPerIndex is how many of each index's
 	// highest-composite names the Stage 0.5 table shows its scout;
-	// MaxShortlist caps the merged shortlist and MaxPerIndex caps one index's
-	// share of it. Zero means the orchestrator's defaults (15 / 12 / 5).
+	// MaxShortlist caps the merged shortlist, MaxPerIndex caps one index's
+	// share of it, and MaxQuantOnly caps the names no per-ticker provider can
+	// reach — the ones only the quant domain can grade. Zero means the
+	// orchestrator's defaults (15 / 12 / 5 / 4).
 	PrescreenTopPerIndex int
 	MaxShortlist         int
 	MaxPerIndex          int
+	MaxQuantOnly         int
 
 	// Risk is the deterministic post-synthesis risk policy. Zero fields take the
 	// orchestrator's defaults. Risk.ADVMinUSD also gates the Stage 0.5
@@ -98,6 +101,7 @@ type fileFormat struct {
 	PrescreenTopPerIndex int `toml:"prescreen_top_per_index"`
 	MaxShortlist         int `toml:"max_shortlist"`
 	MaxPerIndex          int `toml:"max_per_index"`
+	MaxQuantOnly         int `toml:"max_quant_only"`
 	ChiefAdjustBand      int `toml:"chief_adjust_band"`
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
@@ -273,6 +277,7 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
+	setInt(&s.MaxQuantOnly, f.MaxQuantOnly)
 	setInt(&s.ChiefAdjustBand, f.ChiefAdjustBand)
 	setPosFloat := func(dst *float64, v float64) {
 		if v > 0 {
@@ -496,6 +501,7 @@ func (s *Settings) applyEnv() {
 	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")
 	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
 	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
+	setPosInt(&s.MaxQuantOnly, "CFR_MAX_QUANT_ONLY")
 	setPosInt(&s.ChiefAdjustBand, "CFR_CHIEF_ADJUST_BAND")
 	envFloat := func(dst *float64, key string) {
 		if v := os.Getenv(key); v != "" {

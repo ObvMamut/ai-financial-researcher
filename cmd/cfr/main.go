@@ -90,6 +90,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		PrescreenTopPerIndex: s.PrescreenTopPerIndex,
 		MaxShortlist:         s.MaxShortlist,
 		MaxPerIndex:          s.MaxPerIndex,
+		MaxQuantOnly:         s.MaxQuantOnly,
 		ChiefAdjustBand:      s.ChiefAdjustBand,
 		FillWindowDays:       s.FillWindowDays,
 		Risk:                 s.Risk,

@@ -43,6 +43,14 @@
 #max_shortlist = 12
 #max_per_index = 5
 
+# Cap on shortlisted names no per-ticker provider can reach. SEC EDGAR and
+# AlphaVantage are US-only, so a non-US listing with no US line is graded by
+# quant alone — one domain of five, 35% of the weight. Unlike max_per_index this
+# cap is hard: the merit backfill respects it, so a shortlist can come back
+# shorter than max_shortlist rather than filled with names four of the five
+# domains must abstain on.
+#max_quant_only = 4
+
 # How far, in confidence points, the Chief Analyst may move an idea from its
 # computed base score (docs/workflow/scoring.md). Confidence outside the band is
 # clamped; more than twice the band out triggers one corrective re-prompt.

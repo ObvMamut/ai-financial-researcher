@@ -101,6 +101,12 @@ type Config struct {
 	// MaxPerIndex caps how many of those names one index may contribute before
 	// the merit backfill. Zero means 5.
 	MaxPerIndex int
+	// MaxQuantOnly caps how many shortlisted names no per-ticker provider can
+	// reach. SEC EDGAR and AlphaVantage are US-only, so such a name is graded by
+	// quant alone — 35% of the weight, one domain of five — and on 2026-09-01
+	// seven of twelve shortlisted names were in that position, with three of the
+	// five shipped ideas resting on a single domain. Zero means 4.
+	MaxQuantOnly int
 	// Risk is the deterministic risk policy applied after synthesis: stop and
 	// target bands, the reward:risk floor, expectancy, liquidity, book-level
 	// correlation and beta, and position sizing. Zero fields take the defaults
@@ -231,6 +237,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxPerIndex <= 0 {
 		c.MaxPerIndex = 5
+	}
+	// A third of a twelve-name shortlist. Enough that a genuinely strong non-US
+	// nomination still reaches the specialists, few enough that the book cannot
+	// be mostly names four of the five domains must abstain on.
+	if c.MaxQuantOnly <= 0 {
+		c.MaxQuantOnly = 4
 	}
 	c.Risk = riskDefaults(c.Risk)
 	// Ten points is roughly one confidence band in scoring.md's calibration
@@ -560,11 +572,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		before := len(shortlist)
 		// Merit, not round-robin: keep the nominations the pre-screen composite
 		// agrees with, in the direction they were nominated in.
-		shortlist = universe.CapMerit(shortlist, cfg.MaxShortlist, cfg.MaxPerIndex,
-			func(c model.Candidate) float64 { return meritScore(prescreen, c) })
+		shortlist = universe.CapMerit(shortlist, universe.MeritCaps{
+			Max:       cfg.MaxShortlist,
+			PerIndex:  cfg.MaxPerIndex,
+			QuantOnly: cfg.MaxQuantOnly,
+			Score:     func(c model.Candidate) float64 { return meritScore(prescreen, c) },
+			Reachable: func(c model.Candidate) bool { return marketdata.Reachable(c.Ticker) },
+		})
 		if len(shortlist) < before {
-			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index)",
-				before, len(shortlist), cfg.MaxPerIndex))
+			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index, max %d quant-only)",
+				before, len(shortlist), cfg.MaxPerIndex, cfg.MaxQuantOnly))
 		}
 		for _, c := range shortlist {
 			log(ch, fmt.Sprintf("shortlist: %s (%s, %s) — scout %s, merit %+.2f",
