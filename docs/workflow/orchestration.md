@@ -54,13 +54,49 @@ context + output sections per call.
 
 ## Timeouts, errors, retries
 
-- Each agent has a timeout. On timeout/non-zero exit, the report is marked `failed` and
-  the run **continues** — a missing domain degrades quality but must not crash the run.
-- One retry on transient failure (non-zero exit with empty stdout) is allowed; otherwise
-  mark `failed`.
+- Each agent has a per-stage timeout: Screening 5m, Analysis 5m, Synthesis 15m by default
+  (`timeouts.screening`/`.analysis`/`.synthesis`, or `CFR_SYNTHESIS_TIMEOUT` etc.). Synthesis
+  was raised from 5m after every real run to date SIGKILLed the Chief Analyst mid-attempt
+  (601s ≈ 2 attempts × the old 300s budget) with no data yet on how long an uninterrupted call
+  actually takes.
+- **Each timeout is a per-attempt budget, never divided across retries.** A 2-attempt policy on
+  a 5-minute timeout can take up to 10 minutes wall clock, not 5. On timeout/non-zero exit, the
+  report is marked `failed` and the run **continues** — a missing domain degrades quality but
+  must not crash the run.
+- Retries use exponential backoff (`retry.base_delay`, doubling per attempt, capped at
+  `retry.max_delay`) with optional jitter (`retry.jitter`) to avoid synchronized retry storms
+  against a rate-limited endpoint. `retry.max_attempts` (default 2, i.e. one retry) governs
+  screening/analysis and the DeepSeek fallback's own transient-error retries (429/5xx).
+- The primary Chief Analyst call uses its own attempt budget, `synthesis_max_attempts`
+  (default **1**, no retry) instead of `retry.max_attempts`: a synthesis timeout means "too
+  slow," not "flaky," so retrying identically just delays reaching the fallback below.
 - The Chief Analyst is told which specialist reports are missing. It does **not** discount
   for them by hand: weighted coverage is already priced into the computed base score and
   its cap (`docs/workflow/scoring.md`).
+
+### Where the DeepSeek fallback sits
+
+When the primary Chief Analyst call fails (timeout, non-zero exit, or empty output) or
+succeeds but returns unparseable JSON, and `chief_fallback` is configured (its own dedicated
+`api_key`, off by default), the orchestrator attempts one DeepSeek call
+(`attemptChiefFallback`, `internal/orchestrator/fallback.go`) before falling through to the
+mechanical `buildDegradedIdeas` path:
+
+```
+claude CLI (synthesis_max_attempts, default 1)
+  ├─ success, parses          → validate → risk gate → done
+  └─ fails / unparseable JSON → chief_fallback configured?
+                                   ├─ yes → DeepSeek call (retry.max_attempts)
+                                   │          ├─ success, parses → validate → risk gate → done
+                                   │          └─ fails / unparseable JSON → buildDegradedIdeas
+                                   └─ no  → buildDegradedIdeas
+```
+
+The fallback gets one attempt through the pipeline — no corrective re-prompt of its own — since
+it is already a resilience measure for the single most expensive step in the run. The
+corrective re-prompt path (risk-gate/validation findings on an otherwise-successful primary
+call) is unaffected and does not invoke the fallback; a failed re-prompt keeps the
+pre-correction ideas, as before.
 
 ## Enforcing coverage on specialist output
 

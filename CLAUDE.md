@@ -20,10 +20,20 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
 ## Hard constraints
 
 - **Model access: CLI subprocess by default; a keyed API is allowed for the *cheap-research
-  role only*.** Heavy synthesis (Chief Analyst) MUST stay a `claude` CLI shell-out in
-  headless/print mode (`-p`) — never add an SDK or HTTP call for the synthesis role. The
-  cheap-research role (scouts + specialists) may run on either a CLI or an OpenAI-compatible
-  HTTP endpoint, chosen by `cheap_engine`:
+  role*, and, as a reviewed reliability exception, for a *last-resort Chief Analyst
+  fallback*.** Heavy synthesis (Chief Analyst) primarily stays a `claude` CLI shell-out in
+  headless/print mode (`-p`) — do not add an SDK or HTTP call for the synthesis role's normal
+  path. The one deliberate exception is `chief_fallback`: an off-by-default HTTP call on the
+  same `apiengine.go` engine (`internal/orchestrator/fallback.go`'s `attemptChiefFallback`),
+  gated on its own `api_key` alone, that fires only after the primary `claude` call has
+  exhausted its own attempt budget (`synthesis_max_attempts`, default 1) or its JSON failed to
+  parse — sitting strictly before the mechanical `buildDegradedIdeas` fallback. It defaults to
+  DeepSeek's `deepseek-reasoner` (a smarter tier than the cheap role's `deepseek-chat`, since
+  this is a resilience call for the single most important step in the pipeline) and needs its
+  own dedicated credentials (`[chief_fallback]` / `CFR_CHIEF_FALLBACK_*`) — never inherited
+  from `[api]`/`[local]`, so turning on `cheap_engine=api` can never silently also enable this
+  spend. The cheap-research role (scouts + specialists) may run on either a CLI or an
+  OpenAI-compatible HTTP endpoint, chosen by `cheap_engine`:
   - `cheap_engine = "gemini"` (default) — the `agy` (Antigravity) CLI. Google discontinued
     the free `gemini` CLI tier ("IneligibleTierError… migrate to Antigravity"); `agy`
     exposes the same `-p`/`--model` interface. Binaries overridable via `CFR_GEMINI_BIN` /
@@ -51,7 +61,10 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   FRED/AlphaVantage when keyed.)
 - **Cost split:** the **cheap engine** (agy CLI, remote API, *or* a local model) does cheap,
   parallel research (screening + domain reports); **Claude** does the single heavy
-  synthesis/scoring step (Chief Analyst). The split holds whichever cheap engine is selected.
+  synthesis/scoring step (Chief Analyst). The split holds whichever cheap engine is selected,
+  and in the common case (no `chief_fallback` configured, or the primary call succeeding)
+  it holds exactly as before — the DeepSeek fallback is a reviewed reliability exception for
+  when that single heavy call fails, not an abandonment of the split.
 - Agent personas live in `agents/*.md` and are loaded at runtime — they are *data*, not
   Go source. Editing a persona must not require recompiling.
 
@@ -63,7 +76,8 @@ internal/
   tui/          Bubble Tea screens: app (router), home, run (status), results,
                 history, reports, scoreboard
   orchestrator/ pipeline driver, runner (CLI subprocess + OpenAI-compatible API
-                engine in apiengine.go), bounded worker pool
+                engine in apiengine.go), bounded worker pool, optional DeepSeek
+                Chief Analyst fallback (fallback.go)
   agents/       persona registry: load agents/*.md, assemble prompts
   universe/     index constituents (data/*.csv), dedupe/cap, benchmark symbols
   quant/        pure-stdlib statistical metrics (momentum, YZ vol, VR, …) — no TA

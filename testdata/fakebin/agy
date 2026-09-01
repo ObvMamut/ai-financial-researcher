@@ -6,6 +6,8 @@
 # Usage (matches internal/orchestrator/runner.go): fake -p "<prompt>" [--model <m>]
 #
 # CFR_FAKE_MODE targets specific failure paths:
+#   hang        - sleeps well past any reasonable test timeout, so the caller's
+#                 own context deadline SIGKILLs the subprocess (timeout-kill test)
 #   badjson     - chief-analyst emits an invalid JSON tail (parse-error fallback)
 #   chief-fail  - chief-analyst exits non-zero (synthesis-failed fallback)
 #   scout-empty - scouts print nothing (retry, then empty-shortlist error path)
@@ -21,6 +23,15 @@ prompt="$2"
 mode="${CFR_FAKE_MODE:-ok}"
 
 has() { case "$prompt" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
+
+# Simulates an uninterrupted long-running call: the test's own short timeout
+# must SIGKILL this before it ever wakes up, regardless of which agent it was.
+# `exec` replaces this shell process with `sleep` in place (same PID) rather
+# than forking a child: a forked child would inherit the stdout/stderr pipes
+# Go set up, and killing only the parent shell would leave the orphaned sleep
+# holding those pipes open — Go's cmd.Wait() would then hang forever waiting
+# for EOF on them, never seeing the kill at all.
+[ "$mode" = "hang" ] && exec sleep 3600
 
 # ── Scouts ──────────────────────────────────────────────────────────────────
 if has "# Agent: Scout"; then

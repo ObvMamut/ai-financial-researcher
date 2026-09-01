@@ -494,6 +494,112 @@ func TestChiefBadJSONDegrades(t *testing.T) {
 	}
 }
 
+// fakeDeepSeekServer serves one canned OpenAI-compatible chat completion whose
+// assistant content is the given chief-analyst-style markdown+JSON, standing
+// in for the DeepSeek Chief Analyst fallback endpoint (internal/orchestrator's
+// ChiefFallback config, resolved through the same provider-agnostic
+// apiengine.go the cheap-research API/local engines already use).
+func fakeDeepSeekServer(t *testing.T, content string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"choices": []map[string]any{{
+				"finish_reason": "stop",
+				"message":       map[string]string{"role": "assistant", "content": content},
+			}},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// fallbackIdeasContent is a plausible chief-analyst-shaped response. Its exact
+// levels are not tuned to survive the risk gate — the fallback tests assert the
+// outer contract (fallback attempted, domain status, outcome, notes), not
+// whether this invented geometry happens to clear every band.
+const fallbackIdeasContent = "Synthesis reasoning via the DeepSeek fallback engine.\n\n" +
+	"```json\n" +
+	"{\n" +
+	"  \"mode\": \"independent\",\n" +
+	"  \"generated_at\": \"2026-07-18T00:00:00Z\",\n" +
+	"  \"ideas\": [\n" +
+	"    {\"rank\": 1, \"ticker\": \"NVDA\", \"direction\": \"BUY\", \"confidence\": 60,\n" +
+	"     \"entry\": 100.0, \"stop\": 95.0, \"target\": 115.0,\n" +
+	"     \"risk_reward\": 3.0, \"timeframe_days\": 15,\n" +
+	"     \"position_note\": \"sized by the app\",\n" +
+	"     \"why\": \"Fallback synthesis for NVDA.\"}\n" +
+	"  ],\n" +
+	"  \"notes\": \"Fallback synthesis.\"\n" +
+	"}\n" +
+	"```\n"
+
+// assertFallbackFired checks the outer contract every successful-fallback run
+// must satisfy, regardless of whether the invented levels above happen to
+// survive the risk gate.
+func assertFallbackFired(t *testing.T, complete *Event) {
+	t.Helper()
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	if complete.Ideas == nil {
+		t.Fatal("EventComplete has nil Ideas")
+	}
+	if complete.Meta.Outcome != "degraded" {
+		t.Errorf("outcome = %q, want degraded", complete.Meta.Outcome)
+	}
+	if complete.Meta.SynthesisFallbackEngine != "deepseek-reasoner" {
+		t.Errorf("SynthesisFallbackEngine = %q, want deepseek-reasoner", complete.Meta.SynthesisFallbackEngine)
+	}
+	found := false
+	for _, d := range complete.Meta.Domains {
+		if d.Domain == "chief-analyst-fallback" {
+			found = true
+			if d.Status != model.StatusDone {
+				t.Errorf("chief-analyst-fallback status = %s, want done", d.Status)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no chief-analyst-fallback domain status recorded: %+v", complete.Meta.Domains)
+	}
+	if !strings.Contains(complete.Ideas.Notes, "DeepSeek fallback") {
+		t.Errorf("ideas.Notes = %q, want it to mention the fallback", complete.Ideas.Notes)
+	}
+}
+
+// When the primary claude CLI call fails outright, the DeepSeek fallback must
+// fire and produce a real, validated/risk-gated synthesis — sitting strictly
+// before the mechanical buildDegradedIdeas path.
+func TestChiefFailureFallsBackToDeepSeek(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "chief-fail")
+	cfg := testConfig(t, model.ModeIndependent)
+	srv := fakeDeepSeekServer(t, fallbackIdeasContent)
+	cfg.ChiefFallback = model.APIConfig{BaseURL: srv.URL, Model: "deepseek-reasoner", APIKey: "sk-test"}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	assertFallbackFired(t, complete)
+}
+
+// Same fallback path, triggered by the primary call succeeding but returning
+// unparseable JSON rather than failing outright.
+func TestChiefBadJSONFallsBackToDeepSeek(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "badjson")
+	cfg := testConfig(t, model.ModeIndependent)
+	srv := fakeDeepSeekServer(t, fallbackIdeasContent)
+	cfg.ChiefFallback = model.APIConfig{BaseURL: srv.URL, Model: "deepseek-reasoner", APIKey: "sk-test"}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	assertFallbackFired(t, complete)
+}
+
 func TestChiefFailureDegrades(t *testing.T) {
 	t.Setenv("CFR_FAKE_MODE", "chief-fail")
 	cfg := testConfig(t, model.ModeIndependent)

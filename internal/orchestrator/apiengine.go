@@ -12,11 +12,15 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
-// callAPIEngine runs one cheap-research call against an OpenAI-compatible chat
-// completions endpoint (DeepSeek by default, but any provider that speaks the
-// same protocol — OpenRouter, OpenAI, a local vLLM/Ollama gateway — works by
+// callAPIEngine runs one call against an OpenAI-compatible chat completions
+// endpoint (DeepSeek by default, but any provider that speaks the same
+// protocol — OpenRouter, OpenAI, a local vLLM/Ollama gateway — works by
 // changing BaseURL + Model). It is the HTTP analogue of a `<bin> -p <prompt>`
 // subprocess: give it a prompt, get back the assistant's text.
+//
+// Most callers are the cheap-research role (cheap_engine = "api"/"local"), but
+// it is reused unmodified for the optional Chief Analyst DeepSeek fallback
+// (fallback.go's attemptChiefFallback) — same engine, a different APIConfig.
 //
 // It uses only the standard library (same discipline as the marketdata
 // providers — no model SDK). The caller (runAgent) owns retry and the per-call

@@ -46,8 +46,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	runFn := func(req model.RunRequest) <-chan orchestrator.Event {
-		return orchestrator.Run(context.Background(), orchestratorConfig(settings, req))
+	runFn := func(ctx context.Context, req model.RunRequest) <-chan orchestrator.Event {
+		return orchestrator.Run(ctx, orchestratorConfig(settings, req))
 	}
 	sbFn := func(ctx context.Context) (*scoreboard.Summary, error) {
 		yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
@@ -105,5 +105,8 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		Local:             s.Local,
 		LocalConcurrency:  s.LocalConcurrency,
 		GeminiConcurrency: s.GeminiConcurrency,
+
+		SynthesisMaxAttempts: s.SynthesisMaxAttempts,
+		ChiefFallback:        s.ChiefFallback,
 	}
 }

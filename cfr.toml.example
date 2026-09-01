@@ -63,8 +63,10 @@
 #              Recommended if `agy`/Gemini is unreliable for you.
 #   "local"  — a local OpenAI-compatible server such as Ollama (see [local] below).
 #              Free and offline; needs a GPU/CPU that can serve the model.
-# The heavy Chief Analyst synthesis always uses the `claude` CLI, so the
-# cheap/heavy split is preserved whichever cheap engine you pick.
+# The heavy Chief Analyst synthesis primarily uses the `claude` CLI, so the
+# cheap/heavy split is preserved whichever cheap engine you pick — the one
+# reviewed exception is the off-by-default [chief_fallback] resilience engine
+# below, which only fires if that primary call fails.
 #cheap_engine = "gemini"
 
 # Max simultaneous local-model calls (cheap_engine = "local"). One GPU can't run
@@ -83,18 +85,27 @@
 #sentiment    = 0.15
 #macro        = 0.10
 
-# Per-stage subprocess timeouts (Go duration strings).
+# Per-stage subprocess timeouts (Go duration strings). Each is a per-attempt
+# budget, never divided across retries. Synthesis is 15m by default — every
+# real run to date SIGKILLed the Chief Analyst at the old 5m default (601s ≈ 2
+# attempts x 300s) with no data yet on how long an uninterrupted call takes.
 #[timeouts]
 #screening = "5m"
 #analysis  = "8m"
-#synthesis = "10m"
+#synthesis = "15m"
+#synthesis_fallback = "15m"   # empty/unset = same as synthesis
 
-# Subprocess retry policy.
+# Subprocess retry policy. max_attempts governs screening/analysis and the
+# chief_fallback call's own transient-error (429/5xx) retries.
 #[retry]
 #max_attempts = 2
 #base_delay   = "2s"
 #max_delay    = "30s"
 #jitter       = true
+# The primary Chief Analyst call gets its own budget instead of max_attempts: a
+# timeout there means "too slow," not "flaky," so retrying identically just
+# delays reaching chief_fallback below.
+#synthesis_max_attempts = 1
 
 # Model names passed to each CLI via --model.
 #[models]
@@ -133,6 +144,23 @@
 #base_url = "http://localhost:11434/v1"   # Ollama's OpenAI-compatible endpoint
 #model    = "qwen2.5:7b-instruct"         # must match a model you've pulled
 #api_key  = ""                            # optional; ignored by most local servers
+
+# Optional Chief Analyst resilience fallback (same apiengine.go engine as [api]/
+# [local]). Off by default — set only once you've decided to accept this
+# reviewed exception to the CLI-only synthesis rule. Fires only after the
+# primary `claude` call has exhausted synthesis_max_attempts or its JSON failed
+# to parse, and sits strictly before the mechanical degraded-ideas fallback
+# (docs/workflow/scoring.md, "Degraded path"). Needs its OWN dedicated key —
+# deliberately never shared with [api]/[local], so turning those on can never
+# silently also enable this spend. Put the key in CFR_CHIEF_FALLBACK_API_KEY
+# rather than committing it here (no DEEPSEEK_API_KEY alias, unlike [api]).
+#[chief_fallback]
+#base_url = "https://api.deepseek.com"
+#model    = "deepseek-reasoner"          # a smarter tier than the cheap role's deepseek-chat
+#api_key  = ""                            # prefer CFR_CHIEF_FALLBACK_API_KEY; never share with [api]
+# deepseek-reasoner spends tokens on chain-of-thought before its answer, so this
+# needs real headroom — 4x the cheap role's default.
+#max_tokens = 32768
 
 # No-API alternative: run the cheap role on the `claude` CLI at a cheap tier.
 # Keep cheap_engine = "gemini" and just swap the "gemini"-role binary+model —

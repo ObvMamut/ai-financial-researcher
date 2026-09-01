@@ -224,10 +224,21 @@ not a risk control.
 
 ## Degraded path
 
-When the Chief Analyst fails or emits unparseable JSON, `buildDegradedIdeas` ships the base
-scores directly, capped at **55** — the same arithmetic, with no cross-domain reasoning
-applied, so it must never read as confidently as a real synthesis. It is the same function;
-the fallback ranking and the numbers the Chief was shown cannot drift apart.
+When the Chief Analyst (the `claude` CLI) fails or emits unparseable JSON, the orchestrator
+first attempts `attemptChiefFallback` — an optional, off-by-default DeepSeek resilience call
+(`chief_fallback`, gated on its own dedicated API key) that reuses the same
+`agents/chief-analyst.md` prompt. Unlike the mechanical path below, a successful fallback
+runs through the same `parseIdeas → validateIdeas → applyRiskGate → dropViolating` pipeline a
+successful primary call goes through, so it keeps real entry/stop/target and a risk-checked
+construction rather than only a base score. `ideas.Notes` records that the primary call failed
+and synthesis completed via the fallback engine; `metadata.json` carries a
+`"chief-analyst-fallback"` domain entry and `synthesis_fallback_engine`.
+
+Only if the fallback is unconfigured, or it also fails or fails to parse, does the run fall
+through to `buildDegradedIdeas`, which ships the base scores directly, capped at **55** — the
+same arithmetic, with no cross-domain reasoning applied, so it must never read as confidently
+as a real synthesis. It is the same function; the fallback ranking and the numbers the Chief
+was shown cannot drift apart.
 
 ## Honesty rules
 

@@ -115,6 +115,20 @@ type Config struct {
 	// FillWindowDays is how many sessions a past idea's entry limit stays live
 	// when the scoreboard replays it for the track record. Zero means 3.
 	FillWindowDays int
+
+	// SynthesisMaxAttempts overrides Retry.MaxAttempts for the primary Chief
+	// Analyst call only. A synthesis timeout means "too slow," not "flaky," so
+	// retrying identically just delays reaching the DeepSeek fallback below.
+	// Zero means 1 (no retry).
+	SynthesisMaxAttempts int
+
+	// ChiefFallback configures an optional DeepSeek resilience call attempted
+	// when the primary Chief Analyst (claude CLI) call fails or its JSON fails
+	// to parse — sitting between "Claude failed" and the mechanical
+	// buildDegradedIdeas fallback. Off by default, gated on APIKey != "" alone,
+	// and never inherited from API/Local: turning on cheap_engine=api must never
+	// silently also enable Chief Analyst fallback spend.
+	ChiefFallback model.APIConfig
 }
 
 func (c *Config) applyDefaults() {
@@ -169,6 +183,23 @@ func (c *Config) applyDefaults() {
 		c.Local.BaseURL = "http://localhost:11434/v1"
 	}
 
+	// ChiefFallback defaults only take effect once its own APIKey is set (see
+	// resolveChiefFallback) — harmless no-ops otherwise. deepseek-reasoner, not
+	// the cheap role's deepseek-chat: this is a resilience call for the single
+	// most important step in the pipeline. Its MaxTokens default is 4x the
+	// cheap role's because a reasoning model spends tokens on chain-of-thought
+	// before its answer, and apiengine.go already treats finish_reason=="length"
+	// as an error rather than truncated success.
+	if c.ChiefFallback.BaseURL == "" {
+		c.ChiefFallback.BaseURL = "https://api.deepseek.com"
+	}
+	if c.ChiefFallback.Model == "" {
+		c.ChiefFallback.Model = "deepseek-reasoner"
+	}
+	if c.ChiefFallback.MaxTokens <= 0 {
+		c.ChiefFallback.MaxTokens = 32768
+	}
+
 	// Serialize agy auth by default to avoid keyring contention (see Config.GeminiConcurrency).
 	if c.GeminiConcurrency <= 0 {
 		c.GeminiConcurrency = 1
@@ -208,7 +239,10 @@ func (c *Config) applyDefaults() {
 		c.ChiefAdjustBand = 10
 	}
 
-	// Default Timeouts
+	// Default Timeouts. Synthesis is 15 minutes — every real run to date has
+	// been SIGKILLed mid-attempt at the old 5-minute default (601s ≈ 2 attempts
+	// x 300s), so there is no empirical data yet on how long an uninterrupted
+	// call actually takes.
 	if c.Timeouts.Screening == 0 {
 		c.Timeouts.Screening = 5 * time.Minute
 	}
@@ -216,7 +250,10 @@ func (c *Config) applyDefaults() {
 		c.Timeouts.Analysis = 5 * time.Minute
 	}
 	if c.Timeouts.Synthesis == 0 {
-		c.Timeouts.Synthesis = 5 * time.Minute
+		c.Timeouts.Synthesis = 15 * time.Minute
+	}
+	if c.Timeouts.SynthesisFallback == 0 {
+		c.Timeouts.SynthesisFallback = c.Timeouts.Synthesis
 	}
 
 	// Default Retry Policy
@@ -225,6 +262,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Retry.BaseDelay == 0 {
 		c.Retry.BaseDelay = 1 * time.Second
+	}
+	// The primary Chief Analyst call gets its own attempt budget: a timeout
+	// there means "too slow," not "flaky," so retrying identically just delays
+	// reaching the DeepSeek fallback.
+	if c.SynthesisMaxAttempts <= 0 {
+		c.SynthesisMaxAttempts = 1
 	}
 
 	// Default weights (matches scoring.md), mapped to the 5–20 day horizon this
@@ -270,6 +313,23 @@ func resolveCheapEngine(cfg Config) (engine model.CLI, api model.APIConfig, conc
 	}
 }
 
+// resolveChiefFallback validates the optional DeepSeek Chief Analyst fallback.
+// It is off by default: an empty APIKey means "not configured" and is not an
+// error, since ChiefFallback.BaseURL/Model are always filled by applyDefaults.
+// A key set alongside an empty BaseURL/Model is only reachable via a
+// deliberately broken config (e.g. explicitly blanking a default), and fails
+// fast here — before Stage 0.5 runs, not after burning a full synthesis
+// attempt on a call that was always going to fail.
+func resolveChiefFallback(cfg Config) (api model.APIConfig, ok bool, err error) {
+	if cfg.ChiefFallback.APIKey == "" {
+		return model.APIConfig{}, false, nil
+	}
+	if cfg.ChiefFallback.BaseURL == "" || cfg.ChiefFallback.Model == "" {
+		return model.APIConfig{}, false, fmt.Errorf("chief_fallback requires base_url and model alongside its api_key")
+	}
+	return cfg.ChiefFallback, true, nil
+}
+
 // Run executes the full pipeline and streams Events. It closes the returned
 // channel when the run completes (success or error). The caller must drain it.
 func Run(ctx context.Context, cfg Config) <-chan Event {
@@ -310,6 +370,13 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// Claude cheaply, keep cheap_engine=gemini and override binaries.gemini=claude +
 	// models.gemini=haiku.
 	cheapCLI, cheapAPI, cheapConc, err := resolveCheapEngine(cfg)
+	if err != nil {
+		return err
+	}
+	// Validate the optional Chief Analyst DeepSeek fallback up front too, for
+	// the same reason: a broken [chief_fallback] should surface now, not after
+	// a full 15-minute synthesis attempt has already failed.
+	fallbackAPI, fallbackOK, err := resolveChiefFallback(cfg)
 	if err != nil {
 		return err
 	}
@@ -402,8 +469,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		for _, idx := range indices {
 			total += len(uni.Constituents(idx))
 		}
-		log(ch, fmt.Sprintf("Stage 0.5: pre-screening %d names across %s (cold fetch ~%ds, cached ~0s)…",
-			total, strings.Join(indices, ", "), total/4))
+		log(ch, fmt.Sprintf("Stage 0.5: pre-screening %d names across %s (cold fetch, cached ~0s)…",
+			total, strings.Join(indices, ", ")))
 		prescreen = runPrescreen(ctx, ch, yc, uni, indices, prescreenParams)
 		logPackErrors(ch, "prescreen", prescreen.Errors)
 		dataErrors = append(dataErrors, prefixed("prescreen", prescreen.Errors)...)
@@ -846,8 +913,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		return fmt.Errorf("assemble chief-analyst prompt: %w", err)
 	}
 
+	// The primary Chief Analyst call gets its own attempt budget: a timeout
+	// means "too slow," not "flaky," so retrying identically just delays
+	// reaching the DeepSeek fallback below. cfg.Retry (still governing
+	// screening/analysis, and the fallback's own transient-error retries) is
+	// left untouched.
+	synthRetry := cfg.Retry
+	synthRetry.MaxAttempts = cfg.SynthesisMaxAttempts
+
 	agentStatus(ch, "chief-analyst", model.StatusRunning, nil)
-	r := runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), prompt, cfg.Timeouts.Synthesis, cfg.Retry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
+	r := runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), prompt, cfg.Timeouts.Synthesis, synthRetry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
 	r.Path = fmt.Sprintf("%s/chief-analyst.md", run.Dir)
 	if err := run.WriteReport("chief-analyst", r.Stdout); err != nil {
 		log(ch, fmt.Sprintf("warn: write chief-analyst report: %v", err))
@@ -866,10 +941,24 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		outcome = "degraded"
 	}
 
+	var synthesisFallbackEngine string
 	if r.Status == model.StatusFailed {
 		agentStatus(ch, "chief-analyst", model.StatusFailed, &r)
-		log(ch, "Chief analyst failed — building degraded fallback from specialist scores…")
-		ideas = buildDegradedIdeas(cfg, specReports, shortlist)
+		fellBack := false
+		if fallbackOK {
+			fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, r.Err, verifiedCtx)
+			domainStatuses = append(domainStatuses, fbStatus)
+			if ok {
+				ideas = fbIdeas
+				warnings = fbWarnings
+				synthesisFallbackEngine = fallbackAPI.Model
+				fellBack = true
+			}
+		}
+		if !fellBack {
+			log(ch, "Chief analyst failed — building degraded fallback from specialist scores…")
+			ideas = buildDegradedIdeas(cfg, specReports, shortlist)
+		}
 		outcome = "degraded"
 	} else {
 		agentStatus(ch, "chief-analyst", model.StatusDone, &r)
@@ -903,7 +992,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			if len(repromptReasons) > 0 {
 				log(ch, "Validation failed — attempting corrective re-prompt…")
 				reprompt := prompt + "\n\nCRITICAL: Your previous output failed validation. " + strings.Join(repromptReasons, "; ") + ". Re-emit the full JSON block with these problems fixed."
-				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, cfg.Retry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
+				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, synthRetry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
 				if r.Status != model.StatusFailed {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas
@@ -935,8 +1024,21 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 		} else {
 			log(ch, fmt.Sprintf("warn: parse ideas JSON: %v", parseErr))
-			ideas = buildDegradedIdeas(cfg, specReports, shortlist)
-			ideas.Notes = fmt.Sprintf("JSON parse error: %v — %s", parseErr, ideas.Notes)
+			fellBack := false
+			if fallbackOK {
+				fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, fmt.Sprintf("unparseable JSON: %v", parseErr), verifiedCtx)
+				domainStatuses = append(domainStatuses, fbStatus)
+				if ok {
+					ideas = fbIdeas
+					warnings = fbWarnings
+					synthesisFallbackEngine = fallbackAPI.Model
+					fellBack = true
+				}
+			}
+			if !fellBack {
+				ideas = buildDegradedIdeas(cfg, specReports, shortlist)
+				ideas.Notes = fmt.Sprintf("JSON parse error: %v — %s", parseErr, ideas.Notes)
+			}
 			outcome = "degraded"
 		}
 	}
@@ -984,13 +1086,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Outcome:     outcome,
 		Duration:    time.Since(start).Milliseconds(),
 
-		Engine:         string(cfg.CheapEngine),
-		EngineModel:    cheapModelName(cfg),
-		SynthesisModel: cfg.Models[model.CLIClaude],
-		Stages:         stageMS,
-		DataErrors:     dataErrors,
-		PersonaSHA:     reg.PersonaSHA(),
-		PersonaSet:     filepath.Base(cfg.AgentsDir),
+		Engine:                  string(cfg.CheapEngine),
+		EngineModel:             cheapModelName(cfg),
+		SynthesisModel:          cfg.Models[model.CLIClaude],
+		SynthesisFallbackEngine: synthesisFallbackEngine,
+		Stages:                  stageMS,
+		DataErrors:              dataErrors,
+		PersonaSHA:              reg.PersonaSHA(),
+		PersonaSet:              filepath.Base(cfg.AgentsDir),
 	}
 	if err := run.WriteMeta(meta); err != nil {
 		log(ch, fmt.Sprintf("warn: write metadata.json: %v", err))

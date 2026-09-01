@@ -230,6 +230,11 @@ type StageTimeouts struct {
 	Screening time.Duration
 	Analysis  time.Duration
 	Synthesis time.Duration
+	// SynthesisFallback bounds the DeepSeek resilience call attempted when the
+	// primary Chief Analyst call fails or its JSON fails to parse. Zero at
+	// defaulting time means "same as Synthesis" — one tunable, not two, until
+	// real data says the fallback needs its own budget.
+	SynthesisFallback time.Duration
 }
 
 // RetryPolicy defines how to handle subprocess failures.
@@ -281,9 +286,12 @@ type ProviderConfig struct {
 	FredKey         string
 }
 
-// APIConfig configures the OpenAI-compatible cheap-research engine (CLIApi).
-// It is used only when the cheap-research role is routed to CLIApi; the heavy
-// synthesis role always stays on the Claude CLI.
+// APIConfig configures the OpenAI-compatible engine (CLIApi). Most often this
+// is the cheap-research role routed off the Claude CLI, but the same struct
+// also configures the optional Chief Analyst DeepSeek fallback
+// (orchestrator.Config.ChiefFallback): the heavy synthesis role's primary
+// engine always stays the Claude CLI, and the fallback only fires as a
+// last-resort resilience measure when that primary call fails.
 type APIConfig struct {
 	BaseURL string // e.g. https://api.deepseek.com (up to, not incl. /chat/completions)
 	Model   string // e.g. deepseek-chat
@@ -352,6 +360,12 @@ type RunMeta struct {
 	Engine         string `json:"engine,omitempty"`
 	EngineModel    string `json:"engine_model,omitempty"`
 	SynthesisModel string `json:"synthesis_model,omitempty"`
+
+	// SynthesisFallbackEngine names the model the DeepSeek resilience fallback
+	// actually ran on, set only when attemptChiefFallback was invoked (the
+	// primary Chief Analyst call failed or its JSON did not parse). Empty means
+	// it never fired — either unconfigured, or the primary call succeeded.
+	SynthesisFallbackEngine string `json:"synthesis_fallback_engine,omitempty"`
 
 	// Stages records wall-clock milliseconds per pipeline stage (screening,
 	// quant, analysis, synthesis). 79% of one run's 298s was unattributed

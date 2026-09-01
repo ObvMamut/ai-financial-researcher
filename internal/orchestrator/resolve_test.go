@@ -78,3 +78,49 @@ func TestResolveCheapEngineUnknown(t *testing.T) {
 		t.Fatal("expected error for unknown cheap_engine")
 	}
 }
+
+// The DeepSeek Chief Analyst fallback is off by default: an unset key must
+// resolve to "not configured", not an error, so a run with no [chief_fallback]
+// behaves exactly as it did before this existed.
+func TestResolveChiefFallbackUnconfigured(t *testing.T) {
+	api, ok, err := resolveChiefFallback(Config{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected ok=false with no api_key, got api=%+v", api)
+	}
+}
+
+func TestResolveChiefFallbackConfigured(t *testing.T) {
+	cfg := Config{}
+	cfg.applyDefaults()
+	cfg.ChiefFallback.APIKey = "sk-x"
+
+	api, ok, err := resolveChiefFallback(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true once an api_key is set")
+	}
+	if api.BaseURL != "https://api.deepseek.com" {
+		t.Errorf("base_url = %q, want the DeepSeek default", api.BaseURL)
+	}
+	if api.Model != "deepseek-reasoner" {
+		t.Errorf("model = %q, want deepseek-reasoner (not the cheap role's deepseek-chat)", api.Model)
+	}
+	if api.MaxTokens != 32768 {
+		t.Errorf("max_tokens = %d, want 32768 (headroom for reasoning-model chain-of-thought)", api.MaxTokens)
+	}
+}
+
+// A key set alongside an explicitly blanked base_url/model is the one way this
+// is reachable in practice (defaults fill both otherwise), and must fail fast
+// rather than let every synthesis call fail one at a time.
+func TestResolveChiefFallbackBrokenPartialConfig(t *testing.T) {
+	cfg := Config{ChiefFallback: model.APIConfig{APIKey: "sk-x", BaseURL: "", Model: ""}}
+	if _, _, err := resolveChiefFallback(cfg); err == nil {
+		t.Fatal("expected error when api_key is set but base_url/model are explicitly empty")
+	}
+}

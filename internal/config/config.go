@@ -71,6 +71,16 @@ type Settings struct {
 	// FillWindowDays is how many sessions the scoreboard's replay keeps a limit
 	// entry live before calling the idea unfilled. Zero means 3.
 	FillWindowDays int
+
+	// SynthesisMaxAttempts overrides Retry.MaxAttempts for the primary Chief
+	// Analyst call only. Zero means 1 (no retry) — a synthesis timeout means
+	// "too slow," not "flaky."
+	SynthesisMaxAttempts int
+	// ChiefFallback configures the optional DeepSeek resilience call attempted
+	// when the primary Chief Analyst call fails or its JSON fails to parse. Off
+	// by default (gated on its own api_key), and never shared with API/Local —
+	// turning on cheap_engine=api must never silently also enable this spend.
+	ChiefFallback model.APIConfig
 }
 
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
@@ -108,9 +118,10 @@ type fileFormat struct {
 	} `toml:"weights"`
 
 	Timeouts struct {
-		Screening string `toml:"screening"` // Go duration strings, e.g. "5m"
-		Analysis  string `toml:"analysis"`
-		Synthesis string `toml:"synthesis"`
+		Screening         string `toml:"screening"` // Go duration strings, e.g. "5m"
+		Analysis          string `toml:"analysis"`
+		Synthesis         string `toml:"synthesis"`
+		SynthesisFallback string `toml:"synthesis_fallback"` // empty = same as synthesis
 	} `toml:"timeouts"`
 
 	Retry struct {
@@ -118,6 +129,9 @@ type fileFormat struct {
 		BaseDelay   string `toml:"base_delay"`
 		MaxDelay    string `toml:"max_delay"`
 		Jitter      bool   `toml:"jitter"`
+		// SynthesisMaxAttempts overrides MaxAttempts for the primary Chief
+		// Analyst call only (see Settings.SynthesisMaxAttempts).
+		SynthesisMaxAttempts int `toml:"synthesis_max_attempts"`
 	} `toml:"retry"`
 
 	Models struct {
@@ -166,6 +180,17 @@ type fileFormat struct {
 	Scoreboard struct {
 		FillWindowDays int `toml:"fill_window_days"`
 	} `toml:"scoreboard"`
+
+	// ChiefFallback configures the optional DeepSeek resilience call for the
+	// Chief Analyst synthesis step (off by default; see Settings.ChiefFallback).
+	// Deliberately its own dedicated credentials, never shared with [api]/[local]:
+	// prefer CFR_CHIEF_FALLBACK_API_KEY over committing api_key to this file.
+	ChiefFallback struct {
+		BaseURL   string `toml:"base_url"`
+		Model     string `toml:"model"`
+		APIKey    string `toml:"api_key"`
+		MaxTokens int    `toml:"max_tokens"`
+	} `toml:"chief_fallback"`
 
 	// Local configures a local OpenAI-compatible server (Ollama/llama.cpp). The
 	// key is optional — local servers don't authenticate.
@@ -218,7 +243,8 @@ func (s *Settings) applyFile(path string) error {
 		return err
 	}
 	var f fileFormat
-	if err := toml.Unmarshal(data, &f); err != nil {
+	md, err := toml.Decode(string(data), &f)
+	if err != nil {
 		return fmt.Errorf("config %s: %w", path, err)
 	}
 
@@ -237,7 +263,12 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.DataDir, f.DataDir)
 	setInt(&s.KeepRuns, f.KeepRuns)
 	setInt(&s.Workers, f.Workers)
-	setInt(&s.DataCacheDays, f.DataCacheDays)
+	// data_cache_days=0 is a valid, meaningful setting ("disable pruning"), so
+	// it needs its own presence check instead of the "v > 0" setInt guard,
+	// which would otherwise treat an explicit 0 as "not set".
+	if md.IsDefined("data_cache_days") && f.DataCacheDays >= 0 {
+		s.DataCacheDays = f.DataCacheDays
+	}
 	setInt(&s.GeminiConcurrency, f.GeminiConcurrency)
 	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
@@ -293,7 +324,11 @@ func (s *Settings) applyFile(path string) error {
 	if err := parseDur(&s.Timeouts.Synthesis, f.Timeouts.Synthesis, "timeouts.synthesis"); err != nil {
 		return err
 	}
+	if err := parseDur(&s.Timeouts.SynthesisFallback, f.Timeouts.SynthesisFallback, "timeouts.synthesis_fallback"); err != nil {
+		return err
+	}
 	setInt(&s.Retry.MaxAttempts, f.Retry.MaxAttempts)
+	setInt(&s.SynthesisMaxAttempts, f.Retry.SynthesisMaxAttempts)
 	if err := parseDur(&s.Retry.BaseDelay, f.Retry.BaseDelay, "retry.base_delay"); err != nil {
 		return err
 	}
@@ -336,6 +371,10 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.Local.Model, f.Local.Model)
 	setStr(&s.Local.APIKey, f.Local.APIKey)
 	setInt(&s.Local.MaxTokens, f.Local.MaxTokens)
+	setStr(&s.ChiefFallback.BaseURL, f.ChiefFallback.BaseURL)
+	setStr(&s.ChiefFallback.Model, f.ChiefFallback.Model)
+	setStr(&s.ChiefFallback.APIKey, f.ChiefFallback.APIKey)
+	setInt(&s.ChiefFallback.MaxTokens, f.ChiefFallback.MaxTokens)
 	return nil
 }
 
@@ -369,6 +408,34 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_API_MAX_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.API.MaxTokens = n
+		}
+	}
+
+	// Optional DeepSeek resilience fallback for the Chief Analyst synthesis
+	// step. Deliberately no DEEPSEEK_API_KEY alias here (unlike [api]'s): a
+	// dedicated key must be set explicitly, never inherited from the
+	// cheap-research role's config.
+	setStr(&s.ChiefFallback.BaseURL, "CFR_CHIEF_FALLBACK_BASE_URL")
+	setStr(&s.ChiefFallback.Model, "CFR_CHIEF_FALLBACK_MODEL")
+	setStr(&s.ChiefFallback.APIKey, "CFR_CHIEF_FALLBACK_API_KEY")
+	if v := os.Getenv("CFR_CHIEF_FALLBACK_MAX_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			s.ChiefFallback.MaxTokens = n
+		}
+	}
+	if v := os.Getenv("CFR_SYNTHESIS_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			s.Timeouts.Synthesis = d
+		}
+	}
+	if v := os.Getenv("CFR_SYNTHESIS_FALLBACK_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			s.Timeouts.SynthesisFallback = d
+		}
+	}
+	if v := os.Getenv("CFR_SYNTHESIS_MAX_ATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			s.SynthesisMaxAttempts = n
 		}
 	}
 	if v := os.Getenv("CFR_LOCAL_CONCURRENCY"); v != "" {

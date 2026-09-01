@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +40,42 @@ func TestRunAgentDoesNotRetryPermanentFailures(t *testing.T) {
 		if got := atomic.LoadInt32(&hits); got != 1 {
 			t.Errorf("HTTP %d: %d attempts, want 1 — a client error will not fix itself", code, got)
 		}
+	}
+}
+
+// Every real cfr run to date has hit the identical "signal: killed" pattern
+// (601s ≈ 2 attempts x the old 300s Synthesis timeout), yet nothing exercised
+// the CLI-subprocess timeout/SIGKILL branch — only the CLIApi httptest path was
+// covered. A killed attempt is a "too slow," not "flaky," failure, so retrying
+// it is pointless; this also proves the kill is prompt rather than waiting out
+// the subprocess.
+func TestRunAgentCLITimeoutKillsSubprocess(t *testing.T) {
+	bin, err := filepath.Abs("../../testdata/fakebin/claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CFR_FAKE_MODE", "hang")
+
+	timeout := 100 * time.Millisecond
+	start := time.Now()
+	r := runAgent(context.Background(), model.CLIClaude, "chief-analyst", "synthesis",
+		"# Agent: Chief Analyst\nsynthesize", timeout,
+		model.RetryPolicy{MaxAttempts: 1, BaseDelay: time.Millisecond}, "", bin, model.APIConfig{})
+	elapsed := time.Since(start)
+
+	if r.Status != model.StatusFailed {
+		t.Fatalf("status = %s, want failed", r.Status)
+	}
+	if !strings.Contains(r.Err, "signal: killed") {
+		t.Errorf("err = %q, want it to contain %q (the real production error string)", r.Err, "signal: killed")
+	}
+	// The fake sleeps for 3600s; a duration anywhere near the timeout (and
+	// nowhere near the sleep) proves the kill was prompt.
+	if elapsed > 2*time.Second {
+		t.Errorf("runAgent took %s to return, want close to the %s timeout — the kill was not prompt", elapsed, timeout)
+	}
+	if r.Duration > 2000 {
+		t.Errorf("reported Duration = %dms, want close to the %s timeout", r.Duration, timeout)
 	}
 }
 
