@@ -135,7 +135,7 @@ func (p *edgarProvider) fetchInsiderActivity(ctx context.Context, ticker string)
 		p.tickersBase, cik)
 	if len(filings) == 0 {
 		td.Facts = append(td.Facts, Fact{
-			Label:  "Insider activity (SEC Form 4)",
+			Label:  InsiderActivityLabel,
 			Value:  fmt.Sprintf("no Form 4 filings in the last %d days", form4LookbackDays),
 			AsOf:   time.Now(),
 			Source: "SEC EDGAR",

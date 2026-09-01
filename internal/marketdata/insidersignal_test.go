@@ -171,9 +171,107 @@ func TestPositioningSignalTellsTheAgentToAbstain(t *testing.T) {
 		t.Errorf("verdict does not name its directional legs: %q", v)
 	}
 
-	// A ticker with no computed leg at all — an older cache entry — must not be
-	// silenced on a technicality.
-	if !HasPositioningSignal(TickerData{Ticker: "X", Facts: []Fact{{Label: "Options positioning"}}}) {
-		t.Error("a ticker with no computed verdict was treated as having abstained")
+	// No verdict of any kind — a provider that returned nothing at all. The
+	// domain has not earned a score for this name.
+	if HasPositioningSignal(TickerData{Ticker: "X", Facts: []Fact{{Label: "Implied volatility (ATM, front expiry)"}}}) {
+		t.Error("a ticker with no positioning verdict at all was credited with one")
+	}
+}
+
+// TestPositioningSignalFromStaleCacheShape is the bug this guardrail actually
+// had. The computed legs are written on the *fetch* path, and the whole
+// TickerData — facts included — is what the disk cache stores. The key hashed
+// source, provider, domain, ticker and the date, nothing about the payload, so an
+// entry written earlier the same day by a binary without the computed legs came
+// back without them and HasPositioningSignal failed open.
+//
+// On 2026-09-01 that inverted the guardrail exactly: the domain scored the three
+// tickers served from cache (ORCL bearish 5, TTD bearish 4, STLAM.MI bearish 5)
+// and abstained on the two fetched fresh. ORCL's own facts say zero open-market
+// trades and a put/call of 0.79 — inside the unremarkable band — so both legs are
+// InsiderNone and the score should never have survived.
+//
+// Every existing test builds its facts through signalFact, so none of them can
+// see this shape.
+func TestPositioningSignalFromStaleCacheShape(t *testing.T) {
+	orcl := TickerData{Ticker: "ORCL", Facts: []Fact{{
+		Label:  InsiderActivityLabel,
+		Value:  "0 open-market buys ($0) vs 0 sales ($0) across 1 filing(s) in 45 days",
+		Source: "SEC EDGAR",
+	}, {
+		Label:  OptionsPositioningLabel,
+		Value:  "put/call open interest 0.79 (168289 puts vs 212455 calls) over the front 2 expiries",
+		Source: "Yahoo Finance options",
+	}}}
+	addPositioningSignal(&orcl)
+
+	last := orcl.Facts[len(orcl.Facts)-1]
+	if last.Label != PositioningSignalLabel {
+		t.Fatalf("no verdict reconstructed from raw facts, last label = %q", last.Label)
+	}
+	if !strings.Contains(last.Value, "put it in `missing`, not in `scores`") {
+		t.Errorf("verdict does not instruct abstention: %q", last.Value)
+	}
+	if HasPositioningSignal(orcl) {
+		t.Error("ORCL's zero trades and 0.79 put/call were read as positioning evidence")
+	}
+
+	// The reconstruction is the classifier's, not a weaker paraphrase: a
+	// call-crowded chain still reads contrarian bearish off the raw sentence.
+	crowded := TickerData{Ticker: "MRK", Facts: []Fact{{
+		Label: OptionsPositioningLabel,
+		Value: "put/call open interest 0.50 (5000 puts vs 10000 calls) over the front 2 expiries",
+	}}}
+	addPositioningSignal(&crowded)
+	if !HasPositioningSignal(crowded) {
+		t.Error("a call-crowded chain reconstructed from its raw fact lost its direction")
+	}
+	if v := crowded.Facts[len(crowded.Facts)-1].Value; !strings.Contains(v, "options bearish") {
+		t.Errorf("verdict does not name the reconstructed leg: %q", v)
+	}
+}
+
+// A Form 4 window with real trades in it cannot be re-classified from the
+// summary sentence: breadth and depth never reached it. The honest outcome is
+// "unsettled", which sends the name to `missing` rather than inventing a verdict
+// that might contradict what the fetch path computed.
+func TestPositioningSignalUnresolvedLegAbstains(t *testing.T) {
+	td := TickerData{Ticker: "IBM", Facts: []Fact{{
+		Label: InsiderActivityLabel,
+		Value: "0 open-market buys ($0) vs 3 sales ($21.21M) across 5 filing(s) in 45 days",
+	}, {
+		Label: OptionsPositioningLabel,
+		Value: "put/call open interest 1.22 (100 puts vs 82 calls) over the front 2 expiries",
+	}}}
+	addPositioningSignal(&td)
+
+	v := td.Facts[len(td.Facts)-1].Value
+	if !strings.Contains(v, unresolvedLegVerdict) {
+		t.Errorf("verdict does not admit the unreadable leg: %q", v)
+	}
+	if strings.Contains(v, noPositioningSignal) {
+		t.Errorf("verdict claims both legs were read when one was not: %q", v)
+	}
+	if HasPositioningSignal(td) {
+		t.Error("an unsettled name was credited with positioning evidence")
+	}
+}
+
+// The computed leg wins wherever it exists: a fresh fetch carries both the raw
+// summary and the verdict, and the verdict is the authority.
+func TestPositioningSignalPrefersTheComputedLeg(t *testing.T) {
+	td := TickerData{Ticker: "IBM", Facts: []Fact{{
+		Label: InsiderActivityLabel,
+		Value: "0 open-market buys ($0) vs 1 sale ($5.76M) across 1 filing(s) in 45 days",
+	}, signalFact(InsiderSignalLabel, classifyInsiderActivity([]form4Transaction{
+		sale("Thomas Robert David", "SVP", 25000, 230.32, 5000)}), "computed", "")}}
+	addPositioningSignal(&td)
+
+	v := td.Facts[len(td.Facts)-1].Value
+	if strings.Contains(v, unresolvedLegVerdict) {
+		t.Errorf("a leg with a computed verdict was treated as unreadable: %q", v)
+	}
+	if !HasPositioningSignal(td) {
+		t.Errorf("the computed bearish verdict was discarded: %q", v)
 	}
 }

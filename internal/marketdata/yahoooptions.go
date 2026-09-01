@@ -150,7 +150,7 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 	if callOI > 0 {
 		ratio := putOI / callOI
 		td.Facts = append(td.Facts, Fact{
-			Label: "Options positioning",
+			Label: OptionsPositioningLabel,
 			Value: fmt.Sprintf("put/call open interest %.2f (%.0f puts vs %.0f calls) over the front %d %s%s",
 				ratio, putOI, callOI, expiries, plural(expiries, "expiry", "expiries"), note),
 			AsOf:   time.Now(),

@@ -3,6 +3,7 @@ package marketdata
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -167,6 +168,11 @@ const (
 	InsiderSignalLabel     = "Insider signal (computed)"
 	OptionsSignalLabel     = "Options signal (computed)"
 	PositioningSignalLabel = "Positioning signal (computed)"
+	// The raw facts the computed legs are derived from. Named here because
+	// addPositioningSignal reads them back when a leg's computed verdict is
+	// missing — the shape a cache entry written by an older binary has.
+	InsiderActivityLabel    = "Insider activity (SEC Form 4)"
+	OptionsPositioningLabel = "Options positioning"
 )
 
 // signalFact renders one leg's verdict. The bias leads the string so it can be
@@ -188,53 +194,182 @@ func biasOf(value string) InsiderBias {
 }
 
 // noPositioningSignal is the sentence HasPositioningSignal and the sentiment
-// persona both key off.
-const noPositioningSignal = "Both legs read no directional signal"
+// persona both key off. directionalEvidence is its counterpart: the marker that
+// says a direction was actually found, and the one HasPositioningSignal tests
+// for — a positive marker cannot be widened by a new kind of abstention the way
+// a growing list of negative phrases can.
+const (
+	noPositioningSignal  = "Both legs read no directional signal"
+	directionalEvidence  = "Directional evidence: "
+	unresolvedLegVerdict = "no computed verdict for this leg in this run's data"
+)
 
-// addPositioningSignal combines whatever computed legs a ticker's facts carry
-// into the single verdict the sentiment agent is required to obey, and appends
-// it. It is a no-op for a ticker with neither leg.
+// positioningLeg is one side of the combined verdict while it is being assembled.
+type positioningLeg struct {
+	sig insiderSignal
+	// computed marks a verdict taken from the provider's own signal fact, which
+	// is authoritative. A reconstructed one is not: it is re-derived from the raw
+	// summary and only trusted where that summary is complete enough.
+	computed bool
+	// resolved is false for a leg whose raw fact is present but whose verdict
+	// cannot be re-derived from it.
+	resolved bool
+}
+
+// addPositioningSignal combines whatever legs a ticker's facts carry into the
+// single verdict the sentiment agent is required to obey, and appends it. It is a
+// no-op for a ticker with neither leg.
 //
 // When both legs read "no directional signal" the name has no positioning
 // evidence and belongs in the report's `missing` array rather than in `scores` —
 // the same convention the coverage enforcement already applies. That instruction
 // is written into the fact so it travels with the data instead of living only in
 // a persona the model can decline.
+//
+// A leg's computed verdict is authoritative where it exists. Where it does not —
+// a cache entry written before the computed legs existed — the verdict is
+// re-derived from the raw fact the provider wrote beside it, because that is
+// where the inputs are: the put/call ratio, and the Form 4 buy/sale counts.
+// Returning early instead was how ORCL kept a bearish 5 on a put/call of 0.79 and
+// zero open-market trades.
 func addPositioningSignal(td *TickerData) {
-	var legs []string
-	var sides []string
-	seen := false
+	legs := map[string]*positioningLeg{}
+	var order []string
+	leg := func(name string) *positioningLeg {
+		l, ok := legs[name]
+		if !ok {
+			l = &positioningLeg{}
+			legs[name] = l
+			order = append(order, name)
+		}
+		return l
+	}
+	// A computed fact always follows its raw one from the same provider, so a
+	// single pass reaches the raw fact first and the computed one overwrites it.
+	adopt := func(name string, f Fact) {
+		l := leg(name)
+		l.sig, l.computed, l.resolved = insiderSignal{biasOf(f.Value), f.Value}, true, true
+	}
+	rebuild := func(name string, value string, from func(string) (insiderSignal, bool)) {
+		l := leg(name)
+		if l.computed {
+			return
+		}
+		l.sig, l.resolved = from(value)
+	}
 	for _, f := range td.Facts {
-		var leg string
 		switch f.Label {
 		case InsiderSignalLabel:
-			leg = "insider"
+			adopt("insider", f)
 		case OptionsSignalLabel:
-			leg = "options"
-		default:
-			continue
-		}
-		seen = true
-		legs = append(legs, leg+" — "+f.Value)
-		if b := biasOf(f.Value); b != InsiderNone {
-			sides = append(sides, leg+" "+string(b))
+			adopt("options", f)
+		case InsiderActivityLabel:
+			rebuild("insider", f.Value, reconstructInsiderLeg)
+		case OptionsPositioningLabel:
+			rebuild("options", f.Value, reconstructOptionsLeg)
 		}
 	}
-	if !seen {
+	if len(order) == 0 {
 		return
 	}
 
+	var parts, sides []string
+	unresolved := false
+	for _, name := range order {
+		l := legs[name]
+		if !l.resolved {
+			unresolved = true
+			parts = append(parts, name+" — "+unresolvedLegVerdict)
+			continue
+		}
+		parts = append(parts, name+" — "+l.sig.Reason)
+		if l.sig.Bias != InsiderNone {
+			sides = append(sides, name+" "+string(l.sig.Bias))
+		}
+	}
+
 	var b strings.Builder
-	b.WriteString(strings.Join(legs, "; "))
-	if len(sides) == 0 {
+	b.WriteString(strings.Join(parts, "; "))
+	switch {
+	case len(sides) > 0:
+		sort.Strings(sides)
+		fmt.Fprintf(&b, ". %s%s.", directionalEvidence, strings.Join(sides, " and "))
+	case unresolved:
+		// Neither "quiet" nor "directional" is established. Abstaining is the
+		// cheap error — it costs the name a score and does not degrade the run —
+		// while scoring on a verdict nothing computed is the expensive one.
+		b.WriteString(". No leg established a direction and at least one could not be read at all, so this name's positioning is unsettled: put it in `missing`, not in `scores`.")
+	default:
 		b.WriteString(". ")
 		b.WriteString(noPositioningSignal)
 		b.WriteString(", so this name has no positioning evidence: put it in `missing`, not in `scores`.")
-	} else {
-		sort.Strings(sides)
-		fmt.Fprintf(&b, ". Directional evidence: %s.", strings.Join(sides, " and "))
 	}
 	td.Facts = append(td.Facts, Fact{Label: PositioningSignalLabel, Value: b.String(), Source: "computed"})
+}
+
+// reconstructInsiderLeg re-derives the insider verdict from the Form 4 summary
+// sentence, for facts that predate the computed leg.
+//
+// It resolves only the cases the sentence carries in full. Breadth (how many
+// distinct owners sold) and depth (how much of one owner's holding a sale moved)
+// never reached that sentence, so a window with actual trades in it cannot be
+// re-classified here — and guessing a direction that contradicts what the fetch
+// path would have computed is worse than admitting the gap.
+func reconstructInsiderLeg(value string) (insiderSignal, bool) {
+	if strings.Contains(value, "no Form 4 filings") {
+		return classifyInsiderActivity(nil), true
+	}
+	buys, sells, ok := openMarketCounts(value)
+	if !ok || buys > 0 || sells > 0 {
+		return insiderSignal{}, false
+	}
+	return classifyInsiderActivity(nil), true
+}
+
+// openMarketCounts reads the buy and sale counts back out of the Form 4 summary
+// ("0 open-market buys ($0) vs 0 sales ($0) across 1 filing(s) in 45 days").
+func openMarketCounts(value string) (buys, sells int, ok bool) {
+	fields := strings.Fields(value)
+	if len(fields) < 2 || fields[1] != "open-market" {
+		return 0, 0, false
+	}
+	b, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	for i, f := range fields {
+		if f != "vs" || i+1 >= len(fields) {
+			continue
+		}
+		s, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			return 0, 0, false
+		}
+		return b, s, true
+	}
+	return 0, 0, false
+}
+
+// reconstructOptionsLeg re-derives the options verdict from the positioning
+// sentence. The ratio is the whole input to classifyOptionsPositioning, and the
+// sentence leads with it, so this reproduces the fetch path exactly.
+func reconstructOptionsLeg(value string) (insiderSignal, bool) {
+	const marker = "put/call open interest "
+	i := strings.Index(value, marker)
+	if i < 0 {
+		return insiderSignal{}, false
+	}
+	rest := value[i+len(marker):]
+	if j := strings.IndexFunc(rest, func(r rune) bool {
+		return r != '.' && (r < '0' || r > '9')
+	}); j >= 0 {
+		rest = rest[:j]
+	}
+	ratio, err := strconv.ParseFloat(rest, 64)
+	if err != nil {
+		return insiderSignal{}, false
+	}
+	return classifyOptionsPositioning(ratio), true
 }
 
 // HasPositioningSignal reports whether a ticker's facts carry a computed
@@ -243,10 +378,16 @@ func addPositioningSignal(td *TickerData) {
 func HasPositioningSignal(td TickerData) bool {
 	for _, f := range td.Facts {
 		if f.Label == PositioningSignalLabel {
-			return !strings.Contains(f.Value, noPositioningSignal)
+			return strings.Contains(f.Value, directionalEvidence)
 		}
 	}
-	// No computed verdict at all (an older cache entry, or a provider error):
-	// stay out of the way rather than silence a domain on a technicality.
-	return true
+	// No verdict at all. This used to return true — "stay out of the way rather
+	// than silence a domain on a technicality" — and the technicality turned out
+	// to be the common case: a stale cache entry served without the computed legs
+	// took this branch and the domain kept every unearned score. With the cache
+	// keyed by schema version and the legs re-derivable from the raw facts, an
+	// absent verdict now means the provider genuinely returned nothing, and
+	// Coverage[t] is already false for that name — so this silences nothing that
+	// was working.
+	return false
 }

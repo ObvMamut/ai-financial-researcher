@@ -10,12 +10,27 @@ import (
 	"time"
 )
 
+// factSchemaVersion is the shape of the payloads this binary writes. It is part
+// of every cache key, so changing the fields a provider returns makes yesterday's
+// — or this morning's — entries unreadable instead of invisibly wrong.
+//
+// It exists because the key hashed source, provider, domain, ticker and the
+// calendar date and nothing about the payload. On 2026-09-01 the computed
+// positioning legs (insidersignal.go) were added mid-day; entries written earlier
+// by the previous binary were served back without them, and the sentiment
+// guardrail — which failed open on an absent verdict — scored exactly the three
+// tickers it exists to silence and abstained on the two it should have scored.
+// Bump this whenever a cached payload gains, loses or changes a field.
+const factSchemaVersion = 2
+
 type Cache struct {
 	baseDir string
+	// schema namespaces entries by payload shape; see factSchemaVersion.
+	schema int
 }
 
 func NewCache(baseDir string) *Cache {
-	return &Cache{baseDir: baseDir}
+	return &Cache{baseDir: baseDir, schema: factSchemaVersion}
 }
 
 // key derives the on-disk filename for a cache entry. source identifies the
@@ -26,7 +41,7 @@ func NewCache(baseDir string) *Cache {
 func (c *Cache) key(source, provider, fn, ticker string) string {
 	date := time.Now().Format("2006-01-02")
 	h := sha256.New()
-	h.Write([]byte(fmt.Sprintf("%s|%s|%s|%s|%s", source, provider, fn, ticker, date)))
+	h.Write([]byte(fmt.Sprintf("v%d|%s|%s|%s|%s|%s", c.schema, source, provider, fn, ticker, date)))
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 

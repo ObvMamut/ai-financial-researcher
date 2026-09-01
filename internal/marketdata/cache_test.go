@@ -44,6 +44,33 @@ func TestCacheScopedBySource(t *testing.T) {
 	}
 }
 
+// The key hashed source, provider, domain, ticker and the date — nothing about
+// the *shape* of what was stored. So on 2026-09-01 an entry written earlier the
+// same day by a binary that predated the computed positioning legs was served
+// back without them, the sentiment guardrail failed open on the absent verdict,
+// and the domain scored exactly the three tickers it exists to silence. A
+// payload-shape version in the key makes that a miss instead of a silent
+// downgrade.
+func TestCacheScopedByFactSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	old := NewCache(dir)
+	old.schema = factSchemaVersion - 1
+	if err := old.Set("src", "prov", "sentiment", "ORCL", "pre-schema payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	var got string
+	if found, _ := NewCache(dir).Get("src", "prov", "sentiment", "ORCL", &got); found {
+		t.Errorf("an entry written under schema v%d was served to schema v%d as %q",
+			old.schema, factSchemaVersion, got)
+	}
+	// The entry is still readable by a client on its own schema, so the version
+	// scopes the cache rather than corrupting it.
+	if found, _ := old.Get("src", "prov", "sentiment", "ORCL", &got); !found || got != "pre-schema payload" {
+		t.Errorf("same-schema Get = %q/%v, want the stored value", got, found)
+	}
+}
+
 // The cache had no TTL at all: an entry written at 04:00 served every read for
 // the rest of the UTC day. On 2026-08-29 that shipped precise entry prices off
 // Thursday closes in a Saturday run, for 8 of 12 names, with "re-price before
