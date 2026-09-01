@@ -30,10 +30,13 @@ const optionsExpiries = 2
 // so two of five nominally independent domains agreed with each other by
 // construction. Open interest is a record of positions actually held.
 //
-// The endpoint is intermittently crumb-gated. That is expected and handled: a
-// 401 degrades sentiment to insider filings alone rather than failing the run.
+// The endpoint is crumb-gated, so every request goes through yahooAuth. It was
+// described here as *intermittently* gated, with a 401 treated as an expected
+// degradation to insider filings alone — but the gate is unconditional now, so
+// the degraded path was the only path and the provider had stopped contributing
+// anything at all. See yahoocrumb.go.
 type yahooOptionsProvider struct {
-	client  *http.Client
+	auth    *yahooAuth
 	baseURL string
 	limiter *Limiter
 }
@@ -49,7 +52,7 @@ func NewYahooOptionsProvider() Provider {
 		limiter = NewLimiter(math.MaxInt32, 1e6, 1e6)
 	}
 	return &yahooOptionsProvider{
-		client:  &http.Client{Timeout: 20 * time.Second},
+		auth:    newYahooAuth(base, rerouted),
 		baseURL: base,
 		limiter: limiter,
 	}
@@ -177,19 +180,20 @@ func (p *yahooOptionsProvider) fetchChain(ctx context.Context, symbol string, ex
 	if expiry > 0 {
 		u += fmt.Sprintf("?date=%d", expiry)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return out, err
-	}
-	req.Header.Set("User-Agent", yahooBrowserUA)
-	resp, err := p.client.Do(req)
+	// Do carries the cookie+crumb and retries once on a 401, which is what a
+	// stale crumb looks like.
+	resp, err := p.auth.Do(ctx, u)
 	if err != nil {
 		return out, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// 401 here is the crumb gate, not a missing ticker. Sentiment degrades
-		// to insider filings; nothing else in the run is affected.
+		// A 401 that survives the retry means the handshake itself is failing;
+		// say so, because "HTTP 401" alone read as a transient gate for weeks.
+		if resp.StatusCode == http.StatusUnauthorized {
+			return out, fmt.Errorf("%w: Yahoo options HTTP 401 for %s after the crumb handshake — the handshake is not working, sentiment is running without option data",
+				ErrUnavailable, symbol)
+		}
 		return out, fmt.Errorf("%w: Yahoo options HTTP %d for %s", ErrUnavailable, resp.StatusCode, symbol)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
