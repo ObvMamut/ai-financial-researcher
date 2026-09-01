@@ -1,7 +1,6 @@
 # source: EuroStoxx 50 representative constituents as of 2026-06-01
 ticker,name,exchange,country,sector
 ASML.AS,ASML Holding NV,Euronext Amsterdam,NL,Information Technology
-LVMH.PA,LVMH Moët Hennessy Louis Vuitton SE,Euronext Paris,FR,Consumer Discretionary
 MC.PA,LVMH Moët Hennessy Louis Vuitton SE,Euronext Paris,FR,Consumer Discretionary
 SAP.DE,SAP SE,Xetra,DE,Information Technology
 SIE.DE,Siemens AG,Xetra,DE,Industrials
@@ -23,8 +22,7 @@ BAYN.DE,Bayer AG,Xetra,DE,Health Care
 EOAN.DE,E.ON SE,Xetra,DE,Utilities
 RWE.DE,RWE AG,Xetra,DE,Utilities
 IFX.DE,Infineon Technologies AG,Xetra,DE,Information Technology
-BASF.DE,BASF SE,Xetra,DE,Materials
-LIN.DE,Linde plc,Xetra,DE,Materials
+BAS.DE,BASF SE,Xetra,DE,Materials
 STLAM.MI,Stellantis NV,Borsa Italiana,NL,Consumer Discretionary
 RACE.MI,Ferrari NV,Borsa Italiana,IT,Consumer Discretionary
 ISP.MI,Intesa Sanpaolo SpA,Borsa Italiana,IT,Financials
@@ -39,13 +37,12 @@ TEF.MC,Telefonica SA,BME,ES,Communication Services
 PHIA.AS,Koninklijke Philips NV,Euronext Amsterdam,NL,Health Care
 INGA.AS,ING Groep NV,Euronext Amsterdam,NL,Financials
 AD.AS,Ahold Delhaize NV,Euronext Amsterdam,NL,Consumer Staples
-DSM.AS,DSM-Firmenich AG,Euronext Amsterdam,NL,Materials
+DSFIR.AS,DSM-Firmenich AG,Euronext Amsterdam,NL,Materials
 RI.PA,Pernod Ricard SA,Euronext Paris,FR,Consumer Staples
 CS.PA,AXA SA,Euronext Paris,FR,Financials
 ACA.PA,Credit Agricole SA,Euronext Paris,FR,Financials
 SGO.PA,Compagnie de Saint-Gobain SA,Euronext Paris,FR,Materials
 VIE.PA,Veolia Environnement SA,Euronext Paris,FR,Utilities
-EDF.PA,Electricite de France SA,Euronext Paris,FR,Utilities
 NOKIA.HE,Nokia Oyj,Helsinki Stock Exchange,FI,Information Technology
 SAMPO.HE,Sampo Oyj,Helsinki Stock Exchange,FI,Financials
 NESTE.HE,Neste Oyj,Helsinki Stock Exchange,FI,Energy

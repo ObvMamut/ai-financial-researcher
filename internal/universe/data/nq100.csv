@@ -34,7 +34,7 @@ PDD,PDD Holdings Inc. ADR,NASDAQ,CN,Consumer Discretionary
 JD,JD.com Inc. ADR,NASDAQ,CN,Consumer Discretionary
 SBUX,Starbucks Corporation,NASDAQ,US,Consumer Discretionary
 MELI,MercadoLibre Inc.,NASDAQ,AR,Consumer Discretionary
-TEMU,Temu (PDD Holdings),NASDAQ,CN,Consumer Discretionary
+PDD,PDD Holdings Inc.,NASDAQ,CN,Consumer Discretionary
 AMGN,Amgen Inc.,NASDAQ,US,Health Care
 GILD,Gilead Sciences Inc.,NASDAQ,US,Health Care
 BIIB,Biogen Inc.,NASDAQ,US,Health Care
@@ -44,10 +44,8 @@ VRTX,Vertex Pharmaceuticals Inc.,NASDAQ,US,Health Care
 IDXX,IDEXX Laboratories Inc.,NASDAQ,US,Health Care
 DXCM,DexCom Inc.,NASDAQ,US,Health Care
 ILMN,Illumina Inc.,NASDAQ,US,Health Care
-T-Mobile,T-Mobile US Inc.,NASDAQ,US,Communication Services
 TMUS,T-Mobile US Inc.,NASDAQ,US,Communication Services
 CHTR,Charter Communications Inc.,NASDAQ,US,Communication Services
-WBA,Walgreens Boots Alliance Inc.,NASDAQ,US,Consumer Staples
 PEP,PepsiCo Inc.,NASDAQ,US,Consumer Staples
 MDLZ,Mondelez International Inc.,NASDAQ,US,Consumer Staples
 HON,Honeywell International Inc.,NASDAQ,US,Industrials

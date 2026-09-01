@@ -16,7 +16,6 @@ func TestUSLineResolvesKnownADRs(t *testing.T) {
 	cases := map[string]string{
 		"2330.TW": "TSM",
 		"9988.HK": "BABA",
-		"LIN.DE":  "LIN",
 		"RACE.MI": "RACE",
 		"7203.T":  "TM",
 		"asml.as": "ASML", // lookup is case-insensitive
