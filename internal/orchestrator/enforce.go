@@ -19,6 +19,27 @@ type enforcement struct {
 	// hallucinated symbols. Their scores were deleted and nothing was added to
 	// `missing`, because the run never asked about them.
 	OffShortlist []string
+	// SelfContradicted lists tickers the agent put in *both* `scores` and
+	// `missing`. Its own report disclaims the score, so the score goes.
+	SelfContradicted []string
+}
+
+// Any reports whether anything at all had to be corrected.
+func (e enforcement) Any() bool {
+	return len(e.Corrected) > 0 || len(e.OffShortlist) > 0 || len(e.SelfContradicted) > 0
+}
+
+// removed is every ticker whose score was deleted, sorted — the set the prose
+// note warns the Chief about.
+func (e enforcement) removed() []string {
+	seen := map[string]bool{}
+	for _, t := range e.Corrected {
+		seen[t] = true
+	}
+	for _, t := range e.SelfContradicted {
+		seen[t] = true
+	}
+	return sortedKeys(seen)
 }
 
 // enforceSpecialistTail rewrites a specialist report so its structured tail
@@ -75,29 +96,8 @@ func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) 
 		isUngrounded[normTicker(t)] = true
 	}
 
-	kept := make([]map[string]json.RawMessage, 0, len(scores))
-	corrected := map[string]bool{}
-	offShortlist := map[string]bool{}
-	for _, s := range scores {
-		t := normTicker(jsonString(s["ticker"]))
-		switch {
-		case t == "":
-			// A score with no ticker names nothing; it cannot be attributed.
-			continue
-		case !onShortlist[t]:
-			offShortlist[t] = true
-		case isUngrounded[t]:
-			corrected[t] = true
-		default:
-			kept = append(kept, s)
-		}
-	}
-	res.Corrected = sortedKeys(corrected)
-	res.OffShortlist = sortedKeys(offShortlist)
-
-	// `missing` is the union of what the agent declared and what it wrongly
-	// scored, normalized and deduped. Off-shortlist names are excluded: the run
-	// never asked about them, so they are not gaps in this domain's coverage.
+	// What the agent itself said it had no data for. Read before the scores are
+	// walked, because a name in both arrays is a score its own author disclaims.
 	declared := map[string]bool{}
 	if rawMissing, ok := tail["missing"]; ok && len(rawMissing) > 0 {
 		var missing []string
@@ -110,13 +110,49 @@ func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) 
 			}
 		}
 	}
+
+	kept := make([]map[string]json.RawMessage, 0, len(scores))
+	corrected := map[string]bool{}
+	offShortlist := map[string]bool{}
+	selfContradicted := map[string]bool{}
+	for _, s := range scores {
+		t := normTicker(jsonString(s["ticker"]))
+		switch {
+		case t == "":
+			// A score with no ticker names nothing; it cannot be attributed.
+			continue
+		case !onShortlist[t]:
+			offShortlist[t] = true
+		case isUngrounded[t]:
+			corrected[t] = true
+		case declared[t]:
+			// Scored *and* declared missing. Enforcement only ever checked the
+			// agent against the app's computed coverage, never against its own
+			// report, so on 2026-09-01 the sentiment tail scored ORCL "neutral,
+			// strength 3" and listed ORCL in `missing` — both survived into the
+			// artifact the Chief read, and the base score counted 15% of the
+			// domain weight as covered on the strength of a score the report
+			// disowned. The stated invariant below says a ticker is in one array
+			// or the other; this makes it true.
+			selfContradicted[t] = true
+		default:
+			kept = append(kept, s)
+		}
+	}
+	res.Corrected = sortedKeys(corrected)
+	res.OffShortlist = sortedKeys(offShortlist)
+	res.SelfContradicted = sortedKeys(selfContradicted)
+
+	// `missing` is the union of what the agent declared and what it wrongly
+	// scored, normalized and deduped. Off-shortlist names are excluded: the run
+	// never asked about them, so they are not gaps in this domain's coverage.
 	for t := range corrected {
 		declared[t] = true
 	}
 	missing := sortedKeys(declared)
 
 	// Nothing to correct: hand the report back byte-identical.
-	if len(res.Corrected) == 0 && len(res.OffShortlist) == 0 && sameStringSet(missing, tail["missing"]) {
+	if !res.Any() && sameStringSet(missing, tail["missing"]) {
 		return stdout, res, nil
 	}
 
@@ -139,7 +175,58 @@ func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) 
 	if !ok {
 		return stdout, res, fmt.Errorf("could not splice the corrected tail into the %s report", role)
 	}
-	return out, res, nil
+	return withRemovalNote(out, role, res), res, nil
+}
+
+// withRemovalNote prepends a warning naming the tickers whose scores were
+// deleted, so the Chief Analyst reads the correction rather than only its
+// silent effect.
+//
+// Deleting the score was never enough. The macro report on 2026-09-01 had its
+// scores for 8035.T, 9984.T, BMW.DE and STLAM.MI removed as ungrounded, and the
+// numbers duly vanished — but its *paragraphs* about those names stayed, and the
+// Chief read them and acted:
+//
+//	"base 40 −3: report contradiction — Macro prose, 'shorted against ^N225
+//	 mean-reverting, which is a headwind for the bearish call,' while Macro
+//	 scored the name `missing`"
+//
+// It said plainly what it was doing, and did it twice, moving two of the five
+// confidences. So the guarantee that an ungrounded domain contributes nothing
+// was not real; it was routed around through prose.
+//
+// The note does not gag the prose — some of what macro leaned on there is
+// verified regime data the Chief receives separately, and deleting an agent's
+// reasoning while keeping its conclusions would be worse. It labels it, which is
+// what lets the Chief tell context from evidence.
+func withRemovalNote(report, role string, e enforcement) string {
+	removed := e.removed()
+	if len(removed) == 0 {
+		return report
+	}
+	var b strings.Builder
+	b.WriteString("> **Enforcement notice (added by the app, not by the ")
+	b.WriteString(role)
+	b.WriteString(" agent).** This run had no verified ")
+	b.WriteString(role)
+	b.WriteString(" data for ")
+	b.WriteString(strings.Join(removed, ", "))
+	b.WriteString(", so ")
+	if len(removed) == 1 {
+		b.WriteString("its score below was deleted and the name was moved to `missing`. ")
+	} else {
+		b.WriteString("their scores below were deleted and the names were moved to `missing`. ")
+	}
+	b.WriteString("Any prose in this report about ")
+	if len(removed) == 1 {
+		b.WriteString("that name")
+	} else {
+		b.WriteString("those names")
+	}
+	b.WriteString(" is unscored context: it is not evidence from this domain and must not be used to adjust a base score. ")
+	b.WriteString("Where it appeals to market regime, the verified regime block is the authority.\n\n")
+	b.WriteString(report)
+	return b.String()
 }
 
 // normTicker upper-cases and trims a symbol for comparison.

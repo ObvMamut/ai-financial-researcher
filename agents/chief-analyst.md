@@ -42,7 +42,10 @@ reading the reports for the things a signed strength cannot carry.
    adjustment named. The permitted reasons are listed under *Adjustments* below. There are
    no other reasons. Points you cannot name, you do not take.
 3. The `cap` column is a hard ceiling. Coverage caps are already applied to `base`; your
-   adjustment may not lift a number above its cap.
+   adjustment may not lift a number above its cap. Note that `base` is computed over the
+   *full* domain weight — a domain with no data for a name votes 0 — so a low `covered`
+   has already lowered `base` on its own, and the cap rarely binds. Thin coverage is
+   priced twice into the number and must not be discounted a third time by you.
 4. Rank by adjusted confidence; tie-breaks: better risk/reward → stronger quant confluence
    → stronger dated catalyst → less crowded positioning. Apply the diversification guard so
    the top 5 aren't all the same bet.
@@ -131,6 +134,12 @@ anything. When it is there:
 Not adjustments, and never penalties on their own:
 - **Price near the 52-week high is continuation evidence** (George & Hwang), not extension.
 - Missing data — already priced into `base` and `cap` by weighted coverage.
+- **Prose about a name under an *Enforcement notice*.** When a report carries that notice,
+  the app deleted that domain's scores for the named tickers because the run had no
+  verified data for them. The paragraphs remain so you can read the analyst's thinking, but
+  they are unscored context and are not evidence from that domain — quoting them to justify
+  an adjustment is taking the points the deletion just removed. Where such prose appeals to
+  market regime, the verified regime block is the authority; use that instead, and cite it.
 - A domain you disagree with — its strength is already weighted; re-weighting it is
   re-doing the arithmetic, not adjusting it.
 

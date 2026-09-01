@@ -75,12 +75,12 @@ func shortlistOf(tickers ...string) []model.Candidate {
 	return out
 }
 
-func TestComputeBaseScoresIsWeightedAndRenormalised(t *testing.T) {
+func TestComputeBaseScoresIsWeightedOverTotalWeight(t *testing.T) {
 	// AAA: quant +8 (.35), news +6 (.25), fundamentals −4 (.15), sentiment
-	// neutral (.15, covered but unsigned), macro absent (.10 uncovered).
+	// neutral (.15, covered but unsigned), macro absent (.10, votes 0).
 	//   weighted = .35·.8 + .25·.6 − .15·.4 + 0 = 0.37
 	//   covered  = .35 + .25 + .15 + .15       = 0.90
-	//   signed   = 0.37 / 0.90                 = 0.4111 → 41
+	//   signed   = 0.37 / 1.00                 = 0.37 → 37
 	reports := []agents.ReportContext{
 		domainReport("quant", "AAA bullish 8"),
 		domainReport("news", "AAA bullish 6"),
@@ -93,8 +93,8 @@ func TestComputeBaseScoresIsWeightedAndRenormalised(t *testing.T) {
 	if b.Direction != model.DirectionBuy {
 		t.Errorf("direction = %q, want BUY", b.Direction)
 	}
-	if b.Confidence != 41 {
-		t.Errorf("confidence = %d, want 41 (0.37/0.90 renormalised)", b.Confidence)
+	if b.Confidence != 37 {
+		t.Errorf("confidence = %d, want 37 (0.37 over the full weight)", b.Confidence)
 	}
 	if b.CoveredWeight < 0.899 || b.CoveredWeight > 0.901 {
 		t.Errorf("covered weight = %.3f, want 0.90", b.CoveredWeight)
@@ -114,19 +114,22 @@ func TestComputeBaseScoresIsWeightedAndRenormalised(t *testing.T) {
 }
 
 func TestBaseScoreCapsThinCoverage(t *testing.T) {
-	// Coverage caps are arithmetic here, not prose in a persona: a name only one
-	// domain looked at cannot be a 100-confidence idea however loud that domain is.
+	// A name only one domain looked at cannot be a 100-confidence idea however
+	// loud that domain is. Dividing by the total weight enforces that on its own
+	// — the strongest possible quant-only read is 0.35 — so the caps are recorded
+	// but do not bind. They stay as a redundant floor if the weights change.
 	cases := []struct {
-		name    string
-		reports []agents.ReportContext
-		wantCap int
+		name     string
+		reports  []agents.ReportContext
+		wantCap  int
+		wantConf int
 	}{
 		{"quant only, 0.35 covered", []agents.ReportContext{
-			domainReport("quant", "AAA bullish 10")}, 40},
+			domainReport("quant", "AAA bullish 10")}, 40, 35},
 		{"quant+fundamentals, 0.50 covered", []agents.ReportContext{
-			domainReport("quant", "AAA bullish 10"), domainReport("fundamentals", "AAA bullish 10")}, 55},
+			domainReport("quant", "AAA bullish 10"), domainReport("fundamentals", "AAA bullish 10")}, 55, 50},
 		{"quant+news, 0.60 covered", []agents.ReportContext{
-			domainReport("quant", "AAA bullish 10"), domainReport("news", "AAA bullish 10")}, 0},
+			domainReport("quant", "AAA bullish 10"), domainReport("news", "AAA bullish 10")}, 0, 60},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -134,14 +137,44 @@ func TestBaseScoreCapsThinCoverage(t *testing.T) {
 			if b.Cap != tc.wantCap {
 				t.Errorf("cap = %d, want %d (covered %.2f)", b.Cap, tc.wantCap, b.CoveredWeight)
 			}
-			wantConf := 100
-			if tc.wantCap > 0 {
-				wantConf = tc.wantCap
-			}
-			if b.Confidence != wantConf {
-				t.Errorf("confidence = %d, want %d", b.Confidence, wantConf)
+			if b.Confidence != tc.wantConf {
+				t.Errorf("confidence = %d, want %d", b.Confidence, tc.wantConf)
 			}
 		})
+	}
+}
+
+// TestBaseScoreRanksThickCoverageAboveThinCoverage pins the defect the
+// 2026-09-01 run shipped: three quant-only foreign listings ranked above the one
+// name every domain had read.
+//
+// The numbers are that run's, from its own reports. BAYN.DE was scored by quant
+// alone at +6 and reached 40 (its coverage cap) while AMGN — quant +7, news +5,
+// fundamentals neutral, sentiment −4, macro +4 — reached 35, because dividing by
+// the covered weight let one loud domain keep its full magnitude.
+func TestBaseScoreRanksThickCoverageAboveThinCoverage(t *testing.T) {
+	bases := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "BAYN.DE bullish 6", "AMGN bullish 7"),
+		domainReport("news", "AMGN bullish 5"),
+		domainReport("fundamentals", "AMGN neutral 4"),
+		domainReport("sentiment", "AMGN bearish 4"),
+		domainReport("macro", "AMGN bullish 4"),
+	}, shortlistOf("BAYN.DE", "AMGN"))
+
+	thin := baseOf(t, bases, "BAYN.DE") // .35·.6            = 0.21 → 21
+	thick := baseOf(t, bases, "AMGN")   // .35·.7+.25·.5−.15·.4+.10·.4 = 0.35 → 35
+	if thin.Confidence != 21 {
+		t.Errorf("quant-only BAYN.DE = %d, want 21", thin.Confidence)
+	}
+	if thick.Confidence != 35 {
+		t.Errorf("fully covered AMGN = %d, want 35", thick.Confidence)
+	}
+	if thin.Confidence >= thick.Confidence {
+		t.Errorf("one domain at +6 (%d) must not outrank five domains averaging +3.5 (%d)",
+			thin.Confidence, thick.Confidence)
+	}
+	if bases[0].Ticker != "AMGN" {
+		t.Errorf("ranked %s first, want AMGN — the name every domain could read", bases[0].Ticker)
 	}
 }
 

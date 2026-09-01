@@ -16,6 +16,11 @@ import (
 // model applied by counting report sections rather than by weight — so a run
 // that lost macro (10% of the weight) was capped exactly as hard as one that
 // lost quant (35%). Weighted coverage is the honest measure and it is arithmetic.
+//
+// Since the score is divided by *total* weight (see computeBaseScores), coverage
+// already bounds the score arithmetically — a quant-only name cannot exceed 35
+// because quant is 35% of the weight. The caps stay as a redundant floor under
+// that: they cost nothing and they keep working if the weights are reconfigured.
 const (
 	thinCoverage    = 0.6 // below this share of total domain weight → cap 55
 	scarceCoverage  = 0.4 // below this → cap 40
@@ -37,7 +42,9 @@ type BaseScore struct {
 	// Direction is the sign of the weighted vote; empty when no domain scored
 	// the ticker, or when the signed domains cancel exactly.
 	Direction model.Direction `json:"direction,omitempty"`
-	// Signed is the renormalised weighted score, ∈ [−1, 1], positive = bullish.
+	// Signed is the weighted score over the *full* domain weight, ∈ [−1, 1],
+	// positive = bullish. A domain with no data contributes 0 to it, which is
+	// what makes thin coverage score below thick coverage.
 	Signed float64 `json:"signed"`
 	// Confidence is |Signed|·100 with the coverage cap applied.
 	Confidence int `json:"confidence"`
@@ -150,11 +157,21 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 	for _, t := range order {
 		a := byTicker[t]
 		b := BaseScore{Ticker: t, Domains: a.domains}
-		if a.covered > 0 {
-			b.Signed = a.weighted / a.covered // renormalise over the domains present
-			if totalWeight > 0 {
-				b.CoveredWeight = a.covered / totalWeight
-			}
+		if a.covered > 0 && totalWeight > 0 {
+			// Divide by the *total* weight, not the covered weight: a domain with
+			// no data for this name casts an explicit neutral vote.
+			//
+			// Renormalising over the covered weight instead is how the
+			// 2026-09-01 run put three quant-only foreign listings above the one
+			// name all five domains had read. Dividing by what was actually
+			// present means a missing domain never shrinks the magnitude — a lone
+			// loud domain renormalises to 50-60 and lands exactly on its coverage
+			// cap, while five domains that partly disagree average down to 35. The
+			// cap was acting as a floor-boost for thin evidence rather than as a
+			// ceiling. Under this arithmetic the same quant-only names score 18-21
+			// and AMGN's 35 leads, which is the ordering the evidence supports.
+			b.Signed = a.weighted / totalWeight
+			b.CoveredWeight = a.covered / totalWeight
 		}
 		if len(b.Domains) == 0 {
 			b.Domains = nil
@@ -212,9 +229,10 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 	var sb strings.Builder
 	sb.WriteString("### Computed base scores (authoritative)\n\n")
 	sb.WriteString("Computed in-process from the `scores` tails of the reports below, using the weights above: ")
-	sb.WriteString("`base = Σ wᵈ · signᵈ · strengthᵈ/10`, renormalised over the domains that actually scored the name. ")
+	sb.WriteString("`base = Σ wᵈ · signᵈ · strengthᵈ/10` over the *full* domain weight — a domain with no data for a name votes 0. ")
 	sb.WriteString(fmt.Sprintf("**Start from `base` and adjust by at most ±%d**, naming each adjustment. ", band))
-	sb.WriteString("`covered` is the share of total domain weight behind the number; `cap` is the ceiling that coverage imposes. ")
+	sb.WriteString("`covered` is the share of total domain weight behind the number; a low `covered` has already lowered `base`, ")
+	sb.WriteString("so do not discount thin coverage a second time. `cap` is the further ceiling coverage imposes. ")
 	sb.WriteString("Per-domain cells are signed strengths (−10…+10); `·` means that domain had no data for the name.\n\n")
 	sb.WriteString("| ticker | base dir | base | covered | cap |")
 	for _, d := range baseScoreDomains {

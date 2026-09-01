@@ -52,14 +52,22 @@ For each shortlisted ticker, over the domains **d** that scored it:
 
 ```
 signᵈ    = +1 bullish, −1 bearish, 0 neutral
-weighted = Σ wᵈ · signᵈ · strengthᵈ / 10
-covered  = Σ wᵈ
-base     = weighted / covered            ∈ [−1, 1]
+weighted = Σ wᵈ · signᵈ · strengthᵈ / 10        (over the domains that scored it)
+covered  = Σ wᵈ                                 (over the domains that scored it)
+total    = Σ wᵈ                                 (over all five domains)
+base     = weighted / total              ∈ [−1, 1]
 ```
 
-`base` is renormalised over the domains actually present, so a name three domains covered
-is not penalised twice for the two that were absent — coverage is handled by the caps
-below instead.
+`base` divides by the **total** weight, not the covered weight: a domain with no data for
+a name casts an explicit neutral vote. So thin coverage lowers `base` directly, and a
+quant-only name cannot arithmetically exceed 35.
+
+This used to divide by `covered`, which inverted the ordering it was meant to protect.
+Missing domains then had no effect on the magnitude at all: one loud domain renormalised
+to 50–60 and landed exactly on its coverage cap, while five domains that partly disagreed
+averaged down to 35. The 2026-09-01 run shipped three quant-only foreign listings at 40
+above the one name all five domains had read at 35, and the caps below were functioning as
+a floor-boost for thin evidence rather than as a ceiling on it.
 
 - **direction** = the sign of `base` (positive → BUY, negative → SELL). Exactly zero, or
   no coverage at all, means no direction and no idea.
@@ -78,6 +86,10 @@ Let `coverage = covered / Σ all weights`.
 A name only the quant domain could reach (0.35 of the weight) caps at 40 however emphatic
 that domain is. This replaced a prose rule in the persona that counted *reports* rather
 than weight, so losing macro (0.10) was penalised exactly as hard as losing quant (0.35).
+
+Since `base` now divides by the total weight, these caps rarely bind — a quant-only name
+tops out at 35 on the arithmetic alone. They are kept as a redundant floor: they cost
+nothing and they keep holding if the weights are reconfigured.
 
 ## The Chief's adjustment band
 
@@ -162,7 +174,7 @@ outcome, not a shortfall.
 | Stop distance | `1.0σ … 2.0σ` | `stop_sigma_min`, `stop_sigma_max` |
 | Target distance | `≤ 3.5σ` | `target_sigma_max` |
 | Reward:risk | `≥ 1.8` | `rr_min` |
-| Liquidity | `AvgDollarVol20 ≥ $20M` | `adv_min_usd` |
+| Liquidity | `AvgDollarVol20USD ≥ $20M` (FX-converted) | `adv_min_usd` |
 | Expectancy | `> 0` | `cost_bps`, `edge_sigma_daily` |
 
 **Expectancy** is a seeded Monte-Carlo first-passage simulation (5,000 lognormal paths,

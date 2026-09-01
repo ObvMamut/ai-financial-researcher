@@ -168,3 +168,90 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// The 2026-09-01 sentiment report scored ORCL "neutral, strength 3" and listed
+// ORCL in its own `missing` array. Enforcement only ever checked the agent
+// against the app's computed coverage — ORCL is a US listing, so it was
+// grounded — and never against the agent's own report. Both survived into the
+// artifact the Chief read, and the base score counted 15% of the domain weight
+// as covered on the strength of a number the report disowned.
+func TestEnforceDropsScoresTheAgentItselfCallsMissing(t *testing.T) {
+	in := report("Positioning notes.", `{"domain":"sentiment","scores":[
+	  {"ticker":"AMGN","bias":"bearish","strength":4,"note":"routine insider selling"},
+	  {"ticker":"ORCL","bias":"neutral","strength":3,"note":"positioning evidence is empty"}
+	],"missing":["ORCL"]}`)
+
+	out, res, err := enforceSpecialistTail("sentiment", in, nil, []string{"AMGN", "ORCL"})
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if want := []string{"ORCL"}; !equalStrings(res.SelfContradicted, want) {
+		t.Errorf("SelfContradicted = %v, want %v", res.SelfContradicted, want)
+	}
+	if len(res.Corrected) != 0 {
+		t.Errorf("Corrected = %v — ORCL is grounded, the agent just disclaimed it", res.Corrected)
+	}
+
+	got := tailOf(t, out)
+	if len(got.Scores) != 1 || got.Scores[0].Ticker != "AMGN" {
+		t.Errorf("scores = %+v, want AMGN only", got.Scores)
+	}
+	if !equalStrings(got.Missing, []string{"ORCL"}) {
+		t.Errorf("missing = %v, want [ORCL]", got.Missing)
+	}
+}
+
+// Deleting a score was never enough. Macro's scores for the four non-US names
+// were correctly removed as ungrounded on 2026-09-01, and its paragraphs about
+// them stayed — so the Chief read the prose and took two −3 adjustments from a
+// domain the app had just ruled could not see those names.
+func TestEnforceLabelsProseAboutStrippedNames(t *testing.T) {
+	in := report(
+		"9984.T is shorted against ^N225 mean-reverting, which is a headwind for the bearish call.",
+		`{"domain":"macro","scores":[
+	  {"ticker":"9984.T","bias":"bearish","strength":3,"note":"regime leans"},
+	  {"ticker":"AMGN","bias":"bullish","strength":4,"note":"SPX near highs"}
+	],"missing":[]}`)
+
+	out, res, err := enforceSpecialistTail("macro", in, []string{"9984.T"}, []string{"9984.T", "AMGN"})
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if want := []string{"9984.T"}; !equalStrings(res.Corrected, want) {
+		t.Fatalf("Corrected = %v, want %v", res.Corrected, want)
+	}
+	// The prose survives — some of what it leans on is verified regime data the
+	// Chief gets separately — but it is now labelled.
+	if !strings.Contains(out, "headwind for the bearish call") {
+		t.Error("the agent's reasoning was deleted; it should be labelled, not removed")
+	}
+	for _, want := range []string{"Enforcement notice", "9984.T", "unscored context", "must not be used to adjust a base score"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("removal note missing %q:\n%s", want, out)
+		}
+	}
+	// The note must precede the prose it is about, or it is a footnote.
+	if strings.Index(out, "Enforcement notice") > strings.Index(out, "headwind") {
+		t.Error("the notice must come before the prose it qualifies")
+	}
+}
+
+// A report with nothing to correct must not grow a notice.
+func TestEnforceAddsNoNoticeWhenNothingWasRemoved(t *testing.T) {
+	in := report("prose", `{"domain":"quant","scores":[
+	  {"ticker":"AMGN","bias":"bullish","strength":7,"note":"ok"}
+	],"missing":[]}`)
+	out, res, err := enforceSpecialistTail("quant", in, nil, []string{"AMGN"})
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if res.Any() {
+		t.Errorf("nothing should have been corrected, got %+v", res)
+	}
+	if strings.Contains(out, "Enforcement notice") {
+		t.Error("an honest report must not be annotated")
+	}
+	if out != in {
+		t.Error("an honest report must come back byte-identical")
+	}
+}
