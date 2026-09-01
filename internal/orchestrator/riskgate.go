@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
@@ -52,7 +53,24 @@ type riskFinding struct {
 	// re-prompt does not fix it. Book-level findings are not hard: dropping a
 	// sound idea because of its neighbour is not a risk control.
 	Hard bool
+	// Observational marks a finding the Chief Analyst cannot act on, so it is
+	// logged and warned about but never spent on the single corrective call.
+	//
+	// Every finding used to be appended to the re-prompt under the heading
+	// "CRITICAL: Your previous output failed validation" — including
+	// noteDirectionBalance, whose own comment says it is deliberately log-only
+	// because forcing balance manufactures a bad trade; "has no verified price
+	// data, so its levels cannot be checked", which is a fact about the run's
+	// data and not about the output; and sizeIdea's "raise account_equity or
+	// risk_per_trade_pct", which is an instruction to the operator. Asking a
+	// model to fix any of those spends the one re-prompt on nothing and invites
+	// it to rewrite the ideas that were already sound.
+	Observational bool
 }
+
+// actionable reports whether a finding names something the Chief can change by
+// re-emitting its JSON.
+func (f riskFinding) actionable() bool { return !f.Observational }
 
 // applyRiskGate scores, sizes and checks the final ideas.
 //
@@ -118,15 +136,19 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	hard := func(format string, args ...any) {
 		out = append(out, riskFinding{Ticker: idea.Ticker, Hard: true, Message: fmt.Sprintf(format, args...)})
 	}
-	soft := func(format string, args ...any) {
-		out = append(out, riskFinding{Ticker: idea.Ticker, Message: fmt.Sprintf(format, args...)})
+	// note records something the run should surface but the Chief cannot fix.
+	note := func(format string, args ...any) {
+		out = append(out, riskFinding{Ticker: idea.Ticker, Observational: true, Message: fmt.Sprintf(format, args...)})
 	}
 
 	// Sizing is computed whatever else is wrong: a share count is what makes an
 	// idea actionable, and "half size" is not a position.
+	//
+	// A sizing failure is addressed to the operator ("raise account_equity"), not
+	// to the model: the Chief cannot change the account.
 	m, haveQuant := quantFor(v, idea.Ticker)
 	if msg := sizeIdea(idea, m, cfg); msg != "" {
-		soft("%s", msg)
+		note("%s", msg)
 	}
 
 	if idea.Entry <= 0 || idea.Stop <= 0 || idea.Target <= 0 {
@@ -146,7 +168,9 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	}
 
 	if !haveQuant {
-		soft("%s has no verified price data, so its levels cannot be checked against realized volatility", idea.Ticker)
+		// A statement about what this run could fetch, not about what the Chief
+		// wrote. Re-emitting the JSON cannot conjure the price history.
+		note("%s has no verified price data, so its levels cannot be checked against realized volatility", idea.Ticker)
 		return out
 	}
 
@@ -167,8 +191,23 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	if h <= 0 {
 		h = 10
 	}
+
+	// The event and date checks come first because they do not depend on
+	// volatility, and they used to sit after the `unit <= 0` return below — so a
+	// name whose σ could not be computed silently lost its earnings-window check
+	// and its fabricated-date check as well as its geometry checks, and shipped
+	// with no finding of any kind. An idea nothing could be verified about must
+	// not be indistinguishable from one that passed.
+	out = append(out, checkEventWindow(idea, v.Events)...)
+	out = append(out, checkFabricatedDates(idea, v.Dates)...)
+
 	unit := m.SigmaDaily * math.Sqrt(h) * m.LastClose // 1σ of the holding period, in price
 	if unit <= 0 {
+		// Observational: the Chief cannot supply a volatility this run failed to
+		// compute. It is recorded so the gap is visible in the warnings rather
+		// than absent from them.
+		note("%s: realized volatility is not computable from its bars, so the stop/target σ bands and the expectancy simulation were not run on it",
+			idea.Ticker)
 		return out
 	}
 	if s := risk / unit; s < cfg.StopSigmaMin {
@@ -198,9 +237,6 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 		hard("%s: simulated expectancy is %+.0f bps net of %.0f bps costs — the geometry loses money at the assumed edge (breakeven win rate %.0f%%)",
 			idea.Ticker, ev, cfg.CostBps, idea.BreakevenWinRate*100)
 	}
-
-	out = append(out, checkEventWindow(idea, v.Events)...)
-	out = append(out, checkFabricatedDates(idea, v.Dates)...)
 	return out
 }
 
@@ -406,6 +442,44 @@ func checkEventWindow(idea *model.TradeIdea, events map[string]time.Time) []risk
 		date.Format("2006-01-02"), h)}}
 }
 
+// collectVerifiedDates adds every date one data pack carries to the run's set of
+// dates a report may cite. It is the authority checkFabricatedDates measures
+// against, so anything it misses becomes an accusation of invention.
+//
+// The two sources are not the same thing, and conflating them was the bug. A
+// fact's AsOf says *when it was collected*, which is right for a headline (its
+// publication time) and wrong for a calendar entry: the "Next earnings" fact for
+// MRK on 2026-09-01 carries AsOf 2026-09-01 and the value 2026-10-29. Only AsOf
+// was collected, so when the Chief correctly wrote "Earnings 2026-10-29
+// [verified] — outside the window", the gate reported it as appearing "in no
+// verified fact this run collected". That cost the idea 10 points, spent the run's
+// one corrective re-prompt, and talked the Chief into deleting three true earnings
+// dates and writing into the shipped notes that the run had never held them —
+// leaving five position notes telling a trader no earnings date was verified when
+// three were.
+func collectVerifiedDates(into map[string]bool, pack *marketdata.DataPack) {
+	if pack == nil {
+		return
+	}
+	add := func(t time.Time) {
+		if !t.IsZero() {
+			into[t.UTC().Format("2006-01-02")] = true
+		}
+	}
+	// The scheduled event itself, which no AsOf carries.
+	for _, d := range pack.EventDates {
+		add(d)
+	}
+	for _, td := range pack.ByTicker {
+		for _, f := range td.Facts {
+			add(f.AsOf)
+		}
+	}
+	for _, f := range pack.MacroFacts {
+		add(f.AsOf)
+	}
+}
+
 // isoDate matches the dates an agent writes when it is being specific.
 var isoDate = regexp.MustCompile(`\b(20\d{2})-(\d{2})-(\d{2})\b`)
 
@@ -561,7 +635,10 @@ func noteDirectionBalance(res *model.IdeasResult, v verified) []riskFinding {
 	if buys == 0 {
 		side = "short"
 	}
-	return []riskFinding{{Message: fmt.Sprintf(
+	// Observational, which is what "log-only" above has to mean in code: every
+	// finding was being appended to the corrective re-prompt, so this one asked
+	// the Chief to fix the very imbalance the comment says not to force.
+	return []riskFinding{{Observational: true, Message: fmt.Sprintf(
 		"note: all %d ideas are %s, against a market read of %s — the book has no hedge if that read is wrong",
 		len(res.Ideas), side, strings.Join(regimes, "; "))}}
 }

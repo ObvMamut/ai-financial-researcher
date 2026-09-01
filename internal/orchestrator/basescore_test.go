@@ -78,9 +78,13 @@ func shortlistOf(tickers ...string) []model.Candidate {
 func TestComputeBaseScoresIsWeightedOverTotalWeight(t *testing.T) {
 	// AAA: quant +8 (.35), news +6 (.25), fundamentals −4 (.15), sentiment
 	// neutral (.15, covered but unsigned), macro absent (.10, votes 0).
-	//   weighted = .35·.8 + .25·.6 − .15·.4 + 0 = 0.37
-	//   covered  = .35 + .25 + .15 + .15       = 0.90
-	//   signed   = 0.37 / 1.00                 = 0.37 → 37
+	//   weighted  = .35·.8 + .25·.6 − .15·.4 + 0 = 0.37
+	//   covered   = .35 + .25 + .15 + .15        = 0.90
+	//   signed    = 0.37 / 1.00                  = 0.37   (raw, auditable)
+	//   reference = .35·.8+.25·.8+.15·.8+.15·.8+.10·.5 = 0.77
+	//   scaled    = 0.37 / 0.77                  = 0.4805 → 48
+	// The macro domain still votes 0 for having no data — the reference sums over
+	// all five domains, so a missing one shrinks the score exactly as before.
 	reports := []agents.ReportContext{
 		domainReport("quant", "AAA bullish 8"),
 		domainReport("news", "AAA bullish 6"),
@@ -93,8 +97,11 @@ func TestComputeBaseScoresIsWeightedOverTotalWeight(t *testing.T) {
 	if b.Direction != model.DirectionBuy {
 		t.Errorf("direction = %q, want BUY", b.Direction)
 	}
-	if b.Confidence != 37 {
-		t.Errorf("confidence = %d, want 37 (0.37 over the full weight)", b.Confidence)
+	if b.Confidence != 48 {
+		t.Errorf("confidence = %d, want 48 (0.37 over the full weight, scored against the 0.77 reference)", b.Confidence)
+	}
+	if b.Signed < 0.369 || b.Signed > 0.371 {
+		t.Errorf("Signed = %.4f, want the raw 0.37 kept for audit", b.Signed)
 	}
 	if b.CoveredWeight < 0.899 || b.CoveredWeight > 0.901 {
 		t.Errorf("covered weight = %.3f, want 0.90", b.CoveredWeight)
@@ -115,21 +122,25 @@ func TestComputeBaseScoresIsWeightedOverTotalWeight(t *testing.T) {
 
 func TestBaseScoreCapsThinCoverage(t *testing.T) {
 	// A name only one domain looked at cannot be a 100-confidence idea however
-	// loud that domain is. Dividing by the total weight enforces that on its own
-	// — the strongest possible quant-only read is 0.35 — so the caps are recorded
-	// but do not bind. They stay as a redundant floor if the weights change.
+	// loud that domain is. Dividing by the total weight does most of that work on
+	// its own; scoring against the reference then binds the caps at the extremes,
+	// which is the job they are documented to do. A cap can only ever lower a
+	// thin name, so it cannot lift one past a thick one.
 	cases := []struct {
 		name     string
 		reports  []agents.ReportContext
 		wantCap  int
 		wantConf int
 	}{
+		// 0.35 raw → 0.35/0.77 = 45, capped to 40.
 		{"quant only, 0.35 covered", []agents.ReportContext{
-			domainReport("quant", "AAA bullish 10")}, 40, 35},
+			domainReport("quant", "AAA bullish 10")}, 40, 40},
+		// 0.50 raw → 0.50/0.77 = 65, capped to 55.
 		{"quant+fundamentals, 0.50 covered", []agents.ReportContext{
-			domainReport("quant", "AAA bullish 10"), domainReport("fundamentals", "AAA bullish 10")}, 55, 50},
+			domainReport("quant", "AAA bullish 10"), domainReport("fundamentals", "AAA bullish 10")}, 55, 55},
+		// 0.60 raw → 0.60/0.77 = 78, uncapped at 60% coverage.
 		{"quant+news, 0.60 covered", []agents.ReportContext{
-			domainReport("quant", "AAA bullish 10"), domainReport("news", "AAA bullish 10")}, 0, 60},
+			domainReport("quant", "AAA bullish 10"), domainReport("news", "AAA bullish 10")}, 0, 78},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,6 +152,84 @@ func TestBaseScoreCapsThinCoverage(t *testing.T) {
 				t.Errorf("confidence = %d, want %d", b.Confidence, tc.wantConf)
 			}
 		})
+	}
+}
+
+// TestBaseScoreScalingPreservesOrdering is the property that must survive any
+// future change to the confidence scale.
+//
+// Scoring against referenceTotal is a positive scalar multiply, so it may change
+// what the numbers are and must never change which name outranks which. Getting
+// that wrong is not hypothetical: renormalising *per name* over the covered
+// weight is what e0b7584 had to undo, because it let a lone loud domain outrank
+// five that partly disagreed.
+//
+// The fixture is the real 2026-09-01T14-47-26 shortlist, scores taken from that
+// run's own specialist tails.
+func TestBaseScoreScalingPreservesOrdering(t *testing.T) {
+	bases := computeBaseScores(testWeights, run20260901Reports(), shortlistOf(
+		"AMGN", "MRK", "BBVA.MC", "STLAM.MI", "IBM", "QCOM", "TTD", "ORCL",
+		"O39.SI", "2454.TW", "BAYN.DE", "BMW.DE"))
+
+	// Ranking by the raw weighted score must match the shipped ranking by the
+	// scaled one. Anything the coverage caps touch is excluded: a cap only ever
+	// lowers a thin name, which is its job, and is not part of the scaling claim.
+	var prevRaw, prevConf = 2.0, 101
+	for _, b := range bases {
+		if b.Cap > 0 && b.Confidence == b.Cap {
+			continue
+		}
+		raw := abs(b.Signed)
+		if raw > prevRaw+1e-9 {
+			t.Errorf("%s: scaled ranking disagrees with the raw weighted ranking (raw %.4f after %.4f)",
+				b.Ticker, raw, prevRaw)
+		}
+		if b.Confidence > prevConf {
+			t.Errorf("%s: bases came back unsorted (%d after %d)", b.Ticker, b.Confidence, prevConf)
+		}
+		prevRaw, prevConf = raw, b.Confidence
+	}
+
+	// The scale itself: the run shipped 39/38/36/36/32 and every idea rendered as
+	// a red bar. These are the same reports read on the corrected scale.
+	want := map[string]int{
+		"MRK": 51, "AMGN": 50, "STLAM.MI": 49, "BBVA.MC": 47, "IBM": 45, "QCOM": 45,
+		"O39.SI": 36, "2454.TW": 32, "BAYN.DE": 27, "BMW.DE": 23,
+	}
+	for ticker, conf := range want {
+		if got := baseOf(t, bases, ticker).Confidence; got != conf {
+			t.Errorf("%s = %d, want %d", ticker, got, conf)
+		}
+	}
+
+	// Thin coverage still ranks below thick, which is the guarantee e0b7584 bought
+	// and the reason the divisor is global rather than per-name.
+	if thin, thick := baseOf(t, bases, "O39.SI"), baseOf(t, bases, "IBM"); thin.Confidence >= thick.Confidence {
+		t.Errorf("quant-only O39.SI (%d) must not outrank fully covered IBM (%d)",
+			thin.Confidence, thick.Confidence)
+	}
+}
+
+// run20260901Reports reproduces the specialist tails of the 2026-09-01T14-47-26
+// run, which is the run this scale change was diagnosed from.
+func run20260901Reports() []agents.ReportContext {
+	return []agents.ReportContext{
+		domainReport("quant",
+			"AMGN bullish 7", "MRK bullish 6", "BBVA.MC bullish 6", "STLAM.MI bearish 5",
+			"IBM bearish 5", "QCOM bearish 5", "TTD bearish 4", "ORCL bearish 5",
+			"O39.SI bullish 8", "2454.TW bullish 7", "BAYN.DE bullish 6", "BMW.DE bearish 5"),
+		domainReport("news",
+			"AMGN bullish 5", "MRK bullish 6", "BBVA.MC bullish 6", "STLAM.MI bearish 5",
+			"IBM bearish 3", "QCOM neutral 3", "TTD bearish 5", "ORCL bullish 5"),
+		domainReport("fundamentals",
+			"AMGN bullish 5", "MRK bullish 6", "BBVA.MC neutral 2", "STLAM.MI neutral 2",
+			"IBM neutral 4", "QCOM bearish 4", "TTD bullish 6", "ORCL bearish 5"),
+		domainReport("sentiment",
+			"AMGN bearish 6", "MRK bearish 6", "BBVA.MC neutral 3", "STLAM.MI bearish 5",
+			"IBM bearish 5", "QCOM bearish 6", "TTD bearish 5", "ORCL neutral 4"),
+		domainReport("macro",
+			"AMGN bullish 3", "MRK bullish 3", "IBM bearish 2", "QCOM bearish 2",
+			"TTD bearish 3", "ORCL bearish 3"),
 	}
 }
 
@@ -161,13 +250,13 @@ func TestBaseScoreRanksThickCoverageAboveThinCoverage(t *testing.T) {
 		domainReport("macro", "AMGN bullish 4"),
 	}, shortlistOf("BAYN.DE", "AMGN"))
 
-	thin := baseOf(t, bases, "BAYN.DE") // .35·.6            = 0.21 → 21
-	thick := baseOf(t, bases, "AMGN")   // .35·.7+.25·.5−.15·.4+.10·.4 = 0.35 → 35
-	if thin.Confidence != 21 {
-		t.Errorf("quant-only BAYN.DE = %d, want 21", thin.Confidence)
+	thin := baseOf(t, bases, "BAYN.DE") // .35·.6                      = 0.21 → /0.77 → 27
+	thick := baseOf(t, bases, "AMGN")   // .35·.7+.25·.5−.15·.4+.10·.4 = 0.35 → /0.77 → 45
+	if thin.Confidence != 27 {
+		t.Errorf("quant-only BAYN.DE = %d, want 27", thin.Confidence)
 	}
-	if thick.Confidence != 35 {
-		t.Errorf("fully covered AMGN = %d, want 35", thick.Confidence)
+	if thick.Confidence != 45 {
+		t.Errorf("fully covered AMGN = %d, want 45", thick.Confidence)
 	}
 	if thin.Confidence >= thick.Confidence {
 		t.Errorf("one domain at +6 (%d) must not outrank five domains averaging +3.5 (%d)",

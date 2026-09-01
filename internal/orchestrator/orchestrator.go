@@ -278,13 +278,7 @@ func (c *Config) applyDefaults() {
 	// often stale). Quant is the only domain covered for every name, computed
 	// rather than recalled, and measured over exactly this horizon.
 	if c.Weights.Quant == 0 && c.Weights.News == 0 && c.Weights.Fundamentals == 0 && c.Weights.Macro == 0 && c.Weights.Sentiment == 0 {
-		c.Weights = model.DomainWeights{
-			Quant:        0.35,
-			News:         0.25,
-			Fundamentals: 0.15,
-			Sentiment:    0.15,
-			Macro:        0.10,
-		}
+		c.Weights = model.DefaultDomainWeights()
 	}
 }
 
@@ -645,6 +639,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	specChans := make([]<-chan model.Report, len(specialists))
 	grounded := make([]bool, len(specialists))
 	ungrounded := make([][]string, len(specialists))
+	abstained := make([][]string, len(specialists))
 	citable := make([]map[string]bool, len(specialists))
 	tickers := make([]string, len(shortlist))
 	for j, c := range shortlist {
@@ -657,20 +652,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		for t, d := range pack.EventDates {
 			eventDates[t] = d
 		}
-		// Every date this run actually collected, so a date in the final output
-		// that appears nowhere here can be recognised for what it is.
-		for _, td := range pack.ByTicker {
-			for _, f := range td.Facts {
-				if !f.AsOf.IsZero() {
-					verifiedDates[f.AsOf.UTC().Format("2006-01-02")] = true
-				}
-			}
-		}
-		for _, f := range pack.MacroFacts {
-			if !f.AsOf.IsZero() {
-				verifiedDates[f.AsOf.UTC().Format("2006-01-02")] = true
-			}
-		}
+		collectVerifiedDates(verifiedDates, pack)
 		// Multiples are computed here rather than asked for: the filings give
 		// shares and EPS, the quant pack gives the price, and dividing them is
 		// arithmetic. Done before WriteDataPack so the artifact is what the
@@ -727,9 +709,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// with an empty ByTicker still counted as grounded.
 		grounded[i] = groundedFor(sp.role, pack, quantPack)
 		ungrounded[i] = ungroundedFor(sp.role, pack, quantPack, tickers)
+		abstained[i] = abstainedFor(sp.role, pack, tickers)
 		if len(ungrounded[i]) > 0 {
 			log(ch, fmt.Sprintf("data[%s]: no verified data for %d/%d tickers: %s",
 				sp.role, len(ungrounded[i]), len(tickers), strings.Join(ungrounded[i], ", ")))
+		}
+		if len(abstained[i]) > 0 {
+			log(ch, fmt.Sprintf("data[%s]: %d/%d tickers have data but no directional signal, so the domain stands down on them: %s",
+				sp.role, len(abstained[i]), len(tickers), strings.Join(abstained[i], ", ")))
 		}
 
 		prompt, err := reg.AssemblePrompt(agents.PromptParams{
@@ -782,7 +769,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// is written so the artifact is exactly what the Chief read.
 		var enf enforcement
 		if r.Status != model.StatusFailed {
-			corrected, e, err := enforceSpecialistTail(sp.role, r.Stdout, ungrounded[i], tickers)
+			corrected, e, err := enforceSpecialistTail(sp.role, r.Stdout, ungrounded[i], abstained[i], tickers)
 			switch {
 			case err != nil:
 				// A report with no usable tail is a refusal or a truncation. It
@@ -824,6 +811,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			Tokens:                 r.Tokens,
 			Grounded:               grounded[i],
 			Ungrounded:             ungrounded[i],
+			Abstained:              abstained[i],
 			CorrectedScores:        enf.Corrected,
 			OffShortlistScores:     enf.OffShortlist,
 			SelfContradictedScores: enf.SelfContradicted,
@@ -941,6 +929,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 	// The synthesis call is the single most expensive step in the run and had
 	// no row of its own; only the five specialists were accounted for.
+	//
+	// The index is kept because a corrective re-prompt is a second call on this
+	// same row: recording only the first left 273s of the 2026-09-01 run — 36% of
+	// its most expensive stage — visible in `stages.synthesis` and accounted for
+	// nowhere, under `attempts: 1`.
+	chiefStatusIdx := len(domainStatuses)
 	domainStatuses = append(domainStatuses, model.DomainStatus{
 		Domain: "chief-analyst", Status: r.Status, Err: r.Err,
 		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens,
@@ -984,11 +978,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			// Corrective re-prompt for violations worth a second model call:
 			// concentration, inverted stop/target levels, a confidence scored
 			// against a different thesis than the domains reported, and every
-			// risk-gate violation.
+			// actionable risk-gate violation.
+			//
+			// Observational findings are logged and warned about but never
+			// re-prompted: there is one corrective call, and asking the Chief to
+			// fix the account's equity or the run's missing price history spends
+			// it on something no re-emission can change.
 			var repromptReasons []string
 			for _, f := range findings {
 				log(ch, "risk: "+f.Message)
-				repromptReasons = append(repromptReasons, f.Message)
+				if f.actionable() {
+					repromptReasons = append(repromptReasons, f.Message)
+				}
 			}
 			for _, w := range warnings {
 				if strings.Contains(w.Message, "level ordering") {
@@ -1003,13 +1004,33 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 			if len(repromptReasons) > 0 {
 				log(ch, "Validation failed — attempting corrective re-prompt…")
-				reprompt := prompt + "\n\nCRITICAL: Your previous output failed validation. " + strings.Join(repromptReasons, "; ") + ". Re-emit the full JSON block with these problems fixed."
+				first := r
+				reprompt := correctivePrompt(prompt, first.Stdout, repromptReasons)
 				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, synthRetry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
+				r.Path = first.Path // same artifact; the corrected pass is written over it
+
+				// The second call is part of the same synthesis step, so it lands
+				// on the same status row rather than vanishing from the accounting.
+				st := &domainStatuses[chiefStatusIdx]
+				st.Duration += r.Duration
+				st.Attempts += r.Attempts
+				st.Tokens += r.Tokens
+				if r.Status != model.StatusFailed {
+					st.Status, st.Err = r.Status, r.Err
+				}
+
 				if r.Status != model.StatusFailed {
 					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
 						ideas = newIdeas
 						warnings = validateIdeas(ideas, cfg, verifiedCtx)
 						findings = applyRiskGate(ideas, verifiedCtx, cfg.Risk)
+						// Persist the reasoning that produced the ideas actually
+						// shipped. Only the first response used to be written, so
+						// chief-analyst.md documented ranks, levels and
+						// confidences that contradicted the ideas.json beside it.
+						if err := run.WriteReport("chief-analyst", correctedReport(first.Stdout, r.Stdout, repromptReasons)); err != nil {
+							log(ch, fmt.Sprintf("warn: write corrected chief-analyst report: %v", err))
+						}
 					}
 				}
 			}

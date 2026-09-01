@@ -330,11 +330,52 @@ func TestAggregateScoresDomainsOnTheTradesTheyBacked(t *testing.T) {
 	if got := s.ByIndex["sp500"]; got.N != 2 {
 		t.Errorf("sp500 = %+v, want 2", got)
 	}
-	if got := s.ByConfidence["80+"]; got.N != 1 {
-		t.Errorf("80+ bucket = %+v, want the 85-confidence short", got)
+	// Buckets are read off the recorded domain scores, not off the stated
+	// Confidence. The 85 on the short was a number a model asserted on a scale
+	// this build no longer uses; its evidence (macro −7 against quant +2) nets to
+	// no conviction at all, and that is what gets scored.
+	//   long 1: .35·.6 − .10·.3        = 0.18 → /0.77 → 23  → "<25"
+	//   long 2: .35·.4 + .10·.5        = 0.19 → /0.77 → 25  → "25-39"
+	//   short : −.10·.7 + .35·.2       = 0.00 →           0 → "<25"
+	if got := s.ByConfidence["<25"]; got.N != 2 {
+		t.Errorf("<25 bucket = %+v, want the winning long and the short", got)
 	}
-	if got := s.ByConfidence["40-59"]; got.N != 1 || got.Wins != 0 {
-		t.Errorf("40-59 bucket = %+v, want the losing 45", got)
+	if got := s.ByConfidence["25-39"]; got.N != 1 || got.Wins != 0 {
+		t.Errorf("25-39 bucket = %+v, want the losing long", got)
+	}
+	if got, ok := s.ByConfidence["80+"]; ok {
+		t.Errorf("a bucket from the old scale was populated: %+v", got)
+	}
+}
+
+// TestAggregateSeparatesIdeasWithNoRecordedDomainScores pins the boundary
+// between the eras this codebase has scored confidence in.
+//
+// An idea from before per-domain scores were recorded carries a number a model
+// asserted, on a scale nothing else in this build uses. Bucketing it by that
+// number would put it beside ideas whose confidence is computed arithmetic and
+// call the two comparable.
+func TestAggregateSeparatesIdeasWithNoRecordedDomainScores(t *testing.T) {
+	s := &Summary{Entries: []Entry{
+		{Direction: "BUY", Outcome: OutcomeTarget, PnLPct: 9, Confidence: 88},
+		{Direction: "BUY", Outcome: OutcomeStop, PnLPct: -4, Confidence: 72},
+		{Direction: "BUY", Outcome: OutcomeTarget, PnLPct: 6, Confidence: 41,
+			DomainScores: map[string]int{"quant": 8, "news": 7, "fundamentals": 6}},
+	}}
+	s.aggregate()
+
+	if got := s.ByConfidence[legacyConfidenceBucket]; got.N != 2 {
+		t.Errorf("legacy bucket = %+v, want the two ideas with no domain scores", got)
+	}
+	// .35·.8 + .25·.7 + .15·.6 = 0.545 → /0.77 → 71
+	if got := s.ByConfidence["55+"]; got.N != 1 {
+		t.Errorf("55+ bucket = %+v, want the idea that can be re-scored", got)
+	}
+	// The legacy slice is kept out of what the Chief Analyst is shown.
+	for _, b := range comparableConfidenceBuckets() {
+		if b == legacyConfidenceBucket {
+			t.Fatal("the legacy bucket must not reach the track-record block")
+		}
 	}
 }
 

@@ -241,6 +241,12 @@ func ConstituentList(cs []model.Constituent) string {
 func parseCSV(f fs.File, indexKey string) ([]model.Constituent, error) {
 	scanner := bufio.NewScanner(f)
 	var rows []model.Constituent
+	// A ticker listed twice in one file is a data-entry slip, and it does not stay
+	// harmless: nq100.csv carried PDD twice, so the pre-screen fetched and ranked
+	// it twice, counted it twice in that index's z-score mean and standard
+	// deviation, and could hand the scout two identical rows out of the fifteen it
+	// sees. The first row wins; a later one is dropped.
+	seen := make(map[string]bool)
 	first := true
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -257,8 +263,14 @@ func parseCSV(f fs.File, indexKey string) ([]model.Constituent, error) {
 		if len(parts) < 5 {
 			continue
 		}
+		ticker := strings.TrimSpace(parts[0])
+		if key := strings.ToUpper(ticker); key == "" || seen[key] {
+			continue
+		} else {
+			seen[key] = true
+		}
 		rows = append(rows, model.Constituent{
-			Ticker:   strings.TrimSpace(parts[0]),
+			Ticker:   ticker,
 			Name:     strings.TrimSpace(parts[1]),
 			Exchange: strings.TrimSpace(parts[2]),
 			Country:  strings.TrimSpace(parts[3]),

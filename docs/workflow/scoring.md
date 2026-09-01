@@ -51,23 +51,45 @@ regime — interpreted by the model, no classic chart TA.)
 For each shortlisted ticker, over the domains **d** that scored it:
 
 ```
-signᵈ    = +1 bullish, −1 bearish, 0 neutral
-weighted = Σ wᵈ · signᵈ · strengthᵈ / 10        (over the domains that scored it)
-covered  = Σ wᵈ                                 (over the domains that scored it)
-total    = Σ wᵈ                                 (over all five domains)
-base     = weighted / total              ∈ [−1, 1]
+signᵈ     = +1 bullish, −1 bearish, 0 neutral
+weighted  = Σ wᵈ · signᵈ · strengthᵈ / 10       (over the domains that scored it)
+covered   = Σ wᵈ                                (over the domains that scored it)
+total     = Σ wᵈ                                (over all five domains)
+signed    = weighted / total             ∈ [−1, 1]   — the raw figure, kept for audit
+reference = Σ wᵈ · Rᵈ / 10                      (over all five domains)
+base      = weighted / reference         ∈ [−1, 1]   — what confidence is read from
 ```
 
-`base` divides by the **total** weight, not the covered weight: a domain with no data for
-a name casts an explicit neutral vote. So thin coverage lowers `base` directly, and a
-quant-only name cannot arithmetically exceed 35.
+Two separate normalisations, doing two different jobs.
 
-This used to divide by `covered`, which inverted the ordering it was meant to protect.
-Missing domains then had no effect on the magnitude at all: one loud domain renormalised
-to 50–60 and landed exactly on its coverage cap, while five domains that partly disagreed
-averaged down to 35. The 2026-09-01 run shipped three quant-only foreign listings at 40
-above the one name all five domains had read at 35, and the caps below were functioning as
-a floor-boost for thin evidence rather than as a ceiling on it.
+**Divide by `total`, never by `covered`.** A domain with no data for a name casts an
+explicit neutral vote, so thin coverage lowers the score directly. Dividing by `covered`
+instead inverted the ordering this is meant to protect: missing domains then had no effect
+on the magnitude at all, so one loud domain renormalised to 50–60 and landed exactly on its
+coverage cap while five domains that partly disagreed averaged down to 35. The 2026-09-01
+run shipped three quant-only foreign listings at 40 above the one name all five domains had
+read at 35, and the caps were acting as a floor-boost for thin evidence rather than a
+ceiling on it.
+
+**Then score against `reference`, the strongest verdict the rubrics permit.** `Rᵈ` is the
+top of the band each persona actually uses — **8** for quant, news, fundamentals and
+sentiment, which all reserve 9–10 for "rare", and **5** for macro, whose rubric states that
+ceiling outright absent a dated sector driver. With the default weights `reference = 0.77`.
+
+Without this the denominator was an unreachable 1.0 — all five domains at strength 10 —
+so the top quarter of the scale could not be occupied by construction. Across the four runs
+from 2026-08-31, the first with this arithmetic live, the highest base *anywhere* was 45.5
+and the shipped ideas ran 26–45, while every consumer of the number still treated 50 as
+mediocre and 70 as good. Every idea in every run rendered as a red bar. MRK on 2026-09-01
+was the strongest three-domain agreement this system can produce — quant +6, news +6,
+fundamentals +6 — and scored 39.
+
+`reference` sums over **all** the weighted domains and is therefore the same constant for
+every name in a run. That matters: it makes the rescale a positive scalar multiply, so it
+changes the scale and provably never the ordering, and it keeps `total`'s guarantee intact.
+A per-name reference over the covered domains would reintroduce exactly the defect above.
+It is also a fixed table rather than the run's own observed maxima, so confidence stays
+comparable across runs — which is what the scoreboard's calibration needs it to be.
 
 - **direction** = the sign of `base` (positive → BUY, negative → SELL). Exactly zero, or
   no coverage at all, means no direction and no idea.
@@ -87,9 +109,10 @@ A name only the quant domain could reach (0.35 of the weight) caps at 40 however
 that domain is. This replaced a prose rule in the persona that counted *reports* rather
 than weight, so losing macro (0.10) was penalised exactly as hard as losing quant (0.35).
 
-Since `base` now divides by the total weight, these caps rarely bind — a quant-only name
-tops out at 35 on the arithmetic alone. They are kept as a redundant floor: they cost
-nothing and they keep holding if the weights are reconfigured.
+The caps bind only at the extremes — a quant-only name at strength 10 reaches 45 on the
+arithmetic and is cut to 40 — and a cap can only ever lower a thin name, so it cannot lift
+one past a thick one. Between 0.6 coverage and full coverage the arithmetic does all the
+work on its own.
 
 ## The Chief's adjustment band
 
@@ -113,14 +136,19 @@ Enforcement (`anchorConfidence` in `internal/orchestrator/validate.go`):
 Each idea records `base_confidence` and `domain_scores` in `ideas.json`, so the scoreboard
 can later ask which *domains* were right, not only whether the trade worked.
 
-Calibration guide (what the final number should mean):
+Calibration guide (what the final number should mean, on the `reference` scale above):
 
-| Confidence | Meaning                                                          |
-|------------|------------------------------------------------------------------|
-| 80–100     | Strong multi-domain confluence, clean setup, catalyst supportive |
-| 60–79      | Good alignment, minor conflicts or one weak/missing domain       |
-| 40–59      | Mixed; tradeable but speculative                                 |
-| < 40       | Don't surface as a top idea                                      |
+| Confidence | Meaning                                                            |
+|------------|--------------------------------------------------------------------|
+| 70–100     | Near-unanimous multi-domain confluence at the top of every rubric   |
+| 55–69      | Strong alignment; one domain dissenting or standing down            |
+| 40–54      | Good on the heaviest domains, mixed elsewhere                       |
+| 25–39      | Thin coverage, or genuine disagreement between domains              |
+| < 25       | Don't surface as a top idea                                         |
+
+These are the bands `internal/tui/results.go` colours the bar by and
+`internal/scoreboard` buckets the track record by; all three move together, and the last
+time they did not, four consecutive runs of perfectly good ideas rendered red.
 
 ## The track record fed back to the Chief
 
@@ -142,6 +170,12 @@ that to `.data/calibration.json`: overall win rate, average R, average hold, and
   half the time carries no information and earns no adjustment; a bucket whose realized win
   rate is far from the confidence it stated is a bucket to move away from; every cell
   carries its own `n` so a 100% built on two trades cannot read as one built on twenty.
+- A past idea is bucketed by **re-scoring its recorded `domain_scores` on today's scale**,
+  not by the number its own run printed. This codebase has scored confidence three ways —
+  asserted by the model, weighted over total weight, and weighted against `reference` — and
+  comparing those numbers directly would be comparing three different measurements. Ideas
+  from before `domain_scores` were recorded cannot be re-scored at all; they go to a
+  `legacy` bucket and are withheld from the block the Chief reads.
 
 ## Ranking & selection
 

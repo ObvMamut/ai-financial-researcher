@@ -40,7 +40,17 @@ func newDetailModel(runDir string, ideas []model.TradeIdea, idx, width, height i
 	return d
 }
 
-func (d *detailModel) idea() model.TradeIdea { return d.ideas[d.idx] }
+// idea is the one on screen. The bounds check is not currently reachable — the
+// results screen refuses to open a detail view on an empty list — but a run
+// shipping zero ideas is a documented outcome of the risk gate, and the guard
+// that makes this safe lives in another file. A panic here takes the user's
+// terminal with it.
+func (d *detailModel) idea() model.TradeIdea {
+	if d.idx < 0 || d.idx >= len(d.ideas) {
+		return model.TradeIdea{}
+	}
+	return d.ideas[d.idx]
+}
 
 // loadIdea pulls the saved price series and specialist scores for the current
 // idea from the run directory. Both are optional — old runs degrade to text.

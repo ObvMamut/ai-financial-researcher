@@ -195,11 +195,19 @@ func validateLevels(idea *model.TradeIdea, qp *quant.Pack) []warning {
 	if !ok || m.LastClose <= 0 {
 		return ws
 	}
-	// chief-analyst.md permits a limit entry within ~5% of the last close, so
-	// anything beyond that is the model exceeding its own brief. The threshold
-	// used to be 10%, leaving the whole permitted band unpoliced.
-	if dev := math.Abs(idea.Entry/m.LastClose - 1); dev > 0.05 {
-		warn("entry %.2f is %.0f%% away from verified last close %.2f (%s)", idea.Entry, dev*100, m.LastClose, m.AsOf)
+	// chief-analyst.md permits a limit entry within 0.5σ√5 of the last close — a
+	// band in the name's own volatility, not a flat percentage. This check read a
+	// flat 5% and claimed in its comment that 5% *was* the rule, so the two
+	// disagreed in both directions: on TTD (σ_daily 7.9%) the persona allowed
+	// 8.9% and the app warned at 5%, while on AMGN (σ_daily 1.8%) the persona
+	// allowed 2.0% and the app waved 5% through.
+	band := 0.05
+	if m.SigmaDaily > 0 {
+		band = 0.5 * m.SigmaDaily * math.Sqrt(5)
+	}
+	if dev := math.Abs(idea.Entry/m.LastClose - 1); dev > band {
+		warn("entry %.2f is %.1f%% away from verified last close %.2f (%s), beyond the %.1f%% limit-entry band (0.5σ√5)",
+			idea.Entry, dev*100, m.LastClose, m.AsOf, band*100)
 	}
 	if m.SigmaDaily > 0 {
 		h := float64(idea.TimeframeDays)

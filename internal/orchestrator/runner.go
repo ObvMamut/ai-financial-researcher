@@ -32,6 +32,15 @@ func runAgent(ctx context.Context, cli model.CLI, role, stage string, prompt str
 		Stage: model.Stage(stage),
 	}
 
+	// A budget of zero would skip the loop entirely and return a report whose
+	// Status is the empty string — neither done nor failed. Callers test for
+	// StatusFailed, so that report reads as a success carrying no output, and the
+	// run proceeds to parse nothing. One attempt is the floor: a call that is not
+	// worth making should not be made by the caller.
+	if retry.MaxAttempts < 1 {
+		retry.MaxAttempts = 1
+	}
+
 	for attempt := 1; attempt <= retry.MaxAttempts; attempt++ {
 		// Check for early cancellation
 		select {

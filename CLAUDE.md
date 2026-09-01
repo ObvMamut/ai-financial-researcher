@@ -10,10 +10,11 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
 
 1. **Independent research** — agents screen four curated index samples, then deep-analyze
    a shortlist and return **5 ranked trade ideas**. The universe files are *representative
-   samples*, not full index memberships: `sp500.csv` holds 98 names, `nq100.csv` 59,
-   `asia100.csv` 67, `eu50.csv` 50. Scouts see exactly those names and the run log says
+   samples*, not full index memberships: `sp500.csv` holds 98 names, `nq100.csv` 56,
+   `asia100.csv` 67, `eu50.csv` 47. Scouts see exactly those names and the run log says
    how many ("screening 98 of sp500"). Widening coverage means adding rows to
-   `internal/universe/data/*.csv`.
+   `internal/universe/data/*.csv`; `universe_test.go` rejects a duplicate ticker within one
+   file and a row whose columns have shifted.
 2. **Input a stock** — same deep-analysis agents run on one user-supplied ticker
    (screening skipped), returning a single verdict.
 
@@ -123,14 +124,25 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
    News additionally carries a bulk-fetched verified earnings calendar; sentiment reads
-   SEC Form 4 insider filings and the Yahoo option chain, not news tone.
+   SEC Form 4 insider filings and the Yahoo option chain, not news tone. Whether that
+   positioning is *directional* is decided in Go (`marketdata/insidersignal.go`), not by the
+   agent: routine scheduled selling and a put/call ratio near 1.0 are the resting state of
+   the market, and reading them as bearish gave the domain one bullish score in 34 across
+   four runs and a standing ~9-point levy on every long. A name whose computed verdict is
+   non-directional goes to `missing` — an abstention, recorded separately from a coverage
+   gap so it does not degrade the run.
 3.5. **Base scores (in-process, no model):** `basescore.go` does the weighting itself —
    `Σ w·sign·strength/10` over the **full** domain weight, so a domain with no data for a
    name votes 0 and thin coverage lowers the score directly (weighted-coverage caps remain
    as a redundant floor). Dividing by the *covered* weight instead inverted the ordering:
    one loud domain kept its full magnitude and landed on its cap while five partly
-   disagreeing domains averaged down. The result is both shown to the Chief and enforced
-   against its output.
+   disagreeing domains averaged down. That sum is then scored against
+   `model.ReferenceTotal` — the strongest verdict the five rubrics permit (strength 8, or 5
+   for macro, whose persona caps itself there) — rather than against an unreachable 10
+   across the board, which had pinned every run's output under 46. It is one constant for
+   every name, so it rescales without reordering. The result is both shown to the Chief and
+   enforced against its output; `internal/tui`'s confidence bar and `internal/scoreboard`'s
+   buckets read the same scale, and all three must move together.
 4. **Chief Analyst (Claude):** reads the 5 reports + the computed base-score table +
    compact verified quant lines + — once ≥10 past ideas have closed — the pipeline's own
    replayed track record, adjusts each base by at most `chief_adjust_band` points with a

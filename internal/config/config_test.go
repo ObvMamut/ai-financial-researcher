@@ -19,6 +19,7 @@ func clearEnv(t *testing.T) {
 		"CFR_CLAUDE_BIN", "CFR_GEMINI_BIN", "CFR_GEMINI_CONCURRENCY", "CFR_KEEP_RUNS",
 		"CFR_CHEAP_ENGINE", "CFR_API_BASE_URL", "CFR_API_MODEL", "CFR_API_KEY", "DEEPSEEK_API_KEY",
 		"CFR_LOCAL_BASE_URL", "CFR_LOCAL_MODEL", "CFR_LOCAL_KEY", "CFR_LOCAL_CONCURRENCY",
+		"CFR_API_MAX_TOKENS", "CFR_LOCAL_MAX_TOKENS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -288,5 +289,78 @@ func TestLoadMalformedFileIsError(t *testing.T) {
 	os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("runs_dir = [not toml"), 0o644)
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded on malformed TOML, want error")
+	}
+}
+
+// TestJitterCanBeTurnedOffByAHigherPrecedenceFile pins a one-way flag.
+//
+// The apply was `if f.Retry.Jitter { s.Retry.Jitter = true }`, which reads a
+// value and can only ever set it. Once the global config turned jitter on, the
+// project file could not turn it off — silently inverting the documented
+// precedence for that one key, exactly the defect data_cache_days already
+// carries a presence check for.
+func TestJitterCanBeTurnedOffByAHigherPrecedenceFile(t *testing.T) {
+	home, cwd := isolate(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "cfr"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, body string) {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(home, ".config", "cfr", "config.toml"), "[retry]\njitter = true\n")
+	write(filepath.Join(cwd, "cfr.toml"), "[retry]\njitter = false\n")
+
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Retry.Jitter {
+		t.Error("./cfr.toml set jitter = false and was ignored — precedence runs the wrong way")
+	}
+}
+
+func TestJitterStillInheritsWhenTheLocalFileIsSilent(t *testing.T) {
+	home, cwd := isolate(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "cfr"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "cfr", "config.toml"),
+		[]byte("[retry]\njitter = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"),
+		[]byte("[retry]\nmax_attempts = 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Retry.Jitter {
+		t.Error("a file that says nothing about jitter must not clear it")
+	}
+	if s.Retry.MaxAttempts != 3 {
+		t.Errorf("max_attempts = %d, want 3", s.Retry.MaxAttempts)
+	}
+}
+
+// Every other [local] key is settable from the environment; max_tokens was the
+// one that was not, so a local model's context had to live in a file.
+func TestLocalMaxTokensFromEnv(t *testing.T) {
+	isolate(t)
+	t.Setenv("CFR_LOCAL_MAX_TOKENS", "16384")
+	t.Setenv("CFR_API_MAX_TOKENS", "4096")
+
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Local.MaxTokens != 16384 {
+		t.Errorf("Local.MaxTokens = %d, want 16384", s.Local.MaxTokens)
+	}
+	if s.API.MaxTokens != 4096 {
+		t.Errorf("API.MaxTokens = %d, want 4096 — the two must not share a variable", s.API.MaxTokens)
 	}
 }

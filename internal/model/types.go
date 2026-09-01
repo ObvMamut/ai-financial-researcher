@@ -325,6 +325,12 @@ type DomainStatus struct {
 	// data for. A domain whose whole shortlist is ungrounded is a degraded run,
 	// however confident the report reads.
 	Ungrounded []string `json:"ungrounded,omitempty"`
+	// Abstained lists the tickers this domain's sources answered for but had
+	// nothing directional to say about. They are a subset of Ungrounded — both
+	// end up in the report's `missing` array — but they are not coverage gaps
+	// and do not degrade the run: sentiment declining to read a month of
+	// scheduled insider disposals as a signal is the system working.
+	Abstained []string `json:"abstained,omitempty"`
 	// CorrectedScores lists shortlisted tickers the agent scored without any
 	// verified data. The orchestrator deleted those scores from the report's
 	// structured tail and moved the names into its `missing` array, so the

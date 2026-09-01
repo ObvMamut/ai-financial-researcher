@@ -172,3 +172,83 @@ func TestQuantOnlyNames(t *testing.T) {
 		t.Errorf("quantOnlyNames = %v on an all-US shortlist, want none", got)
 	}
 }
+
+// sentimentPack builds a sentiment pack whose tickers carry the computed
+// positioning verdict, the way marketdata.BuildPack assembles one.
+func sentimentPack(verdicts map[string]bool) *marketdata.DataPack {
+	p := marketdata.NewDataPack("sentiment")
+	for t, directional := range verdicts {
+		verdict := "insider — no directional signal: routine disposal; options — no directional " +
+			"signal: put/call open interest 1.22 is within the unremarkable band. " +
+			"Both legs read no directional signal, so this name has no positioning evidence: " +
+			"put it in `missing`, not in `scores`."
+		if directional {
+			verdict = "insider — bearish: an officer sold 83% of their own holding; options — " +
+				"no directional signal. Directional evidence: insider bearish."
+		}
+		p.ByTicker[t] = marketdata.TickerData{Ticker: t, Facts: []marketdata.Fact{
+			{Label: marketdata.PositioningSignalLabel, Value: verdict},
+		}}
+		p.Coverage[t] = true
+	}
+	return p
+}
+
+// TestSentimentIsGroundedByItsVerdictNotByItsFetch is the fix for a domain that
+// always had an opinion.
+//
+// Nearly every US issuer has recent Form 4 filings and a listed option chain, so
+// the fetch almost always succeeds — and treating that as evidence gave the
+// sentiment domain one bullish score in 34 across four runs, taxing every long
+// about nine points on scheduled insider selling. Presence of data is not a
+// signal; the computed verdict is.
+func TestSentimentIsGroundedByItsVerdictNotByItsFetch(t *testing.T) {
+	pack := sentimentPack(map[string]bool{"AMGN": false, "IBM": true})
+
+	if coveredBy("sentiment", pack, nil, "AMGN") {
+		t.Error("a name whose positioning is quiet must not count as sentiment evidence")
+	}
+	if !coveredBy("sentiment", pack, nil, "IBM") {
+		t.Error("a name with a directional verdict must count")
+	}
+
+	// The same rows under any other domain are ordinary coverage: the verdict is
+	// sentiment's alone.
+	newsPack := marketdata.NewDataPack("news")
+	newsPack.Coverage["AMGN"] = true
+	newsPack.ByTicker["AMGN"] = marketdata.TickerData{Ticker: "AMGN"}
+	if !coveredBy("news", newsPack, nil, "AMGN") {
+		t.Error("the positioning rule leaked into another domain")
+	}
+}
+
+// TestAbstentionIsNotACoverageGap keeps a healthy run from being marked degraded.
+//
+// An abstention and a gap both send the name to `missing`, but they are opposite
+// events: one is the system declining to read noise as a signal, the other is a
+// fetch that should have worked and did not. Counting the first as the second
+// would degrade every run in which insider activity was unremarkable — which is
+// most of them.
+func TestAbstentionIsNotACoverageGap(t *testing.T) {
+	pack := sentimentPack(map[string]bool{"AMGN": false, "IBM": true})
+	tickers := []string{"AMGN", "IBM", "MRK"} // MRK was never fetched at all
+
+	ungrounded := ungroundedFor("sentiment", pack, nil, tickers)
+	if !reflect.DeepEqual(ungrounded, []string{"AMGN", "MRK"}) {
+		t.Errorf("ungrounded = %v, want the abstention and the true gap — both belong in `missing`", ungrounded)
+	}
+	abstained := abstainedFor("sentiment", pack, tickers)
+	if !reflect.DeepEqual(abstained, []string{"AMGN"}) {
+		t.Errorf("abstained = %v, want only AMGN — MRK has no data at all, which is a gap", abstained)
+	}
+	if got := abstainedFor("news", pack, tickers); got != nil {
+		t.Errorf("only sentiment abstains on a computed verdict, got %v", got)
+	}
+
+	gaps := coverageGaps([]model.DomainStatus{
+		{Domain: "sentiment", Ungrounded: ungrounded, Abstained: abstained},
+	})
+	if len(gaps) != 1 || !reflect.DeepEqual(gaps[0].Missing, []string{"MRK"}) {
+		t.Errorf("coverage gaps = %+v, want only the name that was never fetched", gaps)
+	}
+}

@@ -269,3 +269,49 @@ func TestPrescreenIsRobustToOutliers(t *testing.T) {
 		t.Errorf("outlier compressed the rest of the ranking: spread %.2f → %.2f", cleanSpread, dirtySpread)
 	}
 }
+
+// TestPrescreenReversalPenaltyNeverPaysABonus pins the sign of the reversal term.
+//
+// The gate tested the raw STRZ ("did the last 5 days run with the trend?") but
+// the penalty was scaled by a *cross-sectional* z-score of STRZ within the index.
+// Those two quantities do not share a sign. In a broad rally the index mean of
+// STRZ is positive, so a mildly extended name has a negative cross-sectional z
+// and `score -= 0.5·z` paid it a bonus for extending — the reversal penalty
+// rewarding exactly what it exists to punish. On the 2026-09-01 universe the gate
+// fired on 97 names and 5 of them were paid rather than charged.
+//
+// STRZ is already a z-score (quant.Compute standardises the trailing 5d return
+// against the name's own one-year distribution), so it is used directly and gate
+// and magnitude agree by construction.
+func TestPrescreenReversalPenaltyNeverPaysABonus(t *testing.T) {
+	// Four names on an identical trend, differing only in how far they have run.
+	rows := []PrescreenRow{
+		row("HOT_A", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 3.0 }),
+		row("HOT_B", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 3.0 }),
+		row("MILD", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 0.3 }),
+		row("FLAT", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 0.0 }),
+	}
+	scorePrescreen(rows)
+
+	flat, mild, hot := scoreOf(t, rows, "FLAT"), scoreOf(t, rows, "MILD"), scoreOf(t, rows, "HOT_A")
+	if mild > flat {
+		t.Errorf("a name that ran up with its trend scored ABOVE one that did not move: MILD %+.4f vs FLAT %+.4f", mild, flat)
+	}
+	if hot > mild {
+		t.Errorf("the penalty must grow with the extension: HOT %+.4f vs MILD %+.4f", hot, mild)
+	}
+
+	// Symmetric on the short side: a crashed name is a poor short, so its signed
+	// long score is pushed back up toward neutral.
+	shorts := []PrescreenRow{
+		row("CRASHED", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -0.40; r.STRZ = -3.0 }),
+		func() PrescreenRow {
+			return row("STEADY", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -0.40; r.STRZ = 0.0 })
+		}(),
+	}
+	scorePrescreen(shorts)
+	if scoreOf(t, shorts, "CRASHED") <= scoreOf(t, shorts, "STEADY") {
+		t.Errorf("a name that just crashed is a worse short than one drifting down: CRASHED %+.4f vs STEADY %+.4f",
+			scoreOf(t, shorts, "CRASHED"), scoreOf(t, shorts, "STEADY"))
+	}
+}

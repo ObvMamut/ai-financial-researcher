@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
@@ -393,6 +394,93 @@ func TestRiskGateFlagsADateNoFactSupports(t *testing.T) {
 	}
 }
 
+// TestVerifiedDatesIncludeTheScheduledEventItself is the 2026-09-01 regression.
+//
+// An earnings fact's AsOf is when the calendar was fetched; the date it names is
+// in its value and in the pack's EventDates map. Collecting only AsOf meant the
+// Chief citing a real, verified earnings date was accused of inventing it —
+// which cost the idea 10 points, spent the run's one corrective re-prompt, and
+// ended with three true dates deleted from the shipped output.
+func TestVerifiedDatesIncludeTheScheduledEventItself(t *testing.T) {
+	fetched := time.Date(2026, 9, 1, 8, 51, 51, 0, time.UTC)
+	earnings := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+
+	pack := marketdata.NewDataPack("news")
+	pack.ByTicker["MRK"] = marketdata.TickerData{Ticker: "MRK", Facts: []marketdata.Fact{
+		{Label: marketdata.EarningsFactLabel, Value: "2026-10-29", AsOf: fetched, Source: "AlphaVantage earnings calendar"},
+	}}
+	pack.EventDates["MRK"] = earnings
+
+	dates := map[string]bool{}
+	collectVerifiedDates(dates, pack)
+
+	if !dates["2026-10-29"] {
+		t.Error("the earnings date itself is not in the verified set — citing it will be called a fabrication")
+	}
+	if !dates["2026-09-01"] {
+		t.Error("the fetch date went missing")
+	}
+
+	// End to end through the check that consumes it.
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("MRK", 88, 124)}}
+	res.Ideas[0].PositionNote = "Next earnings 2026-10-29 is outside the window."
+	v := gateVerified(t, "MRK")
+	v.Dates = dates
+
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+	if got := findingsFor(fs, "MRK"); len(got) > 0 {
+		t.Errorf("a verified earnings date was reported as unsupported: %v", got)
+	}
+	if res.Ideas[0].Confidence != 70 {
+		t.Errorf("confidence = %d, want 70 — no penalty for citing a date the run collected", res.Ideas[0].Confidence)
+	}
+}
+
+// TestRiskGateSeparatesFindingsTheChiefCanActuponFromThoseItCannot pins which
+// findings are allowed to spend the single corrective re-prompt.
+func TestRiskGateSeparatesFindingsTheChiefCanActUponFromThoseItCannot(t *testing.T) {
+	// A book of five longs against a benchmark, which trips noteDirectionBalance.
+	qp := quant.NewPack()
+	for _, s := range []string{"AAA", "BBB"} {
+		qp.ByTicker[s] = gateMetrics(s)
+	}
+	qp.Benchmarks["SPY"] = quant.Metrics{Symbol: "SPY", Regime: "trending", Ret63d: 0.08}
+	v := verified{Universe: testUniverse(t), Quant: qp}
+
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{
+		gateIdeaAt("AAA", 88, 124),
+		gateIdeaAt("BBB", 88, 124),
+	}}
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+
+	var actionable, observational int
+	for _, f := range fs {
+		if f.actionable() {
+			actionable++
+			continue
+		}
+		observational++
+		if !strings.HasPrefix(f.Message, "note: all ") {
+			t.Errorf("unexpected observational finding: %q", f.Message)
+		}
+	}
+	if observational != 1 {
+		t.Errorf("the all-one-way note must be observational, got %d observational of %d findings", observational, len(fs))
+	}
+	if actionable != 0 {
+		t.Errorf("two sound ideas produced %d actionable findings, so a re-prompt would fire on nothing fixable", actionable)
+	}
+
+	// A name with no price data: a fact about the run's fetch, not about the
+	// output, so it must not be re-prompted either.
+	bare := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("ZZZ", 88, 124)}}
+	for _, f := range applyRiskGate(bare, gateVerified(t), model.RiskConfig{}) {
+		if f.actionable() {
+			t.Errorf("no-price-data findings must not spend the corrective call: %q", f.Message)
+		}
+	}
+}
+
 func TestRiskGateSpotsOneBetInTwoTickets(t *testing.T) {
 	rets := make([]float64, 200)
 	for i := range rets {
@@ -606,5 +694,57 @@ func TestGateIdeaUsesTheRealizedEdgeWhenOneIsAvailable(t *testing.T) {
 	}
 	if !hasHard(findings, "AAA", "expectancy") {
 		t.Errorf("a negative-expectancy idea was not flagged: %+v", findings)
+	}
+}
+
+// TestGateStillChecksDatesWhenVolatilityIsUnavailable closes a hole where an
+// idea nothing could be verified about shipped looking exactly like one that
+// passed every check.
+//
+// The σ-band block began `unit := σ·√h·close; if unit <= 0 { return out }`, and
+// the earnings-window and fabricated-date checks sat *after* it. Neither has
+// anything to do with volatility, so a name whose σ could not be computed lost
+// all four checks and produced no finding at all.
+func TestGateStillChecksDatesWhenVolatilityIsUnavailable(t *testing.T) {
+	// A name with a price but no usable volatility — what Compute produces when
+	// the OHLC window is degenerate.
+	qp := quant.NewPack()
+	m := gateMetrics("AAA")
+	m.SigmaDaily = 0
+	qp.ByTicker["AAA"] = m
+	v := verified{Universe: testUniverse(t), Quant: qp}
+	v.Dates = map[string]bool{"2026-08-14": true}
+	v.Events = map[string]time.Time{"AAA": time.Now().UTC().AddDate(0, 0, 3)}
+
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 88, 124)}}
+	res.Ideas[0].Why = "guidance raised at the 2026-09-15 investor day"
+	res.Ideas[0].PositionNote = "full size"
+
+	fs := applyRiskGate(res, v, model.RiskConfig{})
+	joined := strings.Join(findingsFor(fs, "AAA"), " | ")
+
+	if !strings.Contains(joined, "2026-09-15") {
+		t.Errorf("the invented date went unchecked when σ was unavailable: %s", joined)
+	}
+	if !strings.Contains(joined, "falls inside the 10-day window") {
+		t.Errorf("the earnings event went unchecked when σ was unavailable: %s", joined)
+	}
+	// Both penalties still land: 70 − 10 − 10.
+	if res.Ideas[0].Confidence != 50 {
+		t.Errorf("confidence = %d, want 50 (both penalties applied)", res.Ideas[0].Confidence)
+	}
+	// And the gap itself is recorded rather than silent — but as something the
+	// Chief cannot fix, so it does not spend the corrective call.
+	var sawNote bool
+	for _, f := range fs {
+		if strings.Contains(f.Message, "realized volatility is not computable") {
+			sawNote = true
+			if f.actionable() {
+				t.Error("an unavailable volatility is not something a re-emitted JSON block can fix")
+			}
+		}
+	}
+	if !sawNote {
+		t.Error("the unchecked geometry was not recorded at all")
 	}
 }

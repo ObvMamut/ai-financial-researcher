@@ -147,19 +147,59 @@ type Summary struct {
 const MinClosedPerArm = 15
 
 // confidenceBuckets is the fixed display order of the confidence slices.
-var confidenceBuckets = []string{"<40", "40-59", "60-79", "80+"}
+//
+// The boundaries follow the scale internal/orchestrator/basescore.go produces —
+// a weighted vote across five domains scored against the strongest joint verdict
+// their rubrics permit. The old `<40 / 40-59 / 60-79 / 80+` split was set when
+// the Chief Analyst asserted its own confidence and returned 70–88; once
+// base-score anchoring went live nothing shipped above 45, so every idea landed
+// in `<40` and the whole slice collapsed to one cell carrying no information.
+//
+// `legacy` holds the ideas that cannot be placed on this scale at all — those
+// generated before the run recorded per-domain scores, whose stated confidence
+// came from a model rather than from arithmetic. Bucketing them by number would
+// be comparing two different measurements.
+var confidenceBuckets = []string{"<25", "25-39", "40-54", "55+", "legacy"}
+
+const legacyConfidenceBucket = "legacy"
+
+// comparableConfidenceBuckets is confidenceBuckets without the legacy slice —
+// the buckets a live run's ideas can actually land in.
+func comparableConfidenceBuckets() []string {
+	out := make([]string, 0, len(confidenceBuckets))
+	for _, b := range confidenceBuckets {
+		if b != legacyConfidenceBucket {
+			out = append(out, b)
+		}
+	}
+	return out
+}
 
 func confidenceBucket(c int) string {
 	switch {
+	case c < 25:
+		return "<25"
 	case c < 40:
-		return "<40"
-	case c < 60:
-		return "40-59"
-	case c < 80:
-		return "60-79"
+		return "25-39"
+	case c < 55:
+		return "40-54"
 	default:
-		return "80+"
+		return "55+"
 	}
+}
+
+// comparableConfidence re-reads a closed idea's confidence on the current scale.
+//
+// An idea's stored Confidence is on whichever scale its run used — this codebase
+// has had three — but its DomainScores are the raw domain evidence and can be
+// re-scored at any time. Recomputing is what lets a track record span the
+// changes rather than restarting at every one.
+//
+// The weights are today's defaults, not the producing run's. That is the honest
+// approximation: the run's own weights are not carried on the idea, and the
+// defaults have not moved since per-domain scores were first recorded.
+func comparableConfidence(e Entry) (int, bool) {
+	return model.ScaledConfidence(model.DefaultDomainWeights(), e.DomainScores)
 }
 
 // bucketAcc accumulates one slice before it is averaged.
@@ -246,7 +286,11 @@ func (s *Summary) aggregate() {
 		total.add(e)
 		dir.add(e.Direction, e)
 		idx.add(e.Index, e)
-		conf.add(confidenceBucket(e.Confidence), e)
+		if c, ok := comparableConfidence(e); ok {
+			conf.add(confidenceBucket(c), e)
+		} else {
+			conf.add(legacyConfidenceBucket, e)
+		}
 		per.add(e.PersonaSet, e)
 		for d, sc := range e.DomainScores {
 			if e.backedBy(sc) {

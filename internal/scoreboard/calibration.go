@@ -44,9 +44,11 @@ type Calibration struct {
 	AvgBarsHeld     float64 `json:"avg_bars_held,omitempty"`
 
 	// Domains is scored over the closed trades each domain backed; Confidence
-	// over the bucket an idea's stated confidence fell in. Both answer the
-	// question the Chief cannot answer from inside one run: was this kind of
-	// call right last time?
+	// over the bucket an idea falls in when its recorded domain scores are
+	// re-read on the current scale (see comparableConfidence — an idea's stated
+	// number is on whichever scale its own run used, and this codebase has had
+	// three). Both answer the question the Chief cannot answer from inside one
+	// run: was this kind of call right last time?
 	Domains    map[string]Bucket `json:"domains,omitempty"`
 	Confidence map[string]Bucket `json:"confidence,omitempty"`
 	Directions map[string]Bucket `json:"directions,omitempty"`
@@ -149,8 +151,12 @@ func (c *Calibration) Block() string {
 	sb.WriteString("daily bars. It is a measurement, not a target.\n\n")
 	fmt.Fprintf(&sb, "- Overall: %.0f%% closed at a profit · avg %+.2fR · avg hold %.0f sessions\n",
 		c.WinRate*100, c.AvgR, c.AvgBarsHeld)
-	if line := calibrationLine(c.Confidence, confidenceBuckets); line != "" {
-		fmt.Fprintf(&sb, "- By stated confidence: %s\n", line)
+	// The legacy bucket is deliberately withheld from the Chief: those ideas'
+	// confidence was asserted by a model on a scale this run does not use, so
+	// telling it to "move away from that bucket" would be advice about a
+	// measurement that no longer exists.
+	if line := calibrationLine(c.Confidence, comparableConfidenceBuckets()); line != "" {
+		fmt.Fprintf(&sb, "- By computed confidence: %s\n", line)
 	}
 	if line := calibrationLine(c.Domains, sortedKeys(c.Domains)); line != "" {
 		fmt.Fprintf(&sb, "- By domain backing the trade: %s\n", line)

@@ -22,23 +22,52 @@ Two verified, dated sources, both in this prompt when available:
   conviction is the standard way to misuse this data.
 - **Options positioning** — the put/call open-interest ratio across the front two expiries,
   and the at-the-money implied volatility.
+- **`Positioning signal (computed)`** — the app's own verdict on the two above, computed in
+  Go before you see them. **It is authoritative and it decides whether you score the name
+  at all** (see *When to abstain*).
 
 Plus the **verified price context** block: its `vol20d` is *realized* volatility computed
 from actual closes, which is what implied volatility is meaningfully compared against.
 
+## When to abstain
+If `Positioning signal (computed)` says **both legs read no directional signal**, that
+ticker goes in `missing`. Not `scores` at strength 2, not `neutral` — `missing`. It means
+the app looked at the filings and the chain and found nothing a direction can be built on,
+and your job on that name is done.
+
+This is not a formality, and the reason is measurable. Across four runs this domain returned
+**one bullish score in thirty-four**, because it kept reading two facts as bearish that are
+not evidence at all:
+
+- **Routine insider selling.** Officers are paid in stock and sell on schedules set months
+  in advance. "0 open-market buys vs N sales" is the resting state of nearly every large-cap
+  issuer — it is what the data looks like when nothing is happening. Scoring it bearish put
+  a standing levy on every long in the book that no long could offset.
+- **Crowding, in either direction.** Crowded puts got read as bearish, and crowded calls got
+  read as "a squeeze risk", also bearish. A metric that votes the same way whichever way it
+  points is not measuring anything.
+
+The computed verdict now settles both. Abstaining is a real answer here: a domain that
+always has an opinion has no information in it.
+
 ## Method
-1. **Insider read.** Direction and size. A cluster of open-market purchases by operating
-   officers is the strongest single signal available here. Routine, spread-out selling by
-   many insiders is weak evidence of anything — executives sell for reasons unrelated to
-   the stock. One large, unusual sale is worth more than five small scheduled ones.
-2. **Options read.** Put/call open interest near 1.0 is unremarkable. Sustained skew well
-   above or below that is one-sided positioning. Say which side is crowded, and remember
-   that crowding is a risk *to that side*, not confirmation of it.
-3. **IV vs RV.** Compare implied volatility to the verified `vol20d`. Implied far above
+1. **Read the computed verdict first.** It states the insider leg, the options leg, and
+   whether either is directional. If neither is, stop and put the ticker in `missing`.
+2. **Insider read.** Explain the verdict against the underlying filings — who, how much,
+   and what share of their own holding. A cluster of open-market purchases by operating
+   officers is the strongest single signal available here. One officer selling most of what
+   they hold is the bearish case; five scheduled trims are not.
+3. **Options read.** Say which side is crowded, and remember that crowding is a risk *to
+   that side*, not confirmation of it — so an extreme ratio reads **contrarian**, against
+   the crowd, which is how the computed verdict signs it.
+4. **IV vs RV.** Compare implied volatility to the verified `vol20d`. Implied far above
    realized means the market is paying up for a move — often an event nobody has told you
    about. Implied below realized means options are cheap relative to how the stock has
-   actually been moving. State the comparison with both numbers.
-4. Score the direction the positioning supports, and its strength.
+   actually been moving. State the comparison with both numbers. This colours your strength
+   and your note; it is not a direction on its own.
+5. Score the direction the computed verdict supports, and its strength. Your `bias` must
+   agree with that verdict's direction — the app deletes a score whose evidence it has
+   already found to be non-directional.
 
 ## What crowding is, and is not
 Crowding is **one-sidedness of positions**: an extreme put/call ratio, insiders all selling
@@ -52,10 +81,12 @@ over the same number, and the contradiction is not informative — it is just no
 has to arbitrate.
 
 ## Strength rubric (anchored)
-- **0–2** — no positioning data at all. Say so and put the ticker in `missing` instead.
-- **3–4** — one weak or ambiguous signal (routine insider selling; put/call near 1.0).
+- **0–2** — no positioning data, or the computed verdict reads no directional signal. Put
+  the ticker in `missing` instead; do not score it.
+- **3–4** — one directional leg, weakly (a put/call ratio only just outside its band).
 - **5–6** — one clear signal with a directional implication (a meaningful open-market
-  insider purchase; a distinctly skewed put/call ratio).
+  insider purchase; an officer exiting most of a holding; a distinctly skewed put/call
+  ratio).
 - **7–8** — insider and options evidence agree, and the crowding does not threaten the
   direction.
 - **9–10** — rare: extreme measurable one-sidedness creating a genuine squeeze or
@@ -79,7 +110,9 @@ has to arbitrate.
 - **Enforcement:** the app computes coverage itself and rewrites your structured tail
   before anyone reads it. A score you give a ticker with no verified data is **deleted**
   and the ticker moved into `missing`; a score for a ticker not on the shortlist is
-  **deleted** outright.
+  **deleted** outright. For this domain, "no verified data" includes a ticker whose
+  `Positioning signal (computed)` reads no directional signal — the app has already decided
+  that name carries no positioning evidence, so scoring it anyway just loses the score.
 
 ## Output format
 Short per-ticker notes, then end with this exact JSON block:
@@ -90,7 +123,7 @@ Short per-ticker notes, then end with this exact JSON block:
   "scores": [
     { "ticker": "TICKER", "bias": "bullish|bearish|neutral", "strength": 0, "note": "insider + options positioning, and which side is crowded, in one line" }
   ],
-  "missing": ["tickers lacking positioning data"]
+  "missing": ["tickers with no positioning data, and tickers whose computed verdict reads no directional signal"]
 }
 ```
 `strength` is an integer 0–10.
@@ -98,4 +131,6 @@ Short per-ticker notes, then end with this exact JSON block:
 ## Constraints
 - Every note must quote at least one figure from the insider or options facts.
 - Distinguish "positioning supports the move" from "positioning is dangerously crowded".
+- Never sign a score against the computed verdict's direction. If you think the verdict is
+  wrong, say so in the prose — do not express it as a bias the arithmetic will weight.
 - No final trade decision.

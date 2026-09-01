@@ -157,6 +157,11 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 			Source: "Yahoo Finance options",
 			URL:    link,
 		})
+		// Which side the ratio actually favours, decided here. The agent read a
+		// crowded put side as bearish and a crowded call side as "squeeze risk",
+		// also bearish — so the same metric voted down whichever way it pointed.
+		td.Facts = append(td.Facts, signalFact(OptionsSignalLabel,
+			classifyOptionsPositioning(ratio), "computed", link))
 	}
 	if iv, strike, ok := atmIV(res.Options[0].Calls, res.Options[0].Puts, spot); ok {
 		td.Facts = append(td.Facts, Fact{

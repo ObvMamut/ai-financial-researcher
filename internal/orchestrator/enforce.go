@@ -22,6 +22,16 @@ type enforcement struct {
 	// SelfContradicted lists tickers the agent put in *both* `scores` and
 	// `missing`. Its own report disclaims the score, so the score goes.
 	SelfContradicted []string
+	// Abstained is the subset of Corrected whose evidence was present but not
+	// directional — sentiment looking at real filings and a real option chain and
+	// finding nothing a direction can be built on.
+	//
+	// It is tracked separately only so the notice can say the true thing. Both
+	// sets lose their scores identically, but telling the Chief "this run had no
+	// verified sentiment data for AMGN" when the run had two months of Form 4s
+	// and a full chain is a false statement in the one place this pipeline works
+	// hardest to keep honest.
+	Abstained []string
 }
 
 // Any reports whether anything at all had to be corrected.
@@ -64,7 +74,7 @@ func (e enforcement) removed() []string {
 // An unparseable or absent tail returns an error: a refusal, a truncated
 // response, or free prose is not a usable domain report, and treating non-empty
 // stdout as success is how those reached synthesis unnoticed.
-func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) (string, enforcement, error) {
+func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist []string) (string, enforcement, error) {
 	var res enforcement
 
 	raw, ok := parse.LastJSONBlock(stdout)
@@ -94,6 +104,10 @@ func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) 
 	isUngrounded := make(map[string]bool, len(ungrounded))
 	for _, t := range ungrounded {
 		isUngrounded[normTicker(t)] = true
+	}
+	isAbstention := make(map[string]bool, len(abstained))
+	for _, t := range abstained {
+		isAbstention[normTicker(t)] = true
 	}
 
 	// What the agent itself said it had no data for. Read before the scores are
@@ -142,6 +156,13 @@ func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) 
 	res.Corrected = sortedKeys(corrected)
 	res.OffShortlist = sortedKeys(offShortlist)
 	res.SelfContradicted = sortedKeys(selfContradicted)
+	abstentions := map[string]bool{}
+	for t := range corrected {
+		if isAbstention[t] {
+			abstentions[t] = true
+		}
+	}
+	res.Abstained = sortedKeys(abstentions)
 
 	// `missing` is the union of what the agent declared and what it wrongly
 	// scored, normalized and deduped. Off-shortlist names are excluded: the run
@@ -199,34 +220,74 @@ func enforceSpecialistTail(role, stdout string, ungrounded, shortlist []string) 
 // verified regime data the Chief receives separately, and deleting an agent's
 // reasoning while keeping its conclusions would be worse. It labels it, which is
 // what lets the Chief tell context from evidence.
+// Abstentions are named separately and truthfully. Both kinds of removal have
+// the same effect on the score, but they are opposite statements about the run:
+// one says the data was never there, the other says it was there and said
+// nothing. Reporting an abstention as absent data would put a false sentence in
+// front of the Chief, in the one block whose whole purpose is to keep the Chief's
+// picture of the evidence accurate.
 func withRemovalNote(report, role string, e enforcement) string {
 	removed := e.removed()
 	if len(removed) == 0 {
 		return report
 	}
+	abstained := map[string]bool{}
+	for _, t := range e.Abstained {
+		abstained[t] = true
+	}
+	var noData, stoodDown []string
+	for _, t := range removed {
+		if abstained[t] {
+			stoodDown = append(stoodDown, t)
+		} else {
+			noData = append(noData, t)
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("> **Enforcement notice (added by the app, not by the ")
 	b.WriteString(role)
-	b.WriteString(" agent).** This run had no verified ")
-	b.WriteString(role)
-	b.WriteString(" data for ")
-	b.WriteString(strings.Join(removed, ", "))
-	b.WriteString(", so ")
-	if len(removed) == 1 {
-		b.WriteString("its score below was deleted and the name was moved to `missing`. ")
-	} else {
-		b.WriteString("their scores below were deleted and the names were moved to `missing`. ")
+	b.WriteString(" agent).** ")
+	if len(noData) > 0 {
+		b.WriteString("This run had no verified ")
+		b.WriteString(role)
+		b.WriteString(" data for ")
+		b.WriteString(strings.Join(noData, ", "))
+		b.WriteString(", so ")
+		b.WriteString(scoreOrScores(len(noData)))
+		b.WriteString(" ")
+	}
+	if len(stoodDown) > 0 {
+		b.WriteString("This run *did* have ")
+		b.WriteString(role)
+		b.WriteString(" data for ")
+		b.WriteString(strings.Join(stoodDown, ", "))
+		b.WriteString(", but the app's computed verdict read it as carrying no direction, so ")
+		b.WriteString(scoreOrScores(len(stoodDown)))
+		b.WriteString(" Treat ")
+		b.WriteString(thatOrThose(len(stoodDown)))
+		b.WriteString(" as evidence of no signal, which is not the same as absent evidence. ")
 	}
 	b.WriteString("Any prose in this report about ")
-	if len(removed) == 1 {
-		b.WriteString("that name")
-	} else {
-		b.WriteString("those names")
-	}
+	b.WriteString(thatOrThose(len(removed)))
 	b.WriteString(" is unscored context: it is not evidence from this domain and must not be used to adjust a base score. ")
 	b.WriteString("Where it appeals to market regime, the verified regime block is the authority.\n\n")
 	b.WriteString(report)
 	return b.String()
+}
+
+func scoreOrScores(n int) string {
+	if n == 1 {
+		return "its score below was deleted and the name was moved to `missing`."
+	}
+	return "their scores below were deleted and the names were moved to `missing`."
+}
+
+func thatOrThose(n int) string {
+	if n == 1 {
+		return "that name"
+	}
+	return "those names"
 }
 
 // normTicker upper-cases and trims a symbol for comparison.

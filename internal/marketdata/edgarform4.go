@@ -40,9 +40,24 @@ type form4Transaction struct {
 	Price  float64
 	Buy    bool // acquired (code P) rather than disposed (code S)
 	URL    string
+	// SharesAfter is the reporting owner's remaining direct holding. It is what
+	// separates an officer trimming 2% of their position from one exiting it, and
+	// dollar totals cannot: these are $1B-a-day names where even a $5.76M sale is
+	// half a percent of one session's volume.
+	SharesAfter float64
 }
 
 func (t form4Transaction) value() float64 { return t.Shares * t.Price }
+
+// fractionOfHolding is how much of the owner's position this trade moved, or 0
+// when the filing did not report a post-transaction balance.
+func (t form4Transaction) fractionOfHolding() float64 {
+	before := t.SharesAfter + t.Shares // a sale: what they held going in
+	if t.Buy || before <= 0 {
+		return 0
+	}
+	return t.Shares / before
+}
 
 // submissionsResp is the slice of SEC's submissions JSON we need: parallel
 // arrays, one index per filing.
@@ -91,6 +106,11 @@ type ownershipDocument struct {
 				Value string `xml:"value"`
 			} `xml:"transactionAcquiredDisposedCode"`
 		} `xml:"transactionAmounts"`
+		PostTransaction struct {
+			SharesOwnedFollowing struct {
+				Value string `xml:"value"`
+			} `xml:"sharesOwnedFollowingTransaction"`
+		} `xml:"postTransactionAmounts"`
 	} `xml:"nonDerivativeTable>nonDerivativeTransaction"`
 }
 
@@ -121,6 +141,8 @@ func (p *edgarProvider) fetchInsiderActivity(ctx context.Context, ticker string)
 			Source: "SEC EDGAR",
 			URL:    browse,
 		})
+		td.Facts = append(td.Facts, signalFact(InsiderSignalLabel,
+			classifyInsiderActivity(nil), "computed", browse))
 		return td, nil
 	}
 
@@ -169,6 +191,10 @@ func (p *edgarProvider) fetchInsiderActivity(ctx context.Context, ticker string)
 		Source: "SEC EDGAR",
 		URL:    browse,
 	})
+	// The verdict on that activity, computed rather than left to the agent's
+	// reading of it. See insidersignal.go for why routine selling is not a signal.
+	td.Facts = append(td.Facts, signalFact(InsiderSignalLabel,
+		classifyInsiderActivity(txns), "computed", browse))
 
 	// The largest few trades by dollar value, which is where the signal is: one
 	// $20M sale by a CEO is not three $50k purchases by directors.
@@ -302,13 +328,14 @@ func (d *ownershipDocument) openMarket(url string) ([]form4Transaction, int) {
 			date, _ = time.Parse("2006-01-02", strings.TrimSpace(d.PeriodOfReport))
 		}
 		out = append(out, form4Transaction{
-			Owner:  owner,
-			Title:  title,
-			Date:   date,
-			Shares: shares,
-			Price:  price,
-			Buy:    strings.EqualFold(strings.TrimSpace(t.Amounts.AcquiredDisposed.Value), "A"),
-			URL:    url,
+			Owner:       owner,
+			Title:       title,
+			Date:        date,
+			Shares:      shares,
+			Price:       price,
+			Buy:         strings.EqualFold(strings.TrimSpace(t.Amounts.AcquiredDisposed.Value), "A"),
+			URL:         url,
+			SharesAfter: parseFloatOrZero(t.PostTransaction.SharesOwnedFollowing.Value),
 		})
 	}
 	return out, skipped

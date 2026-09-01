@@ -48,7 +48,7 @@ func TestEnforceStripsUngroundedScores(t *testing.T) {
 	  {"ticker":"MSFT","bias":"bullish","strength":8,"note":"invented"}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("sentiment", in, []string{"MSFT"}, []string{"AAPL", "MSFT"})
+	out, res, err := enforceSpecialistTail("sentiment", in, []string{"MSFT"}, nil, []string{"AAPL", "MSFT"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestEnforceDropsOffShortlistTickers(t *testing.T) {
 	  {"ticker":"TSLA","bias":"bearish","strength":7,"note":"never asked for"}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("news", in, nil, []string{"AAPL"})
+	out, res, err := enforceSpecialistTail("news", in, nil, nil, []string{"AAPL"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestEnforceDropsOffShortlistTickers(t *testing.T) {
 func TestEnforceLeavesHonestReportUntouched(t *testing.T) {
 	in := report("prose", `{"domain":"news","scores":[{"ticker":"AAPL","bias":"bullish","strength":6,"note":"ok"}],"missing":["MSFT"]}`)
 
-	out, res, err := enforceSpecialistTail("news", in, []string{"MSFT"}, []string{"AAPL", "MSFT"})
+	out, res, err := enforceSpecialistTail("news", in, []string{"MSFT"}, nil, []string{"AAPL", "MSFT"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestEnforceLeavesHonestReportUntouched(t *testing.T) {
 func TestEnforceDoesNotDuplicateMissing(t *testing.T) {
 	in := report("prose", `{"domain":"news","scores":[{"ticker":"AAPL","strength":6}],"missing":["msft"," NVDA "]}`)
 
-	out, _, err := enforceSpecialistTail("news", in, []string{"MSFT", "NVDA"}, []string{"AAPL", "MSFT", "NVDA"})
+	out, _, err := enforceSpecialistTail("news", in, []string{"MSFT", "NVDA"}, nil, []string{"AAPL", "MSFT", "NVDA"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -129,10 +129,10 @@ func TestEnforceDoesNotDuplicateMissing(t *testing.T) {
 // No parseable tail means the report is unusable — a refusal or a truncation.
 // The run must not treat it as a successful domain.
 func TestEnforceRejectsReportWithNoTail(t *testing.T) {
-	if _, _, err := enforceSpecialistTail("news", "I cannot help with that request.", nil, []string{"AAPL"}); err == nil {
+	if _, _, err := enforceSpecialistTail("news", "I cannot help with that request.", nil, nil, []string{"AAPL"}); err == nil {
 		t.Fatal("expected an error for a report with no JSON tail")
 	}
-	if _, _, err := enforceSpecialistTail("news", report("p", `{"domain":"news",`), nil, []string{"AAPL"}); err == nil {
+	if _, _, err := enforceSpecialistTail("news", report("p", `{"domain":"news",`), nil, nil, []string{"AAPL"}); err == nil {
 		t.Fatal("expected an error for a malformed JSON tail")
 	}
 }
@@ -144,7 +144,7 @@ func TestEnforceStripsEntireRegimeDomain(t *testing.T) {
 	  {"ticker":"AAPL","strength":8},{"ticker":"MSFT","strength":7}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("macro", in, []string{"AAPL", "MSFT"}, []string{"AAPL", "MSFT"})
+	out, res, err := enforceSpecialistTail("macro", in, []string{"AAPL", "MSFT"}, nil, []string{"AAPL", "MSFT"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestEnforceDropsScoresTheAgentItselfCallsMissing(t *testing.T) {
 	  {"ticker":"ORCL","bias":"neutral","strength":3,"note":"positioning evidence is empty"}
 	],"missing":["ORCL"]}`)
 
-	out, res, err := enforceSpecialistTail("sentiment", in, nil, []string{"AMGN", "ORCL"})
+	out, res, err := enforceSpecialistTail("sentiment", in, nil, nil, []string{"AMGN", "ORCL"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestEnforceLabelsProseAboutStrippedNames(t *testing.T) {
 	  {"ticker":"AMGN","bias":"bullish","strength":4,"note":"SPX near highs"}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("macro", in, []string{"9984.T"}, []string{"9984.T", "AMGN"})
+	out, res, err := enforceSpecialistTail("macro", in, []string{"9984.T"}, nil, []string{"9984.T", "AMGN"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestEnforceAddsNoNoticeWhenNothingWasRemoved(t *testing.T) {
 	in := report("prose", `{"domain":"quant","scores":[
 	  {"ticker":"AMGN","bias":"bullish","strength":7,"note":"ok"}
 	],"missing":[]}`)
-	out, res, err := enforceSpecialistTail("quant", in, nil, []string{"AMGN"})
+	out, res, err := enforceSpecialistTail("quant", in, nil, nil, []string{"AMGN"})
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -253,5 +253,67 @@ func TestEnforceAddsNoNoticeWhenNothingWasRemoved(t *testing.T) {
 	}
 	if out != in {
 		t.Error("an honest report must come back byte-identical")
+	}
+}
+
+// TestEnforceNoticeDistinguishesAbstentionFromAbsentData keeps a true statement
+// in front of the Chief Analyst.
+//
+// Both removals delete the score, but they say opposite things about the run.
+// Sentiment stands down on a name whose insider filings and option chain were
+// both fetched and both read as non-directional — telling the Chief the run "had
+// no verified sentiment data" for it would be false, in the one block whose whole
+// job is to keep the Chief's picture of the evidence accurate.
+func TestEnforceNoticeDistinguishesAbstentionFromAbsentData(t *testing.T) {
+	in := report("Positioning notes.", `{"domain":"sentiment","scores":[
+	  {"ticker":"AMGN","bias":"bearish","strength":6,"note":"routine insider selling"},
+	  {"ticker":"BAYN.DE","bias":"bearish","strength":5,"note":"no data at all"}
+	],"missing":[]}`)
+
+	out, res, err := enforceSpecialistTail("sentiment", in,
+		[]string{"AMGN", "BAYN.DE"}, // both lose their scores
+		[]string{"AMGN"},            // but only AMGN was an abstention
+		[]string{"AMGN", "BAYN.DE"})
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if !equalStrings(res.Abstained, []string{"AMGN"}) {
+		t.Errorf("Abstained = %v, want [AMGN]", res.Abstained)
+	}
+	if !equalStrings(res.Corrected, []string{"AMGN", "BAYN.DE"}) {
+		t.Errorf("Corrected = %v, want both — an abstention still loses its score", res.Corrected)
+	}
+
+	if !strings.Contains(out, "no verified sentiment data for BAYN.DE") {
+		t.Errorf("the genuinely uncovered name is not reported as such:\n%s", out)
+	}
+	if strings.Contains(out, "no verified sentiment data for AMGN") {
+		t.Errorf("an abstention was reported as absent data:\n%s", out)
+	}
+	if !strings.Contains(out, "did* have sentiment data for AMGN") {
+		t.Errorf("the abstention is not explained:\n%s", out)
+	}
+	if !strings.Contains(out, "not the same as absent evidence") {
+		t.Errorf("the notice does not draw the distinction it exists to draw:\n%s", out)
+	}
+
+	got := tailOf(t, out)
+	if len(got.Scores) != 0 {
+		t.Errorf("scores = %+v, want none", got.Scores)
+	}
+}
+
+// An abstention-free run must read exactly as it did before.
+func TestEnforceNoticeUnchangedWithoutAbstentions(t *testing.T) {
+	in := report("prose", `{"domain":"macro","scores":[{"ticker":"AAPL","strength":8}],"missing":[]}`)
+	out, _, err := enforceSpecialistTail("macro", in, []string{"AAPL"}, nil, []string{"AAPL"})
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if !strings.Contains(out, "This run had no verified macro data for AAPL, so its score below was deleted") {
+		t.Errorf("the ordinary notice changed shape:\n%s", out)
+	}
+	if strings.Contains(out, "did* have") {
+		t.Errorf("an abstention clause appeared with no abstentions:\n%s", out)
 	}
 }

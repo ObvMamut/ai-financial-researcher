@@ -45,7 +45,7 @@ indices, ranked best-composite-first with excluded rows last:
   "params": {
     "top_per_index": 15, "bottom_per_index": 5,
     "adv_min_usd": 20000000, "min_bars": 60, "vol_trend_flag": 1.5,
-    "formula": "z(mom12-1) + 0.5·z(ret63d) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
+    "formula": "z(mom12-1) + 0.5·z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
   },
   "rows": [
     { "ticker": "NVDA", "name": "NVIDIA Corporation", "sector": "Information Technology",

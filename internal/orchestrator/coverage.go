@@ -21,6 +21,18 @@ import (
 // the shortlist" off the US 10-year, at full weight, and pushed a
 // quant-bearish name into the top five. Macro therefore grounds US listings
 // only; a foreign name is a gap like any other.
+// Sentiment is the second exception, and for a different reason. Its two sources
+// are almost always *present* — nearly every US issuer has recent Form 4 filings
+// and a listed option chain — but presence is not evidence. Officers are paid in
+// stock and sell on schedules set months earlier, so "0 buys vs N sales" is the
+// resting state of the market, and a put/call ratio near 1.0 says nothing. Read
+// as evidence anyway, that produced a domain that scored one bullish name in 34
+// across four runs and levied a flat ~9 points on every long in the book.
+//
+// So sentiment is grounded by the *computed* verdict in
+// marketdata.HasPositioningSignal, not by whether the fetch returned rows. A name
+// whose positioning is quiet is a name this domain has nothing to say about, and
+// the honest place for it is `missing`.
 func coveredBy(role string, pack *marketdata.DataPack, quantPack *quant.Pack, ticker string) bool {
 	t := strings.ToUpper(ticker)
 	if marketdata.IsRegimeDomain(role) {
@@ -34,7 +46,13 @@ func coveredBy(role string, pack *marketdata.DataPack, quantPack *quant.Pack, ti
 		}
 		return false
 	}
-	return pack.Coverage[t]
+	if !pack.Coverage[t] {
+		return false
+	}
+	if role == "sentiment" {
+		return marketdata.HasPositioningSignal(pack.ByTicker[t])
+	}
+	return true
 }
 
 // groundedFor reports whether a role had verified evidence for at least one
@@ -52,6 +70,31 @@ func groundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack) 
 		return len(quantPack.ByTicker) > 0
 	}
 	return false
+}
+
+// abstainedFor lists the tickers a role's sources answered for but had nothing
+// directional to say about.
+//
+// It is deliberately not the same thing as being ungrounded, even though both
+// send the name to `missing`. A gap is a failure — a fetch that should have
+// worked and did not — and degrades the run. An abstention is the system working:
+// sentiment looked at two months of Form 4s and an option chain, found scheduled
+// disposals and a put/call ratio of 1.22, and correctly declined to call that a
+// direction. Counting the second as the first would mark every healthy run
+// degraded.
+func abstainedFor(role string, pack *marketdata.DataPack, tickers []string) []string {
+	if role != "sentiment" {
+		return nil
+	}
+	var out []string
+	for _, t := range tickers {
+		u := strings.ToUpper(t)
+		if pack.Coverage[u] && !marketdata.HasPositioningSignal(pack.ByTicker[u]) {
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ungroundedFor lists the requested tickers a role has no verified evidence for.
@@ -109,12 +152,17 @@ type domainGap struct {
 // It is now measured like the rest: FRED is a US source, so a US name macro
 // failed to ground is a real gap, and a FRED outage degrades the run instead of
 // passing silently as `grounded: true` forever.
+// A name a domain deliberately stood down on is not a gap — see abstainedFor.
 func coverageGaps(statuses []model.DomainStatus) []domainGap {
 	var out []domainGap
 	for _, s := range statuses {
+		abstained := make(map[string]bool, len(s.Abstained))
+		for _, t := range s.Abstained {
+			abstained[strings.ToUpper(t)] = true
+		}
 		var missed []string
 		for _, t := range s.Ungrounded {
-			if groundableBy(s.Domain, t) {
+			if groundableBy(s.Domain, t) && !abstained[strings.ToUpper(t)] {
 				missed = append(missed, strings.ToUpper(t))
 			}
 		}

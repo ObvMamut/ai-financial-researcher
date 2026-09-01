@@ -19,13 +19,22 @@ nothing. No model is called.
 leaders instead of losing every slot to the strongest one:
 
 ```
-score = z(mom12-1) + 0.5·z(ret63d) − 0.5·z(strZ)
+score = z(mom12-1) + 0.5·z(ret63d) − 0.5·strZ
 ```
 
 The last term applies **only when the recent move runs with the trend** (`sign(strZ) == sign(mom12-1)`). That is the short-term
 reversal case: a name that has just spiked on top of an uptrend gives the spike back,
 while an uptrend that has just dipped is a pullback entry. The rule is symmetric, so a
 name that has already collapsed is penalised as a short for the same reason.
+
+Note that `strZ` enters **raw**, while the other two terms are z-scored within the index.
+That is not an inconsistency: `strZ` is already a z-score — the trailing 5-day return
+standardised against that name's *own* one-year distribution of 5-day returns — so it is
+unit-free and on the same scale as the others. Standardising it a second time across the
+index is what the term used to do, and it broke the sign the gate had just tested: in a
+broad rally the index mean of `strZ` is positive, so a mildly extended name has a negative
+cross-sectional z and `− 0.5·z` paid it a *bonus* for extending. On the 2026-09-01 universe
+the gate fired on 97 names and 5 of them were rewarded rather than charged.
 
 The composite is a **signed long ranking**: high means a strong long, low means a strong
 short.

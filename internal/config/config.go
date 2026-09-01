@@ -338,8 +338,13 @@ func (s *Settings) applyFile(path string) error {
 	if err := parseDur(&s.PriceTTL, f.PriceTTL, "price_ttl"); err != nil {
 		return err
 	}
-	if f.Retry.Jitter {
-		s.Retry.Jitter = true
+	// jitter=false is a meaningful setting, not an absent one, so it needs the
+	// same presence check data_cache_days already has. Testing the value alone
+	// made the flag one-way: once ~/.config/cfr/config.toml turned jitter on,
+	// no ./cfr.toml and no flag could turn it off again, which inverts the
+	// documented precedence for the one key where it is silent.
+	if md.IsDefined("retry", "jitter") {
+		s.Retry.Jitter = f.Retry.Jitter
 	}
 
 	if f.Models.Claude != "" {
@@ -385,6 +390,13 @@ func (s *Settings) applyEnv() {
 			*dst = v
 		}
 	}
+	setPosInt := func(dst *int, key string) {
+		if v := os.Getenv(key); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*dst = n
+			}
+		}
+	}
 	setStr(&s.RunsDir, "CFR_RUNS_DIR")
 	setStr(&s.AgentsDir, "CFR_AGENTS_DIR")
 	setStr(&s.Providers.AlphaVantageKey, "ALPHAVANTAGE_API_KEY")
@@ -405,11 +417,11 @@ func (s *Settings) applyEnv() {
 	setStr(&s.Local.BaseURL, "CFR_LOCAL_BASE_URL")
 	setStr(&s.Local.Model, "CFR_LOCAL_MODEL")
 	setStr(&s.Local.APIKey, "CFR_LOCAL_KEY")
-	if v := os.Getenv("CFR_API_MAX_TOKENS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			s.API.MaxTokens = n
-		}
-	}
+	setPosInt(&s.API.MaxTokens, "CFR_API_MAX_TOKENS")
+	// [local] is configurable by env on every other key; max_tokens was the one
+	// omission, so a local model's context had to be set in a file even when
+	// everything else about it came from the environment.
+	setPosInt(&s.Local.MaxTokens, "CFR_LOCAL_MAX_TOKENS")
 
 	// Optional DeepSeek resilience fallback for the Chief Analyst synthesis
 	// step. Deliberately no DEEPSEEK_API_KEY alias here (unlike [api]'s): a
@@ -479,13 +491,6 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_DATA_CACHE_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			s.DataCacheDays = n
-		}
-	}
-	setPosInt := func(dst *int, key string) {
-		if v := os.Getenv(key); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				*dst = n
-			}
 		}
 	}
 	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")

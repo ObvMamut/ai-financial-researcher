@@ -78,7 +78,7 @@ func TestCalibrationBlockStaysQuietOnAThinRecord(t *testing.T) {
 	if block == "" {
 		t.Fatal("no block from 12 closed trades")
 	}
-	for _, want := range []string{"### Track record", "12 closed", "By stated confidence", "quant"} {
+	for _, want := range []string{"### Track record", "12 closed", "By computed confidence", "quant"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("block missing %q:\n%s", want, block)
 		}

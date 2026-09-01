@@ -361,6 +361,13 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				}
 			}
 		}
+
+		// The insider and options legs come from different providers, so their
+		// combined verdict can only be formed once both have merged.
+		if td, ok := pack.ByTicker[t]; ok {
+			addPositioningSignal(&td)
+			pack.ByTicker[t] = td
+		}
 	}
 
 	return pack

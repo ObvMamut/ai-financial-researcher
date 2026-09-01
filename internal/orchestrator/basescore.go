@@ -29,6 +29,23 @@ const (
 	degradedConfCap = 55 // the degraded path does no cross-domain reasoning at all
 )
 
+// The confidence a base score carries is expressed against
+// model.ReferenceTotal — the strongest verdict the five rubrics jointly permit —
+// rather than against an unreachable strength of 10 everywhere.
+//
+// `Σ w·sign·strength/10` over the raw total weight can only reach 100 if all
+// five domains agree at strength 10, but every persona reserves 9–10 for "rare"
+// and agents/macro.md caps itself outright ("**5** … **This is your ceiling**").
+// The attainable maximum is ~0.77, so the scale never used its top quarter.
+// Across the four runs from 2026-08-31 — the first with this arithmetic live —
+// the highest base *anywhere* was 45.5 and the shipped ideas ran 26–45, while
+// every consumer of the number still treated 50 as mediocre and 70 as good. MRK
+// on 2026-09-01 was the strongest three-domain agreement this system can produce
+// (quant +6, news +6, fundamentals +6) and scored 39.
+//
+// The table lives in internal/model because the scoreboard has to read a past
+// idea's recorded domain scores on the same scale a live run produces them.
+
 // BaseScore is the deterministic weighted read on one shortlisted ticker,
 // computed in-process from the specialists' structured tails before the Chief
 // Analyst sees them.
@@ -44,9 +61,15 @@ type BaseScore struct {
 	Direction model.Direction `json:"direction,omitempty"`
 	// Signed is the weighted score over the *full* domain weight, ∈ [−1, 1],
 	// positive = bullish. A domain with no data contributes 0 to it, which is
-	// what makes thin coverage score below thick coverage.
+	// what makes thin coverage score below thick coverage. It is kept as the
+	// auditable raw figure; Confidence is scored off Scaled.
 	Signed float64 `json:"signed"`
-	// Confidence is |Signed|·100 with the coverage cap applied.
+	// Scaled is Signed re-expressed against referenceTotal — the strongest joint
+	// verdict the five rubrics permit — rather than against an unreachable
+	// strength of 10 everywhere. Same divisor for every name, so it changes the
+	// scale and never the ordering.
+	Scaled float64 `json:"scaled"`
+	// Confidence is |Scaled|·100 with the coverage cap applied.
 	Confidence int `json:"confidence"`
 	// Cap is the coverage cap that was applied, or 0 if none bound.
 	Cap int `json:"cap,omitempty"`
@@ -70,15 +93,7 @@ func (b BaseScore) For(dir model.Direction) int {
 
 // domainWeightMap flattens the configured weights into the domain keys the
 // specialists actually emit.
-func domainWeightMap(w model.DomainWeights) map[string]float64 {
-	return map[string]float64{
-		"quant":        w.Quant,
-		"news":         w.News,
-		"fundamentals": w.Fundamentals,
-		"sentiment":    w.Sentiment,
-		"macro":        w.Macro,
-	}
-}
+func domainWeightMap(w model.DomainWeights) map[string]float64 { return w.Map() }
 
 // computeBaseScores turns the specialist reports into one weighted score per
 // shortlisted ticker, ranked best-first. Every shortlisted name appears, even
@@ -92,6 +107,7 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 			totalWeight += v
 		}
 	}
+	reference := model.ReferenceTotal(w)
 
 	type accum struct {
 		weighted float64
@@ -172,6 +188,18 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 			// and AMGN's 35 leads, which is the ordering the evidence supports.
 			b.Signed = a.weighted / totalWeight
 			b.CoveredWeight = a.covered / totalWeight
+			// Confidence is scored against what the domains can jointly express,
+			// not against an unreachable 10-across-the-board. Same denominator for
+			// every name, so this rescales without reordering. See
+			// model.ReferenceStrength.
+			if reference > 0 {
+				b.Scaled = a.weighted / reference
+				if b.Scaled > 1 {
+					b.Scaled = 1
+				} else if b.Scaled < -1 {
+					b.Scaled = -1
+				}
+			}
 		}
 		if len(b.Domains) == 0 {
 			b.Domains = nil
@@ -182,7 +210,7 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 		case b.Signed < 0:
 			b.Direction = model.DirectionSell
 		}
-		conf := int(abs(b.Signed)*100 + 0.5)
+		conf := int(abs(b.Scaled)*100 + 0.5)
 		switch {
 		case b.CoveredWeight < scarceCoverage:
 			b.Cap = scarceCap
@@ -229,7 +257,10 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 	var sb strings.Builder
 	sb.WriteString("### Computed base scores (authoritative)\n\n")
 	sb.WriteString("Computed in-process from the `scores` tails of the reports below, using the weights above: ")
-	sb.WriteString("`base = Σ wᵈ · signᵈ · strengthᵈ/10` over the *full* domain weight — a domain with no data for a name votes 0. ")
+	sb.WriteString("`base = Σ wᵈ · signᵈ · strengthᵈ/10` over the *full* domain weight — a domain with no data for a name votes 0 — ")
+	sb.WriteString("then expressed as a share of the strongest joint verdict the five rubrics allow ")
+	sb.WriteString("(strength 8 for quant/news/fundamentals/sentiment, 5 for macro, which is macro's own stated ceiling). ")
+	sb.WriteString("So 100 means every domain agreeing at the top of its band, and a well-supported idea lands in the 50s–70s rather than the 30s. ")
 	sb.WriteString(fmt.Sprintf("**Start from `base` and adjust by at most ±%d**, naming each adjustment. ", band))
 	sb.WriteString("`covered` is the share of total domain weight behind the number; a low `covered` has already lowered `base`, ")
 	sb.WriteString("so do not discount thin coverage a second time. `cap` is the further ceiling coverage imposes. ")

@@ -20,6 +20,62 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// TestNoDuplicateTickerWithinAnIndex guards a data-entry slip that is silent
+// until it reaches the statistics.
+//
+// nq100.csv carried PDD on two rows. The pre-screen fetched and ranked it twice,
+// so it counted twice in that index's z-score mean and standard deviation —
+// shifting every other name's composite — and could take two of the fifteen slots
+// the scout sees. Nothing failed; the ranking was just slightly wrong.
+func TestNoDuplicateTickerWithinAnIndex(t *testing.T) {
+	u, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, idx := range AllIndices() {
+		seen := map[string]bool{}
+		for _, c := range u.Constituents(idx) {
+			if seen[c.Ticker] {
+				t.Errorf("%s lists %s more than once", idx, c.Ticker)
+			}
+			seen[c.Ticker] = true
+		}
+	}
+}
+
+// TestConstituentFieldsAreInTheRightColumns catches a shifted row. REGN sat in
+// nq100.csv as `REGN,...,NASDAQ,Health Care,Health Care` — its country column
+// holding a sector — which the parser accepted silently because it only counts
+// commas.
+func TestConstituentFieldsAreInTheRightColumns(t *testing.T) {
+	u, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	sectors := map[string]bool{}
+	for _, idx := range AllIndices() {
+		for _, c := range u.Constituents(idx) {
+			if c.Sector != "" {
+				sectors[c.Sector] = true
+			}
+		}
+	}
+	for _, idx := range AllIndices() {
+		for _, c := range u.Constituents(idx) {
+			switch {
+			case c.Ticker == "" || c.Name == "":
+				t.Errorf("%s: row with no ticker or name: %+v", idx, c)
+			case c.Sector == "":
+				t.Errorf("%s: %s has no sector — the risk gate's concentration check reads it", idx, c.Ticker)
+			case sectors[c.Country]:
+				t.Errorf("%s: %s has country %q, which is a sector — the row is shifted", idx, c.Ticker, c.Country)
+			case len(c.Country) > 3:
+				t.Errorf("%s: %s has country %q, want an ISO-style code", idx, c.Ticker, c.Country)
+			}
+		}
+	}
+}
+
 func TestLookup(t *testing.T) {
 	u, _ := Load()
 

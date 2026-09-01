@@ -175,14 +175,34 @@ func (m resultsModel) renderIdea(sb *strings.Builder, idea model.TradeIdea, sele
 	sb.WriteString("\n")
 }
 
+// Confidence bands for the bar's colour. They are set against the scale
+// `internal/orchestrator/basescore.go` actually produces: a base score is a
+// weighted vote across five domains scored against the strongest joint verdict
+// their rubrics permit, so full agreement is 70+ and a well-supported idea with
+// one domain dissenting lands in the 50s and 60s.
+//
+// The old thresholds (70 / 50) were set when the Chief Analyst asserted its own
+// confidence and routinely returned 70–88. Once base-score anchoring went live on
+// 2026-08-31 nothing shipped above 45 for four consecutive runs, so every idea in
+// every run rendered red — the app telling the user its own best work had failed.
+const (
+	confidenceStrong   = 55
+	confidenceModerate = 35
+)
+
 func confidenceBar(conf int) string {
 	total := 10
 	filled := (conf * total) / 100
+	if filled > total {
+		filled = total
+	} else if filled < 0 {
+		filled = 0
+	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", total-filled)
 	switch {
-	case conf >= 70:
+	case conf >= confidenceStrong:
 		return doneStyle.Render(bar)
-	case conf >= 50:
+	case conf >= confidenceModerate:
 		return runningStyle.Render(bar)
 	default:
 		return failedStyle.Render(bar)

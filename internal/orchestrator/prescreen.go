@@ -51,7 +51,7 @@ const (
 	prescreenVolTrendFlag = 1.5
 	// prescreenFormula is written into the artifact so a row's Score is legible
 	// without reading this file.
-	prescreenFormula = "z(mom12-1) + 0.5·z(ret63d) − 0.5·z(strZ) when the recent move runs with the trend; z-scores within index"
+	prescreenFormula = "z(mom12-1) + 0.5·z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
 	// defaultADVMinUSD is the tradeable-size floor, in 20-day average dollar
 	// volume. A swing position sized off a real account cannot be entered or
 	// exited in a name that trades a few million a day, so such names are
@@ -306,7 +306,6 @@ func scorePrescreen(rows []PrescreenRow) {
 		}
 		zMom := zscores(pick(func(r PrescreenRow) float64 { return r.Mom12_1 }))
 		zR63 := zscores(pick(func(r PrescreenRow) float64 { return r.Ret63d }))
-		zSTR := zscores(pick(func(r PrescreenRow) float64 { return r.STRZ }))
 
 		for k, i := range members {
 			score := zMom[k] + 0.5*zR63[k]
@@ -317,8 +316,20 @@ func scorePrescreen(rows []PrescreenRow) {
 			// the penalty applies when the 5d move shares the sign of the 12-1
 			// trend, and is symmetric — a crashed name is a poor short for the
 			// same reason an extended one is a poor long.
+			//
+			// The term is STRZ itself, not a cross-sectional z-score of it. STRZ
+			// is *already* a z-score — quant.Compute standardises the trailing 5d
+			// return against that name's own one-year distribution of 5d returns —
+			// so it is unit-free and on the same scale as the terms above.
+			// Re-standardising it within the index broke the sign the gate had
+			// just tested: in a broad rally the index mean of STRZ is positive, so
+			// a mildly extended name has a *negative* cross-sectional z, and
+			// `score -= 0.5·z` paid it a bonus for extending. With four names on
+			// an identical +40% trend, one that had run up 0.3σ scored +0.39
+			// against +0.00 for one that had not moved at all — the reversal
+			// penalty rewarding the extension it exists to punish.
 			if sameSign(rows[i].STRZ, rows[i].Mom12_1) {
-				score -= 0.5 * zSTR[k]
+				score -= 0.5 * rows[i].STRZ
 			}
 			rows[i].Score = score
 		}

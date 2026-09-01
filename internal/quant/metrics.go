@@ -307,9 +307,15 @@ func yangZhang(bars []Bar) (float64, bool) {
 	k := 0.34 / (1.34 + (n+1)/(n-1))
 	v := variance(on) + k*variance(oc) + (1-k)*mean(rs)
 	if v <= 0 {
-		// Rogers-Satchell term can push the sum slightly negative on degenerate
-		// data; report zero rather than NaN.
-		return 0, true
+		// The Rogers-Satchell term can push the sum to zero or slightly negative
+		// on degenerate data (a halted name, a synthetic series, bars where every
+		// OHLC is the same price). That is "not computable", not "zero
+		// volatility", and the difference matters downstream: a zero σ leaves
+		// SigmaDaily at 0, and the risk gate cannot check a stop in σ units it
+		// does not have. Reporting ok=false raises the flag Compute already
+		// writes for an unusable window, so the gap is visible instead of
+		// presenting as a confidently computed zero.
+		return 0, false
 	}
 	return math.Sqrt(v * tradingDays), true
 }
