@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/parse"
 )
 
@@ -22,6 +23,19 @@ type enforcement struct {
 	// SelfContradicted lists tickers the agent put in *both* `scores` and
 	// `missing`. Its own report disclaims the score, so the score goes.
 	SelfContradicted []string
+	// Neutral lists the shortlisted tickers the agent scored with a `neutral`
+	// bias on evidence it did have. Nothing is deleted — a genuine standoff is a
+	// legitimate verdict — but it is the most expensive one available: sign 0
+	// contributes nothing to the weighted score while still consuming the
+	// domain's full weight, so a neutral vote costs more than a missing one and
+	// blocks the coverage cap relief a gap would earn.
+	//
+	// It is recorded because it was invisible. On 2026-09-01 news scored AMGN
+	// `neutral 0` while its own paragraph named a UK regulator suspending a
+	// marketed drug that morning, reported by three outlets; that cost the idea
+	// 17 points of base score and nothing in the run distinguished it from a
+	// name news simply had nothing on.
+	Neutral []string
 	// Abstained is the subset of Corrected whose evidence was present but not
 	// directional — sentiment looking at real filings and a real option chain and
 	// finding nothing a direction can be built on.
@@ -36,6 +50,14 @@ type enforcement struct {
 	// it the lists above have no denominator, and "six corrected" reads the same
 	// whether the domain scored six names or forty.
 	Scored int
+	// Renamed lists the "wrote the company, not the symbol" resolutions, as
+	// "KAKAO→035720.KS". These are not corrections — the score stands, under the
+	// ticker the run asked about — but they are recorded because they used to be
+	// deletions. On 2026-09-03 macro scored twelve names and wrote OCBC, KAKAO
+	// and MEDIATEK for O39.SI, 035720.KS and 2454.TW; all three were struck as
+	// off-shortlist, and those are exactly the names that then shipped as ideas
+	// 3 and 5 on a single domain each.
+	Renamed []string
 }
 
 // Any reports whether anything at all had to be corrected.
@@ -78,7 +100,7 @@ func (e enforcement) removed() []string {
 // An unparseable or absent tail returns an error: a refusal, a truncated
 // response, or free prose is not a usable domain report, and treating non-empty
 // stdout as success is how those reached synthesis unnoticed.
-func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist []string) (string, enforcement, error) {
+func enforceSpecialistTail(role, stdout string, ungrounded, abstained []string, shortlist []model.Candidate) (string, enforcement, error) {
 	var res enforcement
 
 	raw, ok := parse.LastJSONBlock(stdout)
@@ -102,8 +124,23 @@ func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist
 	}
 
 	onShortlist := make(map[string]bool, len(shortlist))
-	for _, t := range shortlist {
-		onShortlist[normTicker(t)] = true
+	for _, c := range shortlist {
+		onShortlist[normTicker(c.Ticker)] = true
+	}
+	aliases := shortlistAliases(shortlist)
+	renamed := map[string]bool{}
+	// resolve turns whatever the agent wrote into the ticker the run asked
+	// about, where the two name the same company.
+	resolve := func(raw string) string {
+		t := normTicker(raw)
+		if t == "" || onShortlist[t] {
+			return t
+		}
+		if canonical, ok := aliases[t]; ok && canonical != "" {
+			renamed[t+"→"+canonical] = true
+			return canonical
+		}
+		return t
 	}
 	isUngrounded := make(map[string]bool, len(ungrounded))
 	for _, t := range ungrounded {
@@ -123,7 +160,7 @@ func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist
 			return stdout, res, fmt.Errorf("unparseable `missing` array in %s report: %w", role, err)
 		}
 		for _, m := range missing {
-			if n := normTicker(m); n != "" {
+			if n := resolve(m); n != "" {
 				declared[n] = true
 			}
 		}
@@ -133,13 +170,23 @@ func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist
 	corrected := map[string]bool{}
 	offShortlist := map[string]bool{}
 	selfContradicted := map[string]bool{}
+	neutral := map[string]bool{}
 	for _, s := range scores {
-		t := normTicker(jsonString(s["ticker"]))
+		t := resolve(jsonString(s["ticker"]))
 		if t == "" {
 			// A score with no ticker names nothing; it cannot be attributed.
 			continue
 		}
 		res.Scored++
+		if normTicker(jsonString(s["ticker"])) != t {
+			// Rewrite the tail to the symbol the rest of the pipeline keys on.
+			// Everything downstream — base scores, the Chief's table, the risk
+			// gate — looks names up by ticker, so a score under a company name
+			// is invisible to all of it even once it is no longer deleted.
+			if raw, err := json.Marshal(t); err == nil {
+				s["ticker"] = raw
+			}
+		}
 		switch {
 		case !onShortlist[t]:
 			offShortlist[t] = true
@@ -156,9 +203,14 @@ func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist
 			// or the other; this makes it true.
 			selfContradicted[t] = true
 		default:
+			if strings.EqualFold(strings.TrimSpace(jsonString(s["bias"])), "neutral") {
+				neutral[t] = true
+			}
 			kept = append(kept, s)
 		}
 	}
+	res.Neutral = sortedKeys(neutral)
+	res.Renamed = sortedKeys(renamed)
 	res.Corrected = sortedKeys(corrected)
 	res.OffShortlist = sortedKeys(offShortlist)
 	res.SelfContradicted = sortedKeys(selfContradicted)
@@ -179,7 +231,7 @@ func enforceSpecialistTail(role, stdout string, ungrounded, abstained, shortlist
 	missing := sortedKeys(declared)
 
 	// Nothing to correct: hand the report back byte-identical.
-	if !res.Any() && sameStringSet(missing, tail["missing"]) {
+	if !res.Any() && len(res.Renamed) == 0 && sameStringSet(missing, tail["missing"]) {
 		return stdout, res, nil
 	}
 
@@ -321,6 +373,70 @@ func thatOrThose(n int) string {
 }
 
 // normTicker upper-cases and trims a symbol for comparison.
+// shortlistAliases maps the ways a specialist might name a shortlisted company
+// onto its ticker.
+//
+// Enforcement compares what the agent wrote against the shortlist by symbol and
+// deletes anything that does not match, which is right for a hallucinated ticker
+// and wrong for a correct verdict filed under the company's name. Macro wrote
+// OCBC, KAKAO and MEDIATEK on 2026-09-03 — the names in its own prose, and in
+// the shortlist block it was handed, which carries `name` beside `ticker` — and
+// lost all three scores. Ideas 3 and 5 then shipped on quant alone.
+//
+// Three forms, each only registered when it collides with nothing else on the
+// shortlist and is not already a ticker: the full name, its first word, and its
+// initials. "Oversea-Chinese Banking Corporation" yields OVERSEACHINESEBANKING,
+// OVERSEA and OCBC; "Kakao Corp." yields KAKAO; "MediaTek Inc." yields MEDIATEK.
+// An ambiguous key is registered as empty rather than dropped, so a later name
+// producing the same key cannot claim it either.
+func shortlistAliases(shortlist []model.Candidate) map[string]string {
+	tickers := make(map[string]bool, len(shortlist))
+	for _, c := range shortlist {
+		tickers[normTicker(c.Ticker)] = true
+	}
+	out := map[string]string{}
+	add := func(key, ticker string) {
+		if key == "" || tickers[key] {
+			return
+		}
+		if prev, seen := out[key]; seen && prev != ticker {
+			out[key] = "" // ambiguous: no name may claim it
+			return
+		}
+		out[key] = ticker
+	}
+	for _, c := range shortlist {
+		words := entityWords(c.Name)
+		if len(words) == 0 {
+			continue
+		}
+		t := normTicker(c.Ticker)
+		add(strings.ToUpper(strings.Join(words, "")), t)
+		add(strings.ToUpper(words[0]), t)
+		if len(words) > 1 {
+			var initials strings.Builder
+			for _, w := range words {
+				initials.WriteByte(w[0])
+			}
+			add(strings.ToUpper(initials.String()), t)
+		}
+	}
+	return out
+}
+
+// entityWords splits a company name into its words, on whitespace and on the
+// punctuation that separates them. Hyphens split, because "Oversea-Chinese" is
+// two words in the initialism its own bank uses.
+func entityWords(name string) []string {
+	return strings.FieldsFunc(name, func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return false
+		}
+		return true
+	})
+}
+
 func normTicker(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
 
 // jsonString decodes a JSON string field, returning "" for anything else.

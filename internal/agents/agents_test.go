@@ -342,3 +342,64 @@ func TestLoadIgnoresAReadme(t *testing.T) {
 		t.Errorf("persona set = %v, want just the scout", reg.PersonaSHA())
 	}
 }
+
+// The post-mortem block reaches the Chief's prompt, but for a while the persona
+// said nothing at all about it — so the single most important step in the
+// pipeline was handed a page of model-written prose with no stated bound on
+// what it could do with it. The block and the rule for reading it have to
+// travel together; a block with no rule must not be able to come back quietly.
+func TestChiefPromptCarriesThePostMortemAndTheRuleForUsingIt(t *testing.T) {
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	p := PromptParams{
+		Role:             "chief-analyst",
+		Mode:             model.ModeIndependent,
+		RunTS:            time.Now(),
+		Shortlist:        []model.Candidate{{Ticker: "AAA", Index: "sp500"}},
+		BaseScoreBlock:   "### Computed base scores\n\nAAA BUY 55\n",
+		TrackRecordBlock: "### Track record (computed from 31 closed ideas)\n\n- Overall: 45%\n",
+		PostMortemBlock:  "### Lessons from 31 closed ideas\n\n- buy/wide-stop: 2 of 11 (n=11)\n",
+	}
+	got, err := reg.AssemblePrompt(p)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if !strings.Contains(got, "### Lessons from 31 closed ideas") {
+		t.Fatalf("chief prompt missing the post-mortem block:\n%s", got)
+	}
+
+	// The persona must state how the lessons may be used. Without this the
+	// block is an unbounded input to the scoring step.
+	persona := reg.personas["chief-analyst"]
+	lower := strings.ToLower(persona)
+	if !strings.Contains(lower, "lesson") {
+		t.Fatal("agents/chief-analyst.md never mentions the lessons it is given")
+	}
+	// It has to be bounded by the same adjustment band as every other reason,
+	// and it has to be about a setup shape rather than about a name.
+	for _, want := range []string{"setup", "band"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("the post-mortem rule does not mention %q — it must be bounded like every other adjustment reason", want)
+		}
+	}
+
+	// The reading of the record follows the record itself.
+	rec := strings.Index(got, "### Track record")
+	pm := strings.Index(got, "### Lessons from")
+	reports := strings.Index(got, "### Specialist reports")
+	if !(rec < pm && pm < reports) {
+		t.Errorf("ordering record=%d lessons=%d reports=%d, want record < lessons < reports", rec, pm, reports)
+	}
+
+	// And with no lessons, no block.
+	p.PostMortemBlock = ""
+	got, err = reg.AssemblePrompt(p)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if strings.Contains(got, "### Lessons from") {
+		t.Errorf("prompt carries a lessons block it does not have:\n%s", got)
+	}
+}

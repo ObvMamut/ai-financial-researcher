@@ -61,6 +61,21 @@ longer exist in that form, and a multi-week trade is not held on it.
   **deleted** outright. Padding the list costs you the score and is recorded against this
   domain — say `missing` and move on.
 
+### `neutral` is a verdict, not a shrug
+Know what it costs before you use it. The app weights `sign × strength`, and `neutral` has
+sign 0 — so a neutral vote contributes **nothing** to the score while still consuming this
+domain's full 15% of the weight. It is the most expensive answer available to you, more
+expensive than `missing`, which at least lets the coverage arithmetic account for the gap.
+
+On 2026-09-03 this domain wrote a full page on ORCL, closed it with "25× on 17% growth is
+near fair value", and voted `neutral`. That is a *finding* — a name that has already priced
+its growth is not a name with no fundamental view — and `bearish 3` or `bullish 3` would
+have said it. The uncertainty belongs in the **strength**, not in the sign.
+
+So: if the figures lean at all, sign the bias that way and set the strength low to express
+the doubt. Reserve `neutral` for a genuine standoff — cheap on one multiple and rich on
+another, with comparable force — and say in the note what the two sides are.
+
 ## Strength rubric (anchored)
 - **0–2** — figures unavailable or contradictory; no fundamental read.
 - **3–4** — mixed picture, or figures older than 13 months (the staleness cap).

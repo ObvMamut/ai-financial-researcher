@@ -80,6 +80,15 @@ func (p *alphaVantageProvider) Domains() []string {
 }
 func (p *alphaVantageProvider) Available() bool { return p.apiKey != "" }
 
+// DailyBudget reports this key's spend against the free tier's 25-a-day cap.
+//
+// It is deliberately not on the Provider interface: no other provider has a
+// daily budget, and widening Provider to carry one would put a meaningless
+// method on five implementations. The orchestrator type-asserts for it instead.
+func (p *alphaVantageProvider) DailyBudget() (used, limit int) {
+	return p.limiter.DailyBudget()
+}
+
 func (p *alphaVantageProvider) Fetch(ctx context.Context, domain string, ticker string) (TickerData, error) {
 	if !p.Available() {
 		return TickerData{}, ErrUnavailable
@@ -237,7 +246,7 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 	// know it is reading US-line coverage, not Taipei coverage.
 	if symbol != ticker {
 		td.Facts = append(td.Facts, Fact{
-			Label:  "US line",
+			Label:  USLineFactLabel,
 			Value:  fmt.Sprintf("%s — news below is coverage of %s, the US listing of this company (%s)", symbol, symbol, USLineNote(ticker)),
 			AsOf:   arts[0].published,
 			Source: "AlphaVantage",

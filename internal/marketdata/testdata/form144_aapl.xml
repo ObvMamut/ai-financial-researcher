@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/ownership" xmlns:ns2="http://www.sec.gov/edgar/common">
+    <headerData>
+        <submissionType>144</submissionType>
+        <filerInfo>
+            <filer>
+                <filerCredentials>
+                    <cik>0001780525</cik>
+                    <ccc>XXXXXXXX</ccc>
+                </filerCredentials>
+            </filer>
+            <liveTestFlag>LIVE</liveTestFlag>
+
+
+
+        </filerInfo>
+    </headerData>
+    <formData>
+        <issuerInfo>
+            <issuerCik>0000320193</issuerCik>
+            <issuerName>APPLE INC</issuerName>
+            <secFileNumber>001-36743</secFileNumber>
+            <issuerAddress>
+                <ns2:street1>One Apple Park Way</ns2:street1>
+                <ns2:city>Cupertino</ns2:city>
+                <ns2:stateOrCountry>CA</ns2:stateOrCountry>
+                <ns2:zipCode>95014</ns2:zipCode>
+            </issuerAddress>
+            <issuerContactPhone>4089961010</issuerContactPhone>
+            <nameOfPersonForWhoseAccountTheSecuritiesAreToBeSold>JENNIFER NEWSTEAD</nameOfPersonForWhoseAccountTheSecuritiesAreToBeSold>
+            <relationshipsToIssuer>
+                <relationshipToIssuer>Officer</relationshipToIssuer>
+            </relationshipsToIssuer>
+        </issuerInfo>
+        <securitiesInformation>
+            <securitiesClassTitle>Common</securitiesClassTitle>
+            <brokerOrMarketmakerDetails>
+                <name>Morgan Stanley Smith Barney LLC Executive Financial Services</name>
+                <address>
+                    <ns2:street1>1 New York Plaza</ns2:street1>
+                    <ns2:street2>8th Floor</ns2:street2>
+                    <ns2:city>New York</ns2:city>
+                    <ns2:stateOrCountry>NY</ns2:stateOrCountry>
+                    <ns2:zipCode>10004</ns2:zipCode>
+                </address>
+            </brokerOrMarketmakerDetails>
+            <noOfUnitsSold>8632</noOfUnitsSold>
+            <aggregateMarketValue>2660900.32</aggregateMarketValue>
+            <noOfUnitsOutstanding>14594180000</noOfUnitsOutstanding>
+            <approxSaleDate>08/11/2026</approxSaleDate>
+            <securitiesExchangeName>NASDAQ</securitiesExchangeName>
+        </securitiesInformation>
+        <securitiesToBeSold>
+            <securitiesClassTitle>Common</securitiesClassTitle>
+            <acquiredDate>03/15/2026</acquiredDate>
+            <natureOfAcquisitionTransaction>Restricted Stock Units</natureOfAcquisitionTransaction>
+            <nameOfPersonfromWhomAcquired>Issuer</nameOfPersonfromWhomAcquired>
+            <isGiftTransaction>N</isGiftTransaction>
+            <amountOfSecuritiesAcquired>8632</amountOfSecuritiesAcquired>
+            <paymentDate>03/15/2026</paymentDate>
+            <natureOfPayment>N/A</natureOfPayment>
+        </securitiesToBeSold>
+        <nothingToReportFlagOnSecuritiesSoldInPast3Months>Y</nothingToReportFlagOnSecuritiesSoldInPast3Months>
+        <remarks>The securities to be sold were acquired upon the vesting of restricted stock units on 03/15/2026 and 06/15/2026.
+</remarks>
+        <noticeSignature>
+            <noticeDate>08/11/2026</noticeDate>
+            <planAdoptionDates>
+                <planAdoptionDate>05/05/2026</planAdoptionDate>
+            </planAdoptionDates>
+            <signature>/s/ Jennifer Newstead</signature>
+        </noticeSignature>
+    </formData>
+</edgarSubmission>

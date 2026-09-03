@@ -1,27 +1,28 @@
-local_ticker,us_line,note
-ASML.AS,ASML,NASDAQ — ASML Holding NV
-INGA.AS,ING,NYSE — ING Groep NV
-PHIA.AS,PHG,NYSE — Koninklijke Philips NV
-SAP.DE,SAP,NYSE — SAP SE
-DBK.DE,DB,NYSE — Deutsche Bank AG
-TTE.PA,TTE,NYSE — TotalEnergies SE
-SAN.PA,SNY,NASDAQ — Sanofi SA
-NOKIA.HE,NOK,NYSE — Nokia Oyj
-RACE.MI,RACE,NYSE — Ferrari NV
-STLAM.MI,STLA,NYSE — Stellantis NV
-ENI.MI,E,NYSE — Eni SpA
-SAN.MC,SAN,NYSE — Banco Santander SA
-BBVA.MC,BBVA,NYSE — Banco Bilbao Vizcaya Argentaria SA
-TEF.MC,TEF,NYSE — Telefonica SA
-2330.TW,TSM,NYSE — Taiwan Semiconductor Manufacturing
-9988.HK,BABA,NYSE — Alibaba Group Holding Ltd.
-0005.HK,HSBC,NYSE — HSBC Holdings plc
-7203.T,TM,NYSE — Toyota Motor Corporation
-6758.T,SONY,NYSE — Sony Group Corporation
-8306.T,MUFG,NYSE — Mitsubishi UFJ Financial Group
-INFY.NS,INFY,NYSE — Infosys Ltd.
-WIPRO.NS,WIT,NYSE — Wipro Ltd.
-HDFCBANK.NS,HDB,NYSE — HDFC Bank Ltd.
-ICICIBANK.NS,IBN,NYSE — ICICI Bank Ltd.
-BHP.AX,BHP,NYSE — BHP Group Ltd.
-RIO.AX,RIO,NYSE — Rio Tinto (dual-listed structure)
+local_ticker,us_line,venue,note
+ASML.AS,ASML,NASDAQ,ASML Holding NV
+INGA.AS,ING,NYSE,ING Groep NV
+PHIA.AS,PHG,NYSE,Koninklijke Philips NV
+SAP.DE,SAP,NYSE,SAP SE
+DBK.DE,DB,NYSE,Deutsche Bank AG
+TTE.PA,TTE,NYSE,TotalEnergies SE
+SAN.PA,SNY,NASDAQ,Sanofi SA
+NOKIA.HE,NOK,NYSE,Nokia Oyj
+RACE.MI,RACE,NYSE,Ferrari NV
+STLAM.MI,STLA,NYSE,Stellantis NV
+ENI.MI,E,NYSE,Eni SpA
+SAN.MC,SAN,NYSE,Banco Santander SA
+BBVA.MC,BBVA,NYSE,Banco Bilbao Vizcaya Argentaria SA
+TEF.MC,TEF,DELISTED,Telefonica SA — ADR delisted 2026-01-16; issuer filed to suspend SEC reporting 2026-01-20
+2330.TW,TSM,NYSE,Taiwan Semiconductor Manufacturing
+2412.TW,CHT,NYSE,Chunghwa Telecom Co. Ltd.
+9988.HK,BABA,NYSE,Alibaba Group Holding Ltd.
+0005.HK,HSBC,NYSE,HSBC Holdings plc
+7203.T,TM,NYSE,Toyota Motor Corporation
+6758.T,SONY,NYSE,Sony Group Corporation
+8306.T,MUFG,NYSE,Mitsubishi UFJ Financial Group
+INFY.NS,INFY,NYSE,Infosys Ltd.
+WIPRO.NS,WIT,NYSE,Wipro Ltd.
+HDFCBANK.NS,HDB,NYSE,HDFC Bank Ltd.
+ICICIBANK.NS,IBN,NYSE,ICICI Bank Ltd.
+BHP.AX,BHP,NYSE,BHP Group Ltd.
+RIO.AX,RIO,NYSE,Rio Tinto (dual-listed structure)

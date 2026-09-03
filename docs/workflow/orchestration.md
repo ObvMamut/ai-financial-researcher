@@ -155,7 +155,7 @@ runs/2026-06-01T14-30-05/
   scout-sp500.md  scout-nq100.md  scout-eu50.md  scout-asia100.md
   shortlist.json          # merged, validated, merit-trimmed; carries sector + the
                           # scout's bias and reason
-  prices/<ticker>.json    # raw daily OHLCV per shortlisted ticker (Yahoo, '^' → '_')
+  prices/<ticker>.json    # raw daily OHLCV per shortlisted ticker (Alpaca or Yahoo, '^' → '_')
   quant.json              # computed quant metrics pack (Stage 1.5)
   data/<domain>.json      # provider data packs (EDGAR/FRED/AV, when keys are set).
                           # No data/quant.json: no provider serves that domain, so
@@ -176,14 +176,47 @@ Beyond the outcome and per-domain statuses:
 | `engine`, `engine_model` | which cheap-research engine and model ran the scouts and specialists |
 | `synthesis_model` | the Claude model the Chief Analyst used |
 | `stages` | wall-clock ms per stage: `prescreen`, `screening`, `quant`, `analysis`, `synthesis`. Only per-agent durations were kept before, leaving the in-process stages — most of a run's wall time — unaccounted for |
-| `data_errors` | every provider failure from every pack, prefixed by domain. These previously lived only in `data/<domain>.json`, so a run that lost eight tickers to rate limiting read like one that lost none |
+| `data_errors` | every provider failure from every pack, prefixed by domain, **and every provider warning** — a figure or a whole leg a source withheld, and why. These previously lived only in `data/<domain>.json`, so a run that lost eight tickers to rate limiting read like one that lost none |
 | `persona_sha` | short hash per persona file. Personas are runtime data, editable with no code change, so nothing else makes a run's outcome attributable to the prompts that produced it |
+
+#### Shape-change warnings in `data_errors`
+
+Three sources can fail into output that is byte-identical to a quiet market, so each one
+says so explicitly through `TickerData.Warnings`, which `pack.go` folds into `data_errors`:
+
+- **Yahoo option chain** — open interest and traded volume arrive in the same object. A
+  chain that parsed strikes and open interest but reported a positive `volume` on none of
+  them is the volume field being renamed or dropped, not a quiet name. Without the warning
+  the whole flow leg (`UnusualOptionsLabel` + `OptionsFlowSignalLabel`) vanishes from every
+  ticker at once with no error. The open-interest positioning leg is unaffected and still
+  ships; a chain with *some* volume stays a plain `classifyUnusualOptions` abstention and
+  warns about nothing.
+- **Yahoo and Alpaca news** — a feed that returned items and kept none of them reports the drop
+  breakdown by reason (missing `providerPublishTime`, past the 21-day cutoff, empty title,
+  duplicate). "20 items, 20 with no usable timestamp" is a schema change; "20 items, 20
+  older than the cutoff" is a genuinely stale name. An empty `news` array warns about
+  nothing — that one really is a quiet name. Coverage stays false either way. Both feeds
+  share the accounting (`internal/marketdata/newsfilter.go`) and each names its own
+  timestamp field — `providerPublishTime` for Yahoo, `created_at` for Alpaca — so the
+  message points at the field that actually changed.
+- **AlphaVantage** — the remaining daily budget is logged at run start, and a spent key
+  becomes **one** run-level entry in `warnings` rather than being inferred from N identical
+  per-ticker `data_errors` (which are still kept). A run with no key configured says
+  nothing: an unconfigured optional source is not a failure.
+
+Beyond that, an unsatisfiable risk policy — `stop_sigma_min` above `stop_sigma_max`, or
+`target_sigma_max` below `stop_sigma_min`, whether written explicitly or crossing a
+`riskDefaults` default — **fails the run before Stage 0.5** rather than dropping every idea
+at the gate and shipping an empty book that looks like the Chief wrote nothing sound.
 
 Each `domains[]` row carries `tokens` — the completion-token count the engine
 reported, when it reports one (the CLI engines do not), so a run's cost is
-visible in its own artifacts. Rows also carry `corrected_scores` and `off_shortlist_scores`
-(see the enforcement section above), and every model call gets a row — the four
-scouts and the Chief Analyst included, not just the five specialists.
+visible in its own artifacts. Rows also carry the enforcement lists and the re-prompt
+outcome — `corrected_scores`, `off_shortlist_scores`, `self_contradicted_scores`,
+`neutral_scores`, `abstained`, `scored_names`, `corrective` — which `output-schema.md`
+defines field by field, and every model call gets a row: the four scouts and the Chief
+Analyst included, not just the five specialists. Run-level, `thinly_covered` names the
+shortlisted tickers the run could ground less than 0.6 of the domain weight for.
 
 ## Progress reporting to the TUI
 

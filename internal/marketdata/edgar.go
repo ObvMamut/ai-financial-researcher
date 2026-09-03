@@ -59,6 +59,16 @@ type edgarProvider struct {
 	mu        sync.Mutex
 	cikMap    map[string]string
 	refreshed bool
+	// submissions memoises one issuer's filing index for the life of the run.
+	// Three legs now read it — Form 4, Form 144 and the 13D/G stakes — and it is
+	// one document answering all three, so fetching it three times per ticker
+	// spends SEC's rate limit on the same bytes.
+	submissions map[string]*submissionsResp
+	// The tracked-manager 13F index is built at most once per process and kept
+	// on disk for a quarter; thirteenFTried stops a failed build being retried
+	// for every ticker in the shortlist.
+	thirteenFIdx   *thirteenFIndex
+	thirteenFTried bool
 }
 
 // NewEdgarProvider builds the SEC fundamentals provider. cache may be nil; it is
@@ -70,6 +80,7 @@ func NewEdgarProvider(contactEmail string, cache *Cache) Provider {
 		contactEmail: contactEmail,
 		cache:        cache,
 		cikMap:       make(map[string]string),
+		submissions:  make(map[string]*submissionsResp),
 		factsBase:    "https://data.sec.gov",
 		tickersBase:  "https://www.sec.gov",
 		// No daily budget to enforce (SEC doesn't quote one) — dailyLimit is

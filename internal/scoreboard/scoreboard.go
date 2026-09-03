@@ -71,6 +71,22 @@ type Entry struct {
 	// the scoreboard can ask which domains were right rather than only whether
 	// the trade worked.
 	DomainScores map[string]int `json:"domain_scores,omitempty"`
+	// The rest of what the idea recorded about itself at generation, carried
+	// through so a post-mortem can ask *why* a trade worked rather than only
+	// whether it did. None of it is used by the win rate.
+	//
+	// Why is the Chief's own stated thesis — the single most useful field in a
+	// post-mortem and the one thing no amount of replay arithmetic can
+	// reconstruct. BaseConfidence and Consensus are the computed score and the
+	// agreement behind it. Sector is joined from the producing run's shortlist,
+	// which is where sector actually lives.
+	Why            string  `json:"why,omitempty"`
+	PositionNote   string  `json:"position_note,omitempty"`
+	BaseConfidence int     `json:"base_confidence,omitempty"`
+	Consensus      float64 `json:"consensus,omitempty"`
+	Sector         string  `json:"sector,omitempty"`
+	ExpectancyR    float64 `json:"expectancy_r,omitempty"`
+	BreakevenWin   float64 `json:"breakeven_win_rate,omitempty"`
 	// PersonaSet identifies the exact prompt set the producing run used, so an
 	// A/B between two persona directories can be settled on closed trades
 	// instead of on how the reports read. Empty for runs that recorded none.
@@ -315,7 +331,7 @@ func (s *Summary) aggregate() {
 // Build walks runsDir and marks every scorable idea to the latest close. This
 // is the legacy measurement; Replay is the one that describes the trade the
 // idea actually specified.
-func Build(ctx context.Context, runsDir string, yc *marketdata.YahooClient) (*Summary, error) {
+func Build(ctx context.Context, runsDir string, yc marketdata.PriceSource) (*Summary, error) {
 	runs, err := store.ListRuns(runsDir)
 	if err != nil {
 		return nil, err
@@ -467,6 +483,26 @@ func (s *Summary) formatReplay() string {
 		writeBuckets(&sb, "By confidence", s.ByConfidence, confidenceBuckets)
 		writeBuckets(&sb, "By domain backing the trade", s.ByDomain, sortedKeys(s.ByDomain))
 		sb.WriteString(personaComparison(s.ByPersona))
+	}
+	// The attribution goes last because it is the part that asks *which* calls
+	// worked rather than how many. It is printed even with no closed trades, for
+	// the fill record alone: an idea whose limit never trades is invisible in
+	// every line above, and for most of this pipeline's history that was most of
+	// them.
+	sb.WriteString(attributionSection(Attribute(s)))
+	return sb.String()
+}
+
+// attributionSection renders the per-cell record beneath the headline slices.
+func attributionSection(a *Attribution) string {
+	lines := a.Lines(MinCellN)
+	if len(lines) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n  Attribution (cells with at least %d closed trades):\n", MinCellN)
+	for _, l := range lines {
+		sb.WriteString("    " + l + "\n")
 	}
 	return sb.String()
 }

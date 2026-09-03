@@ -1,6 +1,8 @@
 package marketdata
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -118,24 +120,93 @@ func TestInsiderSellingIsNotSymmetricWithBuying(t *testing.T) {
 	}
 }
 
+// optionsFact is the raw sentence the chain provider writes. The verdict is
+// derived from it at pack level, where the run's cross-section is known, so a
+// test that wants a leg builds the raw fact rather than a stored verdict.
+func optionsFact(ratio float64) Fact {
+	return Fact{
+		Label: OptionsPositioningLabel,
+		Value: fmt.Sprintf("put/call open interest %.2f (1000 puts vs %.0f calls) over the front 2 expiries",
+			ratio, 1000/ratio),
+		Source: "Yahoo Finance options",
+	}
+}
+
 func TestClassifyOptionsPositioningIsContrarian(t *testing.T) {
-	// The run's own ratios. Every one of these was read as bearish by the agent:
-	// crowded puts "against further upside", crowded calls "a squeeze risk".
+	// With no cross-section to judge against, only a genuine extreme counts.
 	cases := []struct {
 		ratio float64
 		want  InsiderBias
 	}{
-		{1.22, InsiderNone},    // AMGN — inside the unremarkable band
-		{0.50, InsiderBearish}, // MRK — call-crowded, a risk to the calls
-		{0.67, InsiderBearish}, // IBM — at the boundary
-		{0.42, InsiderBearish}, // STLAM.MI
-		{1.60, InsiderBullish}, // put-crowded, a risk to the puts
+		{1.22, InsiderNone},    // AMGN — unremarkable
+		{0.50, InsiderNone},    // MRK — low, but this is where a long name sits
+		{0.67, InsiderNone},    // IBM — the old boundary, now ordinary
+		{0.42, InsiderBearish}, // genuinely call-crowded
+		{2.10, InsiderBullish}, // genuinely put-crowded
+		{1.60, InsiderNone},    // the old put boundary, now ordinary
 		{0, InsiderNone},       // no chain
 	}
 	for _, tc := range cases {
-		if got := classifyOptionsPositioning(tc.ratio); got.Bias != tc.want {
+		if got := classifyOptionsPositioning(tc.ratio, 0); got.Bias != tc.want {
 			t.Errorf("put/call %.2f = %q, want %q (%s)", tc.ratio, got.Bias, tc.want, got.Reason)
 		}
+	}
+}
+
+// Across the 27 shipped ideas carrying per-domain scores, sentiment agreed with
+// the quant read on 4 of 17 — 24%, against 95% for news and 90% for macro. The
+// mechanism was a band that called 0.67 "crowded": a put/call under 0.67 is
+// where a large-cap in an uptrend ordinarily sits, so the domain read contrarian
+// bearish on nearly every long the pre-screen nominated. On 2026-09-01 it scored
+// MRK bearish 7 on a 0.50 ratio against news bullish 7, and a name all five
+// domains could see finished at a base of 31.
+func TestAnOrdinaryLongsPutCallIsNotCrowding(t *testing.T) {
+	for _, ratio := range []float64{0.50, 0.57, 0.67} {
+		if got := classifyOptionsPositioning(ratio, 0); got.Bias != InsiderNone {
+			t.Errorf("put/call %.2f = %q — that is where a name people are long sits, not crowding (%s)",
+				ratio, got.Bias, got.Reason)
+		}
+	}
+}
+
+// An extreme the whole shortlist shares is the tape's level, not one name's
+// positioning. Reading it as crowding would put the same contrarian tilt on
+// every idea in the book at once — and a fixed band cannot tell the two apart.
+func TestCrowdingIsJudgedAgainstTheRunsOwnCrossSection(t *testing.T) {
+	// A call-crowded month: every name is at 0.40, so no name is an outlier.
+	if got := classifyOptionsPositioning(0.40, 0.42); got.Bias != InsiderNone {
+		t.Errorf("0.40 against a 0.42 median = %q, want no signal — that is the tape (%s)", got.Bias, got.Reason)
+	}
+	// The same ratio in an ordinary month is a real outlier.
+	if got := classifyOptionsPositioning(0.40, 1.05); got.Bias != InsiderBearish {
+		t.Errorf("0.40 against a 1.05 median = %q, want bearish (%s)", got.Bias, got.Reason)
+	}
+	// And the same in the other direction.
+	if got := classifyOptionsPositioning(2.20, 2.00); got.Bias != InsiderNone {
+		t.Errorf("2.20 against a 2.00 median = %q, want no signal (%s)", got.Bias, got.Reason)
+	}
+	if got := classifyOptionsPositioning(2.20, 1.05); got.Bias != InsiderBullish {
+		t.Errorf("2.20 against a 1.05 median = %q, want bullish (%s)", got.Bias, got.Reason)
+	}
+}
+
+func TestPutCallMedianNeedsEnoughChainsToMeanAnything(t *testing.T) {
+	two := map[string]TickerData{
+		"A": {Facts: []Fact{optionsFact(0.5)}},
+		"B": {Facts: []Fact{optionsFact(1.5)}},
+	}
+	if got := PutCallMedian(two); got != 0 {
+		t.Errorf("PutCallMedian over 2 chains = %.2f, want 0 — too few to be a cross-section", got)
+	}
+	four := map[string]TickerData{
+		"A": {Facts: []Fact{optionsFact(0.40)}},
+		"B": {Facts: []Fact{optionsFact(0.80)}},
+		"C": {Facts: []Fact{optionsFact(1.20)}},
+		"D": {Facts: []Fact{optionsFact(2.00)}},
+		"E": {Facts: []Fact{}}, // no chain: excluded, not counted as zero
+	}
+	if got := PutCallMedian(four); math.Abs(got-1.00) > 1e-9 {
+		t.Errorf("PutCallMedian = %.2f, want 1.00", got)
 	}
 }
 
@@ -144,9 +215,9 @@ func TestClassifyOptionsPositioningIsContrarian(t *testing.T) {
 func TestPositioningSignalTellsTheAgentToAbstain(t *testing.T) {
 	quiet := TickerData{Ticker: "AMGN", Facts: []Fact{
 		signalFact(InsiderSignalLabel, classifyInsiderActivity(nil), "computed", ""),
-		signalFact(OptionsSignalLabel, classifyOptionsPositioning(1.22), "computed", ""),
+		optionsFact(1.22),
 	}}
-	addPositioningSignal(&quiet)
+	addPositioningSignal(&quiet, 0)
 	last := quiet.Facts[len(quiet.Facts)-1]
 	if last.Label != PositioningSignalLabel {
 		t.Fatalf("no combined verdict appended, got %q", last.Label)
@@ -161,9 +232,9 @@ func TestPositioningSignalTellsTheAgentToAbstain(t *testing.T) {
 	loud := TickerData{Ticker: "IBM", Facts: []Fact{
 		signalFact(InsiderSignalLabel, classifyInsiderActivity([]form4Transaction{
 			sale("Thomas Robert David", "SVP", 25000, 230.32, 5000)}), "computed", ""),
-		signalFact(OptionsSignalLabel, classifyOptionsPositioning(0.67), "computed", ""),
+		optionsFact(0.30),
 	}}
-	addPositioningSignal(&loud)
+	addPositioningSignal(&loud, 0)
 	if !HasPositioningSignal(loud) {
 		t.Error("a name with two directional legs reports no positioning evidence")
 	}
@@ -203,7 +274,7 @@ func TestPositioningSignalFromStaleCacheShape(t *testing.T) {
 		Value:  "put/call open interest 0.79 (168289 puts vs 212455 calls) over the front 2 expiries",
 		Source: "Yahoo Finance options",
 	}}}
-	addPositioningSignal(&orcl)
+	addPositioningSignal(&orcl, 0)
 
 	last := orcl.Facts[len(orcl.Facts)-1]
 	if last.Label != PositioningSignalLabel {
@@ -220,9 +291,9 @@ func TestPositioningSignalFromStaleCacheShape(t *testing.T) {
 	// call-crowded chain still reads contrarian bearish off the raw sentence.
 	crowded := TickerData{Ticker: "MRK", Facts: []Fact{{
 		Label: OptionsPositioningLabel,
-		Value: "put/call open interest 0.50 (5000 puts vs 10000 calls) over the front 2 expiries",
+		Value: "put/call open interest 0.30 (3000 puts vs 10000 calls) over the front 2 expiries",
 	}}}
-	addPositioningSignal(&crowded)
+	addPositioningSignal(&crowded, 0)
 	if !HasPositioningSignal(crowded) {
 		t.Error("a call-crowded chain reconstructed from its raw fact lost its direction")
 	}
@@ -243,7 +314,7 @@ func TestPositioningSignalUnresolvedLegAbstains(t *testing.T) {
 		Label: OptionsPositioningLabel,
 		Value: "put/call open interest 1.22 (100 puts vs 82 calls) over the front 2 expiries",
 	}}}
-	addPositioningSignal(&td)
+	addPositioningSignal(&td, 0)
 
 	v := td.Facts[len(td.Facts)-1].Value
 	if !strings.Contains(v, unresolvedLegVerdict) {
@@ -257,15 +328,17 @@ func TestPositioningSignalUnresolvedLegAbstains(t *testing.T) {
 	}
 }
 
-// The computed leg wins wherever it exists: a fresh fetch carries both the raw
-// summary and the verdict, and the verdict is the authority.
+// The insider leg's computed verdict wins wherever it exists: a fresh fetch
+// carries both the raw summary and the verdict, and the verdict is the
+// authority. (The options leg is the exception — it is always recomputed,
+// because its answer depends on the run's own cross-section.)
 func TestPositioningSignalPrefersTheComputedLeg(t *testing.T) {
 	td := TickerData{Ticker: "IBM", Facts: []Fact{{
 		Label: InsiderActivityLabel,
 		Value: "0 open-market buys ($0) vs 1 sale ($5.76M) across 1 filing(s) in 45 days",
 	}, signalFact(InsiderSignalLabel, classifyInsiderActivity([]form4Transaction{
 		sale("Thomas Robert David", "SVP", 25000, 230.32, 5000)}), "computed", "")}}
-	addPositioningSignal(&td)
+	addPositioningSignal(&td, 0)
 
 	v := td.Facts[len(td.Facts)-1].Value
 	if strings.Contains(v, unresolvedLegVerdict) {
@@ -273,5 +346,27 @@ func TestPositioningSignalPrefersTheComputedLeg(t *testing.T) {
 	}
 	if !HasPositioningSignal(td) {
 		t.Errorf("the computed bearish verdict was discarded: %q", v)
+	}
+}
+
+func TestASmallSaleOfAWholeDirectHoldingDoesNotCarryTheDomain(t *testing.T) {
+	// QCOM, 2026-09-03: the sentiment domain's entire bearish basis was
+	// "Grech Patricia Y (SVP, Chief Accounting Officer) sold 100% of their own
+	// holding ($35k)". A Form 4's "shares held following" counts directly held
+	// shares only, so an officer whose equity sits in RSUs or a trust reports a
+	// token direct position and trips the depth test on a rounding error.
+	tiny := sale("Grech Patricia Y", "SVP, Chief Accounting Officer", 200, 175, 0)
+	got := classifyInsiderActivity([]form4Transaction{tiny})
+	if got.Bias != InsiderNone {
+		t.Fatalf("bias = %s, want no signal on a $35k sale: %s", got.Bias, got.Reason)
+	}
+	if !strings.Contains(got.Reason, "directly held shares") {
+		t.Errorf("the reason does not explain the artefact: %s", got.Reason)
+	}
+
+	// The depth test still fires when the position sold is a real one.
+	real := sale("Grech Patricia Y", "SVP, Chief Accounting Officer", 20_000, 175, 0)
+	if got := classifyInsiderActivity([]form4Transaction{real}); got.Bias != InsiderBearish {
+		t.Errorf("bias = %s, want bearish on a $3.5M sale of a whole holding: %s", got.Bias, got.Reason)
 	}
 }

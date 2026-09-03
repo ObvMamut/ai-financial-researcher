@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -435,5 +436,92 @@ func TestValidateIdeasHonoursTheCoverageCap(t *testing.T) {
 	validateIdeas(res, cfg, verified{Universe: testUniverse(t), Shortlist: shortlistOf("AAA"), Bases: bases})
 	if got := res.Ideas[0].Confidence; got != 55 {
 		t.Errorf("confidence = %d, want 55 — the coverage cap binds over the band", got)
+	}
+}
+
+// The base score is one number doing two jobs — how much evidence, and how much
+// agreement — and the two are not the same fact. On 2026-09-01 O39.SI scored 32
+// on one loud domain and MRK scored 31 on five that disagreed; the number said
+// they were equally good ideas, and no reader of it could tell which was which.
+func TestConsensusSeparatesAgreementFromCoverage(t *testing.T) {
+	// One domain, nothing to disagree with.
+	lone := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "AAA bullish 7"),
+	}, []model.Candidate{{Ticker: "AAA"}})
+	if got := lone[0].Consensus; math.Abs(got-1) > 1e-9 {
+		t.Errorf("a single domain's consensus = %.2f, want 1", got)
+	}
+
+	// Five domains, one of them pointing the other way with equal force.
+	//   signed: .35·.4 + .25·.7 + .15·0 − .15·.7 + .10·.3 = 0.240
+	//   gross:  .35·.4 + .25·.7 + .15·0 + .15·.7 + .10·.3 = 0.450
+	//   agree:  0.240 / 0.450 = 0.533
+	split := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "BBB bullish 4"),
+		domainReport("news", "BBB bullish 7"),
+		domainReport("fundamentals", "BBB neutral 0"),
+		domainReport("sentiment", "BBB bearish 7"),
+		domainReport("macro", "BBB bullish 3"),
+	}, []model.Candidate{{Ticker: "BBB"}})
+	if got := split[0].Consensus; math.Abs(got-0.533) > 0.005 {
+		t.Errorf("consensus = %.3f, want 0.533", got)
+	}
+	if split[0].CoveredWeight != 1 {
+		t.Errorf("covered weight = %.2f, want 1 — the disagreement is not a coverage gap", split[0].CoveredWeight)
+	}
+	// Full coverage and a base of 31; the lone name above has 35% coverage and a
+	// base of 36. Without `agree` those two numbers are the whole story a reader
+	// gets, and they say the thin one is the better idea.
+	if split[0].Confidence > lone[0].Confidence {
+		t.Fatalf("fixture does not reproduce the case: split %d, lone %d", split[0].Confidence, lone[0].Confidence)
+	}
+
+	// A name nothing scored has no consensus to report rather than a false 1.
+	none := computeBaseScores(testWeights, nil, []model.Candidate{{Ticker: "CCC"}})
+	if none[0].Consensus != 0 {
+		t.Errorf("an unscored name reported consensus %.2f, want 0", none[0].Consensus)
+	}
+}
+
+// Consensus is a second axis, not a second opinion: it must not perturb the
+// ranking the evidence produced.
+func TestConsensusDoesNotChangeTheOrdering(t *testing.T) {
+	got := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "THIN bullish 8", "THICK bullish 4"),
+		domainReport("news", "THICK bullish 6"),
+		domainReport("fundamentals", "THICK bearish 2"),
+	}, []model.Candidate{{Ticker: "THIN"}, {Ticker: "THICK"}})
+
+	thin, thick := baseOf(t, got, "THIN"), baseOf(t, got, "THICK")
+	// THIN is unanimous because only one domain spoke; THICK has a dissenter.
+	if thin.Consensus <= thick.Consensus {
+		t.Errorf("consensus does not distinguish them: THIN %.2f, THICK %.2f", thin.Consensus, thick.Consensus)
+	}
+	// The ordering is whatever `base` said and nothing else. Here that puts the
+	// one-domain name first — 36 against 34 — which is the case `agree` exists to
+	// make visible rather than to correct: re-ranking on it would be re-doing the
+	// weighting, and the weighting is the thing this file is the authority on.
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Confidence < got[i].Confidence {
+			t.Fatalf("bases are not ordered by confidence: %+v", got)
+		}
+	}
+	if got[0].Ticker != "THIN" {
+		t.Errorf("ranking = %s first, want THIN (base 36 vs 34) — consensus must not reorder", got[0].Ticker)
+	}
+}
+
+// The Chief has to be able to see the difference, or the figure changes nothing.
+func TestBaseScoreBlockShowsAgreement(t *testing.T) {
+	block := baseScoreBlock(computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "AAA bullish 6"),
+		domainReport("news", "AAA bearish 6"),
+	}, []model.Candidate{{Ticker: "AAA"}}), 10)
+
+	if !strings.Contains(block, "| agree |") {
+		t.Errorf("no agreement column in the base score table:\n%s", block)
+	}
+	if !strings.Contains(block, "Do not adjust for it") {
+		t.Errorf("the table does not say the figure is already inside base:\n%s", block)
 	}
 }

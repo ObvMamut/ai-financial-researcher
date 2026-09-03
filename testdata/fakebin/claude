@@ -19,6 +19,10 @@
 #                 base ± band (confidence clamp + corrective re-prompt)
 #   bad-levels  - chief-analyst places a 0.9σ stop at reward:risk 1.4, and does
 #                 it again when asked to fix it (risk gate re-prompt, then drop)
+#   corrective-badjson
+#               - chief-analyst places bad levels, then answers the corrective
+#                 re-prompt with unparseable JSON (the discard must be recorded,
+#                 not swallowed)
 prompt="$2"
 mode="${CFR_FAKE_MODE:-ok}"
 
@@ -141,6 +145,7 @@ if has "# Agent: Chief Analyst"; then
   # Echo a marker when the pipeline's own track record reached the prompt, so a
   # hermetic run can assert the feedback loop is wired rather than merely built.
   has "### Track record (computed from" && echo "saw-track-record"
+  has "### Lessons from" && echo "saw-post-mortem"
   case "$mode" in
     chief-fail) echo "fake chief crashed" >&2; exit 1 ;;
     badjson)
@@ -165,11 +170,58 @@ EOF
     emit_ideas independent 5 55 0.9 1.26
     exit 0
   fi
+  if [ "$mode" = "corrective-badjson" ]; then
+    # Bad levels first, then a corrective answer that does not parse. The run
+    # must ship the first pass and say so, rather than announcing a correction
+    # that never happened.
+    if has "## Corrective pass"; then
+      cat <<'EOF'
+Revised synthesis.
+
+```json
+{"mode": "independent", "ideas": [ still not valid json !!! ]}
+```
+EOF
+      exit 0
+    fi
+    emit_ideas independent 5 55 0.9 1.26
+    exit 0
+  fi
   if has "**topN:** 1"; then
     emit_ideas single 1 71
     exit 0
   fi
   emit_ideas independent 5 55
+  exit 0
+fi
+
+# ── Post-Mortem Analyst ─────────────────────────────────────────────────────
+#
+# Reads a real cell straight out of the attribution table in its own prompt and
+# writes a lesson about it — then two lessons that must not survive: one naming
+# a cell nobody counted, and one overstating the sample it does name. The
+# enforcement, not the prose, is what the hermetic run is checking.
+if has "# Agent: Post-Mortem Analyst"; then
+  cell=$(printf '%s\n' "$prompt" | awk '/^- setup /{ l=$0; sub(/^- setup /,"",l); sub(/:.*/,"",l); print l; exit }')
+  n=$(printf '%s\n' "$prompt" | awk '/^- setup /{ if (match($0,/n=[0-9]+/)) print substr($0,RSTART+2,RLENGTH-2); exit }')
+  [ -n "$cell" ] || cell="buy/wide-stop"
+  [ -n "$n" ] || n=0
+  cat <<EOF
+Fake post-mortem over the pipeline's own closed trades.
+
+**\`$cell\` (n=$n)** — the record such as it is · nothing to change yet.
+
+\`\`\`json
+{"domain": "post-mortem", "n_closed": $n, "lessons": [
+  {"cell": "$cell", "n": $n, "finding": "the counted cell, cited as the table spells it", "action": "keep sizing these as the base score says"},
+  {"cell": "$cell", "n": $((n + 50)), "finding": "the same cell with a sample it does not have", "action": "the count must be corrected to the table's"},
+  {"cell": "buy/on-a-tuesday", "n": 40, "finding": "a cell nothing counted", "action": "this lesson must not survive"}
+], "weight_suggestions": [
+  {"domain": "sentiment", "direction": "down", "reason": "advisory only; never applied automatically"},
+  {"domain": "astrology", "direction": "up", "reason": "not a domain, so this must be dropped"}
+]}
+\`\`\`
+EOF
   exit 0
 fi
 

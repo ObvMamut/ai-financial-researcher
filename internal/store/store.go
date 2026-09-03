@@ -142,6 +142,19 @@ func (r *Run) WriteDataPack(domain string, pack any) error {
 	return os.WriteFile(filepath.Join(dir, domain+".json"), data, 0o644)
 }
 
+// ReadDataPack reads back a run's stored provider pack for one domain. The
+// write side has existed since the packs were first persisted; nothing read them
+// again, so the per-domain evidence behind a past idea — the headlines, the
+// filings, the option chain — was on disk and unreachable. A post-mortem asking
+// *why* a domain was right needs exactly that.
+func ReadDataPack(runDir, domain string, out any) error {
+	data, err := os.ReadFile(filepath.Join(runDir, "data", domain+".json"))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
+}
+
 func (r *Run) writeJSON(name string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

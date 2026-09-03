@@ -21,7 +21,7 @@ import (
 //
 // It returns the metrics pack and the underlying series, which the risk gate
 // needs for pairwise correlations without re-reading them off disk.
-func buildQuantPack(ctx context.Context, ch chan<- Event, run *store.Run, yc *marketdata.YahooClient, fx *marketdata.FXRates, shortlist []model.Candidate) (*quant.Pack, map[string]*quant.Series) {
+func buildQuantPack(ctx context.Context, ch chan<- Event, run *store.Run, yc marketdata.PriceSource, fx *marketdata.FXRates, shortlist []model.Candidate) (*quant.Pack, map[string]*quant.Series) {
 	pack := quant.NewPack()
 	series := map[string]*quant.Series{}
 

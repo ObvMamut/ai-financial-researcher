@@ -15,13 +15,23 @@ import (
 // Each specialist is grounded by a different artifact: the quant role reads the
 // computed metrics pack, everyone else reads the provider pack for their domain.
 //
-// Macro is the exception — its evidence is the regime, which is not per-ticker.
-// But the configured regime source is FRED, and every series in it (DGS10,
-// T10Y2Y, CPIAUCSL, UNRATE) describes the *United States*. Treating those as a
-// backdrop for every listing let 2330.TW be scored "the strongest macro read in
-// the shortlist" off the US 10-year, at full weight, and pushed a
-// quant-bearish name into the top five. Macro therefore grounds US listings
-// only; a foreign name is a gap like any other.
+// Macro is the exception — its evidence is the regime, which is not per-ticker
+// but per *market*. It grounds on the computed regime block: the benchmark
+// index for the name's own exchange, priced from the same Yahoo daily bars as
+// everything else here, which is what agents/macro.md calls its primary
+// evidence and "the only evidence" for a listing outside the US.
+//
+// It used to ground on `IsUSListing && len(MacroFacts) > 0` instead. That was
+// right when FRED was the whole of macro's evidence — every series in it
+// (DGS10, T10Y2Y, CPIAUCSL, UNRATE) describes the United States, and treating
+// those as a backdrop for every listing let 2330.TW be scored "the strongest
+// macro read in the shortlist" off the US 10-year. But the regime block was
+// added to the macro prompt afterwards and this predicate was never moved, so
+// the domain was being handed evidence for twelve names and then judged as
+// though it had evidence for five. On 2026-09-01 that deleted macro's scores
+// for all seven non-US names — 7 of 12, past the confabulation threshold — and
+// marked a run degraded for an enforcement error rather than an agent one.
+// FRED remains what it was: US context on top, not the gate.
 // Sentiment is the second exception, and for a different reason. Its two sources
 // are almost always *present* — nearly every US issuer has recent Form 4 filings
 // and a listed option chain — but presence is not evidence. Officers are paid in
@@ -37,7 +47,7 @@ import (
 func coveredBy(role string, pack *marketdata.DataPack, quantPack *quant.Pack, ticker string) bool {
 	t := strings.ToUpper(ticker)
 	if marketdata.IsRegimeDomain(role) {
-		return marketdata.IsUSListing(t) && len(pack.MacroFacts) > 0
+		return regimeCovers(quantPack, t)
 	}
 	if role == "quant" {
 		if quantPack != nil {
@@ -53,7 +63,27 @@ func coveredBy(role string, pack *marketdata.DataPack, quantPack *quant.Pack, ti
 	if role == "sentiment" {
 		return marketdata.HasPositioningSignal(pack.ByTicker[t])
 	}
-	return true
+	// A domain is covered by its own evidence, not by the context every domain
+	// is handed. See marketdata.HasDomainEvidence: the news domain used to count
+	// itself covered on a bare earnings date after the headline feed had been
+	// rate-limited away.
+	return marketdata.HasDomainEvidence(role, pack.ByTicker[t])
+}
+
+// regimeCovers reports whether the run computed a market regime for the
+// benchmark this ticker is measured against. quant.Metrics.Benchmark is set by
+// the same stage that computes the metrics, and the benchmark's own series is
+// what quant.Pack.RegimeBlock renders.
+func regimeCovers(quantPack *quant.Pack, ticker string) bool {
+	if quantPack == nil {
+		return false
+	}
+	m, ok := quantPack.ByTicker[strings.ToUpper(ticker)]
+	if !ok || m.Benchmark == "" {
+		return false
+	}
+	_, ok = quantPack.Benchmarks[m.Benchmark]
+	return ok
 }
 
 // groundedFor reports whether a role had verified evidence for at least one
@@ -118,17 +148,68 @@ func ungroundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack
 // listing through its US line where one exists (2330.TW via TSM), so those
 // domains are measured against Reachable, not against the listing's own country.
 //
-// FRED is different: its series describe the US economy itself, not a company,
-// and there is no ADR equivalent for a macro backdrop. Macro stays US-listing
-// only.
+// Macro is groundable everywhere for the same reason quant is: its evidence is
+// the market regime, computed from the benchmark index's own daily bars off the
+// same global source. It used to be US-listing only, back when FRED was the
+// whole of its evidence — so a benchmark series that failed to fetch passed
+// silently instead of registering as the gap it is.
+//
+// News is not one of them, and the run of 2026-09-03 is why. It was made
+// unconditional when the keyless Yahoo headline search was added, on the
+// reasoning that the endpoint takes the listing's own symbol and so answers for
+// a German or Japanese name whether or not it has a US line. It answers; it does
+// not cover. All five unmapped foreign names that run were handed the same eight
+// untagged oil and photonics stories, the news domain correctly recorded every
+// one as `missing`, and this function had already promised the funnel otherwise.
+//
+// The promise was the expensive half. quant .35 + news .25 + macro .10 = 0.70
+// put every foreign listing above the 0.60 thin-coverage floor, so
+// MaxThinlyCovered classified nothing and never fired — for any name in the
+// universe, which made the cap structurally dead rather than merely slack. Three
+// of the five ideas that shipped were scored by one domain or two.
+//
+// So news follows the reachability rule fundamentals and sentiment follow: an
+// unmapped foreign listing expects 0.45, under the floor, and the cap has
+// something to bite on. A name whose headlines really do arrive is unaffected —
+// this decides what the funnel may assume, not what the domain reports.
+//
+// Fundamentals and sentiment are US-bound for the older reason: SEC filings and
+// listed option chains are US instruments, reachable for a foreign listing only
+// through its US line.
 func groundableBy(domain, ticker string) bool {
-	if domain == "quant" {
+	switch {
+	case domain == "quant", marketdata.IsRegimeDomain(domain):
 		return true
 	}
-	if marketdata.IsRegimeDomain(domain) {
-		return marketdata.IsUSListing(ticker)
-	}
 	return marketdata.Reachable(ticker)
+}
+
+// expectedCoverage is the share of total domain weight the run's sources can
+// ground for a name, before any of them actually run. It is the funnel's view of
+// what computeBaseScores will later be able to measure, in the same unit: a name
+// at 0.35 can only ever be a quant read, and one at 0.70 has three domains.
+//
+// The funnel used to ask a boolean instead — "can any per-ticker provider reach
+// this at all" — and cap the names that answered no. That question stopped
+// discriminating once the domains reached listings unevenly: with a per-market
+// regime read, a foreign listing with no US line has 0.45 of the weight
+// available to it, and calling it "quant-only" was both wrong and unhelpful
+// about what was actually missing.
+func expectedCoverage(w model.DomainWeights, ticker string) float64 {
+	var covered, total float64
+	for domain, weight := range w.Map() {
+		if weight <= 0 {
+			continue
+		}
+		total += weight
+		if groundableBy(domain, ticker) {
+			covered += weight
+		}
+	}
+	if total <= 0 {
+		return 0
+	}
+	return covered / total
 }
 
 // domainGap records the groundable tickers one per-ticker domain finished the
@@ -272,16 +353,23 @@ func confabulations(statuses []model.DomainStatus) []domainConfabulation {
 	return out
 }
 
-// quantOnlyNames lists the shortlisted tickers no per-ticker provider can reach,
-// sorted. SEC EDGAR and AlphaVantage are US-only, so news, fundamentals and
-// sentiment are structurally unable to cover a foreign listing with no US line —
-// that is a known limit of this run's sources, not a fetch failure, and the run
-// should say so. A name that resolves to a US line (2330.TW → TSM) is reachable
-// and does not belong on this list.
-func quantOnlyNames(shortlist []model.Candidate) []string {
+// thinlyCoveredNames lists the shortlisted tickers the run's sources can ground
+// less than floor of the domain weight for, sorted. SEC filings and listed
+// option chains are US instruments, so fundamentals and sentiment are
+// structurally unable to cover a foreign listing with no US line — that is a
+// known limit of this run's sources, not a fetch failure, and the run should say
+// so. A name that resolves to a US line (2330.TW → TSM) is reachable by those
+// two as well and does not belong on this list.
+//
+// It replaced quantOnlyNames, which asked whether *any* per-ticker provider
+// could reach a name. Since news and macro became globally groundable that
+// answer is "yes" for every listing, so the old list would silently have been
+// empty for every run while three of five domains were still missing on some
+// names.
+func thinlyCoveredNames(shortlist []model.Candidate, w model.DomainWeights, floor float64) []string {
 	var out []string
 	for _, c := range shortlist {
-		if !marketdata.Reachable(c.Ticker) {
+		if expectedCoverage(w, c.Ticker) < floor {
 			out = append(out, strings.ToUpper(c.Ticker))
 		}
 	}

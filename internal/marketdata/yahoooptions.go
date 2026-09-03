@@ -21,6 +21,29 @@ const yahooBrowserUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTM
 // about positioning over the next fortnight.
 const optionsExpiries = 2
 
+// The plausibility band an at-the-money implied volatility has to sit inside to
+// be written as a fact.
+//
+// Yahoo publishes a placeholder rather than an absence on a contract it has no
+// quote for, and atmIV used to accept anything above zero. On 2026-09-03 that
+// put "IV at 0.2% annualized" in front of the sentiment agent for six of seven
+// names, and the agent — correctly, given what it was told — read a 0.2% implied
+// against a 59% realized as options being given away and scored the run's
+// strongest sentiment verdict on it. No listed equity trades at 2% annualized
+// vol and none trades at 400%; a number outside that band is a broken quote, and
+// the honest output is no fact plus an error saying what arrived.
+const (
+	minPlausibleIV = 0.02
+	maxPlausibleIV = 4.0
+)
+
+// oiMinContracts is the total two-expiry open interest below which the put/call
+// ratio says nothing. It mirrors flowMinContracts on the volume leg, which has
+// always had one: BBVA's ADR line produced "put/call open interest 8.14" out of
+// 676 puts against 83 calls — 759 contracts, where a single order moves the
+// ratio by more than the signal it is supposed to carry.
+const oiMinContracts = 2_000
+
 // yahooOptionsProvider reads the keyless option chain for positioning evidence:
 // the put/call open-interest ratio, and the at-the-money implied volatility to
 // set against the realized volatility the quant stage already computed.
@@ -90,6 +113,11 @@ type yahooOptionLeg struct {
 	Strike            float64 `json:"strike"`
 	OpenInterest      float64 `json:"openInterest"`
 	ImpliedVolatility float64 `json:"impliedVolatility"`
+	// Volume is the session's traded contracts at this strike. Open interest is
+	// the position that already exists; volume is the position being taken
+	// today, and the two answer different questions — the ratio between them is
+	// the whole point of the flow leg.
+	Volume float64 `json:"volume"`
 }
 
 func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker string) (TickerData, error) {
@@ -114,7 +142,12 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 	res := first.OptionChain.Result[0]
 
 	var callOI, putOI float64
+	flow := optionFlow{Spot: res.Quote.RegularMarketPrice}
 	expiries := 0
+	// legs and volumeLegs exist only to tell a quiet chain from a chain whose
+	// volume field stopped arriving. Both readings end with the flow leg
+	// emitting nothing, and only one of them is correct. See the warning below.
+	legs, volumeLegs := 0, 0
 	accumulate := func(r yahooOptionsResp) {
 		if len(r.OptionChain.Result) == 0 {
 			return
@@ -122,9 +155,19 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 		for _, o := range r.OptionChain.Result[0].Options {
 			for _, c := range o.Calls {
 				callOI += c.OpenInterest
+				legs++
+				if c.Volume > 0 {
+					volumeLegs++
+				}
+				flow.addCall(c)
 			}
 			for _, put := range o.Puts {
 				putOI += put.OpenInterest
+				legs++
+				if put.Volume > 0 {
+					volumeLegs++
+				}
+				flow.addPut(put)
 			}
 			expiries++
 		}
@@ -147,7 +190,35 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 		note = fmt.Sprintf(" (US line: %s)", symbol)
 	}
 
-	if callOI > 0 {
+	// Open interest and traded volume arrive in the same JSON object, so a
+	// chain that parsed strikes and open interest but carried volume on not one
+	// of them cannot be a quiet name — it is the volume field itself failing to
+	// arrive. That failure is otherwise perfectly silent: every leg is dropped
+	// by addCall/addPut, summary() reports not ok, and neither flow fact is
+	// written, on every ticker at once, with no error anywhere. This is not an
+	// error return — the open-interest positioning leg below is unaffected and
+	// worth keeping — it is a warning on the run's own data_errors channel.
+	if legs > 0 && volumeLegs == 0 && callOI+putOI > 0 {
+		td.Warnings = append(td.Warnings, fmt.Sprintf(
+			"option flow leg is silent: the chain parsed %d strikes carrying %s contracts of open interest across the front %d %s%s, but not one of them reported a positive \"volume\" — open interest and volume arrive in the same object, so this is the volume field being renamed or dropped, not a quiet chain",
+			legs, contracts(callOI+putOI), expiries, plural(expiries, "expiry", "expiries"), note))
+	}
+	// And the mirror image, which is the one that actually happened. The warning
+	// above could never fire on it: it is guarded on open interest being present.
+	//
+	// A chain that reported real volume on some strike and zero open interest on
+	// every single one is not a chain of freshly listed contracts — INTC traded
+	// 90,677 calls against no standing call position at all on 2026-09-03. It is
+	// the openInterest field failing to arrive, and it takes both open-interest
+	// legs down at once: the put/call ratio below is skipped for want of a
+	// denominator, and volOI() reads every strike as position-building.
+	if legs > 0 && volumeLegs > 0 && callOI+putOI == 0 {
+		td.Warnings = append(td.Warnings, fmt.Sprintf(
+			"option open-interest legs are blind: the chain parsed %d strikes across the front %d %s%s and %d of them reported traded volume, but not one reported any open interest — volume and open interest arrive in the same object, so this is the \"openInterest\" field being renamed or dropped, not a chain of new listings",
+			legs, expiries, plural(expiries, "expiry", "expiries"), note, volumeLegs))
+	}
+
+	if callOI > 0 && callOI+putOI >= oiMinContracts {
 		ratio := putOI / callOI
 		td.Facts = append(td.Facts, Fact{
 			Label: OptionsPositioningLabel,
@@ -157,21 +228,48 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 			Source: "Yahoo Finance options",
 			URL:    link,
 		})
-		// Which side the ratio actually favours, decided here. The agent read a
-		// crowded put side as bearish and a crowded call side as "squeeze risk",
-		// also bearish — so the same metric voted down whichever way it pointed.
-		td.Facts = append(td.Facts, signalFact(OptionsSignalLabel,
-			classifyOptionsPositioning(ratio), "computed", link))
+		// The verdict is *not* decided here. Which side a ratio favours depends on
+		// where the rest of the run's names sit — an extreme every name shares is
+		// the tape's level, not this one's positioning — and this provider sees
+		// one ticker at a time. addPositioningSignal computes it at pack level,
+		// from the raw sentence above, once every chain has been fetched.
+	}
+	// The flow leg: what traded today, not what is already held. Both facts are
+	// written together — the sentence a reader gets and the verdict the agent is
+	// bound by — so the pair never reaches addPositioningSignal half-formed.
+	if summary, ok := flow.summary(expiries); ok {
+		td.Facts = append(td.Facts,
+			Fact{
+				Label:  UnusualOptionsLabel,
+				Value:  summary + note,
+				AsOf:   time.Now(),
+				Source: "Yahoo Finance options",
+				URL:    link,
+			},
+			signalFact(OptionsFlowSignalLabel, classifyUnusualOptions(flow),
+				"Yahoo Finance options", link),
+		)
 	}
 	if iv, strike, ok := atmIV(res.Options[0].Calls, res.Options[0].Puts, spot); ok {
-		td.Facts = append(td.Facts, Fact{
-			Label: "Implied volatility (ATM, front expiry)",
-			Value: fmt.Sprintf("%.1f%% annualized at the %.2f strike (spot %.2f)%s",
-				iv*100, strike, spot, note),
-			AsOf:   time.Now(),
-			Source: "Yahoo Finance options",
-			URL:    link,
-		})
+		switch {
+		case iv < minPlausibleIV || iv > maxPlausibleIV:
+			// No fact. An implied volatility is only useful set against the
+			// realized volatility the quant stage computed, and a broken quote
+			// makes that comparison say the opposite of the truth. Say what
+			// arrived, so this reads as a data failure rather than a quiet name.
+			td.Warnings = append(td.Warnings, fmt.Sprintf(
+				"implied volatility withheld: the %.2f strike quoted %.2f%% annualized against a %.0f%%–%.0f%% plausibility band%s — that is a placeholder or a broken quote, not a volatility, and set against realized vol it would read as an option given away",
+				strike, iv*100, minPlausibleIV*100, maxPlausibleIV*100, note))
+		default:
+			td.Facts = append(td.Facts, Fact{
+				Label: "Implied volatility (ATM, front expiry)",
+				Value: fmt.Sprintf("%.1f%% annualized at the %.2f strike (spot %.2f)%s",
+					iv*100, strike, spot, note),
+				AsOf:   time.Now(),
+				Source: "Yahoo Finance options",
+				URL:    link,
+			})
+		}
 	}
 	return td, nil
 }

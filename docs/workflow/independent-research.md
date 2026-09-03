@@ -11,16 +11,37 @@ shortlist, then Claude synthesizes.
 
 `internal/orchestrator/prescreen.go` fetches ~2 years of daily OHLCV for **every**
 constituent of the selected indices (plus each index benchmark) and computes the
-`internal/quant` metrics for all of them. Cold, that is ~275 Yahoo requests at the
-client's ~4/s pace (≈70s); warm, it is served from the shared data cache and costs
-nothing. No model is called.
+`internal/quant` metrics for all of them.
+
+Prices route per symbol (`internal/marketdata/prices.go`). With an Alpaca key configured,
+the ~155 US constituents are warmed in a handful of **multi-symbol** requests before the
+per-ticker loop runs — 154 names in 2 calls — and the loop is then served from cache; the
+~117 foreign listings, the index benchmarks (`^GSPC`, `^N225`, …) and FX pairs stay on
+Yahoo, one request each at the client's ~4/s pace. With no Alpaca key it is Yahoo for all
+of them: ~275 requests cold (≈70s). Warm, either way, it is served from the shared data
+cache and costs nothing. No model is called.
+
+The batching is not only a speed matter. One request per ticker across a 272-name universe
+is what got this host answered with HTTP 429 on every Yahoo endpoint, which stops the
+pre-screen pricing anything at all — so moving the US half off Yahoo also protects the
+foreign half, which no other source reaches.
 
 **Composite**, z-scored *within each index* so a quiet index still nominates its own
 leaders instead of losing every slot to the strongest one:
 
 ```
-score = z(mom12-1) + 0.5·z(ret63d) − 0.5·strZ
+score = 0.5·z(mom12-1) + z(ret63d) − 0.5·strZ
 ```
+
+The **63-day return leads and the 12-1 momentum supports it**. This system holds for 5–20
+sessions; a 12-month trend measured to a month ago is the cross-sectional momentum factor,
+which is right about the next twelve months rather than the next fortnight. Weighted 1.0
+against 0.5 it decided the shortlist by itself: on 2026-09-03 the sp500 scout read its own
+ranked table and wrote that MU at rank 1 and INTC at rank 2 *"have already broken their
+trend; the score is stale off the 12m return, not a fresh setup. Avoid both directions."*
+The merit sort took both anyway, at ranks 1 and 3, and dropped all four health-care longs
+the same scout nominated. Reversing the weights on that run's table lifts MRK, AMGN and
+REGN into the top twelve and drops the two extremes down it.
 
 The last term applies **only when the recent move runs with the trend** (`sign(strZ) == sign(mom12-1)`). That is the short-term
 reversal case: a name that has just spiked on top of an uptrend gives the spike back,
@@ -101,9 +122,15 @@ Stage 1.5 reads back the dozen it needs for free.
   listing), then trims to `max_shortlist` (default 12) by **merit**
   (`universe.CapMerit`): each nomination scores its pre-screen composite *aligned with the
   direction it was nominated in* — `+score` for bullish, `−score` for bearish, 0 for
-  neutral or for a name with no computed row. At most `max_per_index` (default 5) names
-  come from one index; if that leaves slots empty they are backfilled in pure score
-  order, so a single-index run still returns a full shortlist.
+  neutral or for a name with no computed row — **plus what the screening stage itself
+  knows**: `+0.35` per extra scout that nominated the same name in the same direction, and
+  `−0.65` when another scout nominated it in the *opposite* direction. Both are in z-score
+  units, so they break ties between names the composite ranks closely without overturning
+  it. On 2026-09-03 the cut ran through twelve nominations inside 1.1 z; REGN and AMGN were
+  the only names two scouts agreed on and both were dropped, and QCOM shipped bearish
+  purely because sp500's list was walked before nq100's. At most `max_per_index` (default
+  5) names come from one index; if that leaves slots empty they are backfilled in pure
+  score order, so a single-index run still returns a full shortlist.
 - The final shortlist is recorded in `runs/<ts>/shortlist.json`, carrying each name's
   sector and the scout's bias and reason.
 
@@ -111,8 +138,9 @@ Persona: `agents/scout.md`. Output: see `output-schema.md` (shortlist schema).
 
 ## Stage 1.5 — Price data & quant metrics (in-process, no model)
 
-For every shortlisted ticker the orchestrator fetches ~2 years of daily OHLCV from the
-keyless Yahoo Finance chart API (`internal/marketdata/yahoo.go`, rate-limited + cached
+For every shortlisted ticker the orchestrator fetches ~2 years of daily OHLCV through the
+same routed price source (Alpaca `/v2/stocks/bars` for US equities, the keyless Yahoo
+chart API for everything else — `internal/marketdata/prices.go`, rate-limited + cached
 daily) and computes the statistical pack in `internal/quant`: return ladder, 12-1
 momentum, price-to-52-week-high, turnover-conditioned short-term-reversal z-score,
 Yang-Zhang volatility (20d/60d), Lo-MacKinlay variance ratios + regime tag, drawdown/tail
@@ -186,7 +214,8 @@ it into `[]model.TradeIdea`, validates the mechanics, and the TUI renders the re
 ## Flow summary
 
 ```
-Stage 0.5: Yahoo OHLCV for all 274 constituents → quant composite, ranked
+Stage 0.5: OHLCV for all 274 constituents (Alpaca batched for US,
+           Yahoo per-ticker otherwise) → quant composite, ranked
            per index (no model call) → runs/<ts>/prescreen.json
         │
 4 Scouts (parallel), each screening its index's ranked table

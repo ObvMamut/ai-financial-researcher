@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -128,6 +129,49 @@ func TestLastTradingDayPerMarket(t *testing.T) {
 	for _, c := range cases {
 		if got := lastTradingDay(at(t, c.now), c.close); got != c.want {
 			t.Errorf("lastTradingDay(%s, close=%d) = %s, want %s", c.now, c.close, got, c.want)
+		}
+	}
+}
+
+func TestAStaleIdeaBecomesACorrectiveFinding(t *testing.T) {
+	// NESTE.HE shipped at rank 4 on 2026-09-03 with levels computed to the cent
+	// off a 2026-09-01 bar against a 2026-09-02 session. Every part of the
+	// machinery worked — forced refetch, a `stale:` flag on the metric, a
+	// run-level warning — and none of it reached the Chief as something to fix.
+	qp := quant.NewPack()
+	qp.ByTicker["NESTE.HE"] = quant.Metrics{Symbol: "NESTE.HE", Benchmark: "^STOXX50E", Beta: 0.8}
+	qp.ByTicker["MU"] = quant.Metrics{Symbol: "MU", Benchmark: "^GSPC", Beta: 2.8}
+	qp.Stale = []string{"NESTE.HE"}
+	v := verified{Universe: testUniverse(t), Quant: qp}
+
+	stale := model.TradeIdea{
+		Ticker: "NESTE.HE", Direction: model.DirectionBuy, Confidence: 24,
+		Entry: 32.56, Stop: 30.60, Target: 36.20, TimeframeDays: 15,
+	}
+	fresh := model.TradeIdea{
+		Ticker: "MU", Direction: model.DirectionBuy, Confidence: 46,
+		Entry: 956.08, Stop: 900, Target: 1060, TimeframeDays: 15,
+	}
+
+	var got []string
+	for _, f := range gateIdea(&stale, v, model.RiskConfig{}) {
+		if strings.Contains(f.Message, "superseded") {
+			got = append(got, f.Message)
+			if f.Hard {
+				t.Error("a stale bar is a hard failure — the Chief can re-price it instead")
+			}
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("a stale idea produced %d freshness findings, want 1", len(got))
+	}
+	if !strings.Contains(got[0], "re-price") || !strings.Contains(got[0], "drop it") {
+		t.Errorf("the finding names no remedy: %s", got[0])
+	}
+
+	for _, f := range gateIdea(&fresh, v, model.RiskConfig{}) {
+		if strings.Contains(f.Message, "superseded") {
+			t.Errorf("a fresh name was charged with staleness: %s", f.Message)
 		}
 	}
 }

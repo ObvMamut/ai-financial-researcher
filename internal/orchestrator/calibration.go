@@ -27,7 +27,7 @@ const (
 // It never fails a run. With no record the Chief is simply not told one, which
 // is the state every fresh install starts in and the honest state until enough
 // ideas have closed to say anything.
-func trackRecord(ctx context.Context, ch chan<- Event, cfg Config, yc *marketdata.YahooClient) *scoreboard.Calibration {
+func trackRecord(ctx context.Context, ch chan<- Event, cfg Config, yc marketdata.PriceSource) *scoreboard.Calibration {
 	cal := scoreboard.LoadCalibration(cfg.DataDir)
 	if cal.Age() < calibrationMaxAge {
 		return cal

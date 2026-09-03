@@ -36,13 +36,13 @@ type Settings struct {
 	// Funnel geometry. PrescreenTopPerIndex is how many of each index's
 	// highest-composite names the Stage 0.5 table shows its scout;
 	// MaxShortlist caps the merged shortlist, MaxPerIndex caps one index's
-	// share of it, and MaxQuantOnly caps the names no per-ticker provider can
-	// reach — the ones only the quant domain can grade. Zero means the
+	// share of it, and MaxThinlyCovered caps the names the run's sources can
+	// ground less than 60% of the domain weight for. Zero means the
 	// orchestrator's defaults (15 / 12 / 5 / 4).
 	PrescreenTopPerIndex int
 	MaxShortlist         int
 	MaxPerIndex          int
-	MaxQuantOnly         int
+	MaxThinlyCovered     int
 
 	// Risk is the deterministic post-synthesis risk policy. Zero fields take the
 	// orchestrator's defaults. Risk.ADVMinUSD also gates the Stage 0.5
@@ -101,7 +101,7 @@ type fileFormat struct {
 	PrescreenTopPerIndex int `toml:"prescreen_top_per_index"`
 	MaxShortlist         int `toml:"max_shortlist"`
 	MaxPerIndex          int `toml:"max_per_index"`
-	MaxQuantOnly         int `toml:"max_quant_only"`
+	MaxThinlyCovered     int `toml:"max_thinly_covered"`
 	ChiefAdjustBand      int `toml:"chief_adjust_band"`
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
@@ -152,6 +152,8 @@ type fileFormat struct {
 		ContactEmail    string `toml:"contact_email"`
 		AlphaVantageKey string `toml:"alphavantage_key"`
 		FredKey         string `toml:"fred_key"`
+		AlpacaKeyID     string `toml:"alpaca_key_id"`
+		AlpacaSecretKey string `toml:"alpaca_secret_key"`
 	} `toml:"providers"`
 
 	// Risk holds the tradeability, geometry and sizing limits enforced after
@@ -169,6 +171,7 @@ type fileFormat struct {
 		MaxPairCorr      float64 `toml:"max_pair_corr"`
 		MaxPortfolioBeta float64 `toml:"max_portfolio_beta"`
 		EdgeSigmaDaily   float64 `toml:"edge_sigma_daily"`
+		MinExpectancyR   float64 `toml:"min_expectancy_r"`
 		MinExpectancyBps float64 `toml:"min_expectancy_bps"`
 	} `toml:"risk"`
 
@@ -236,7 +239,60 @@ func Load() (*Settings, error) {
 		}
 	}
 	s.applyEnv()
+	if err := s.validateRisk(); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// validateRisk refuses the risk settings that cannot mean anything, so that
+// every value which survives means exactly what it says.
+//
+// Zero is the identity for a floor and the annihilator for a ceiling: a
+// `cost_bps` or `rr_min` of 0 turns a check off, which is a policy an operator
+// may want, while a `stop_sigma_max` of 0 says no stop may sit any distance
+// from entry and so rejects every idea ever written. The second is a typo every
+// time. Both used to be quietly replaced by the default, which is the worst of
+// the three options: the run neither honoured the setting nor reported that it
+// had ignored it.
+//
+// Only keys the operator actually wrote are checked. An absent key is zero here
+// and is filled by riskgate.riskDefaults later, which is not an error.
+func (s *Settings) validateRisk() error {
+	ceilings := []struct {
+		key string
+		v   float64
+	}{
+		{"account_equity", s.Risk.AccountEquity},
+		{"risk_per_trade_pct", s.Risk.RiskPerTradePct},
+		{"stop_sigma_max", s.Risk.StopSigmaMax},
+		{"target_sigma_max", s.Risk.TargetSigmaMax},
+		{"max_pair_corr", s.Risk.MaxPairCorr},
+		{"max_portfolio_beta", s.Risk.MaxPortfolioBeta},
+	}
+	for _, c := range ceilings {
+		if s.Risk.Set(c.key) && c.v <= 0 {
+			return fmt.Errorf("config risk.%s = %v: must be > 0 — it is a ceiling, and a ceiling of zero rejects every idea rather than disabling the check", c.key, c.v)
+		}
+	}
+	floors := []struct {
+		key string
+		v   float64
+	}{
+		{"cost_bps", s.Risk.CostBps},
+		{"rr_min", s.Risk.RRMin},
+		{"stop_sigma_min", s.Risk.StopSigmaMin},
+		{"adv_min_usd", s.Risk.ADVMinUSD},
+	}
+	for _, c := range floors {
+		if s.Risk.Set(c.key) && c.v < 0 {
+			return fmt.Errorf("config risk.%s = %v: must be >= 0 — set it to 0 to disable the check", c.key, c.v)
+		}
+	}
+	// edge_sigma_daily, min_expectancy_r and min_expectancy_bps are unconstrained
+	// in sign on purpose: a negative edge is what a losing system has, and a
+	// negative floor is a weaker floor.
+	return nil
 }
 
 func (s *Settings) applyFile(path string) error {
@@ -278,25 +334,39 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
-	setInt(&s.MaxQuantOnly, f.MaxQuantOnly)
+	setInt(&s.MaxThinlyCovered, f.MaxThinlyCovered)
 	setInt(&s.ChiefAdjustBand, f.ChiefAdjustBand)
-	setPosFloat := func(dst *float64, v float64) {
-		if v > 0 {
-			*dst = v
+	// The whole [risk] block is presence-detected, the way data_cache_days above
+	// is. Every key in it is a float64 whose zero value is also a legal setting
+	// — `cost_bps = 0` prices a book frictionless, `rr_min = 0` disables the
+	// reward:risk floor — so a "v > 0" guard did not mean "unset", it meant
+	// "unsayable": the value was discarded here and then defaulted again by
+	// riskgate.riskDefaults, and an operator asking for no cost assumption got
+	// 30 bps with no diagnostic. Marking the key explicit is what carries the
+	// operator's intent past both layers.
+	setRisk := func(dst *float64, key string, v float64) {
+		if !md.IsDefined("risk", key) {
+			return
 		}
+		*dst = v
+		if s.Risk.Explicit == nil {
+			s.Risk.Explicit = map[string]bool{}
+		}
+		s.Risk.Explicit[key] = true
 	}
-	setPosFloat(&s.Risk.AccountEquity, f.Risk.AccountEquity)
-	setPosFloat(&s.Risk.RiskPerTradePct, f.Risk.RiskPerTradePct)
-	setPosFloat(&s.Risk.CostBps, f.Risk.CostBps)
-	setPosFloat(&s.Risk.RRMin, f.Risk.RRMin)
-	setPosFloat(&s.Risk.StopSigmaMin, f.Risk.StopSigmaMin)
-	setPosFloat(&s.Risk.StopSigmaMax, f.Risk.StopSigmaMax)
-	setPosFloat(&s.Risk.TargetSigmaMax, f.Risk.TargetSigmaMax)
-	setPosFloat(&s.Risk.ADVMinUSD, f.Risk.ADVMinUSD)
-	setPosFloat(&s.Risk.MaxPairCorr, f.Risk.MaxPairCorr)
-	setPosFloat(&s.Risk.MaxPortfolioBeta, f.Risk.MaxPortfolioBeta)
-	setPosFloat(&s.Risk.EdgeSigmaDaily, f.Risk.EdgeSigmaDaily)
-	setPosFloat(&s.Risk.MinExpectancyBps, f.Risk.MinExpectancyBps)
+	setRisk(&s.Risk.AccountEquity, "account_equity", f.Risk.AccountEquity)
+	setRisk(&s.Risk.RiskPerTradePct, "risk_per_trade_pct", f.Risk.RiskPerTradePct)
+	setRisk(&s.Risk.CostBps, "cost_bps", f.Risk.CostBps)
+	setRisk(&s.Risk.RRMin, "rr_min", f.Risk.RRMin)
+	setRisk(&s.Risk.StopSigmaMin, "stop_sigma_min", f.Risk.StopSigmaMin)
+	setRisk(&s.Risk.StopSigmaMax, "stop_sigma_max", f.Risk.StopSigmaMax)
+	setRisk(&s.Risk.TargetSigmaMax, "target_sigma_max", f.Risk.TargetSigmaMax)
+	setRisk(&s.Risk.ADVMinUSD, "adv_min_usd", f.Risk.ADVMinUSD)
+	setRisk(&s.Risk.MaxPairCorr, "max_pair_corr", f.Risk.MaxPairCorr)
+	setRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", f.Risk.MaxPortfolioBeta)
+	setRisk(&s.Risk.EdgeSigmaDaily, "edge_sigma_daily", f.Risk.EdgeSigmaDaily)
+	setRisk(&s.Risk.MinExpectancyR, "min_expectancy_r", f.Risk.MinExpectancyR)
+	setRisk(&s.Risk.MinExpectancyBps, "min_expectancy_bps", f.Risk.MinExpectancyBps)
 	if len(f.Indices) > 0 {
 		s.Indices = f.Indices
 	}
@@ -369,6 +439,8 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.Providers.ContactEmail, f.Providers.ContactEmail)
 	setStr(&s.Providers.AlphaVantageKey, f.Providers.AlphaVantageKey)
 	setStr(&s.Providers.FredKey, f.Providers.FredKey)
+	setStr(&s.Providers.AlpacaKeyID, f.Providers.AlpacaKeyID)
+	setStr(&s.Providers.AlpacaSecret, f.Providers.AlpacaSecretKey)
 
 	if f.CheapEngine != "" {
 		s.CheapEngine = model.CLI(f.CheapEngine)
@@ -409,6 +481,13 @@ func (s *Settings) applyEnv() {
 	setStr(&s.Providers.AlphaVantageKey, "ALPHAVANTAGE_API_KEY")
 	setStr(&s.Providers.FredKey, "FRED_API_KEY")
 	setStr(&s.Providers.ContactEmail, "CFR_CONTACT_EMAIL")
+	// Alpaca's own env names first, so a key already exported for the alpaca
+	// SDKs just works; the CFR_-prefixed alias is read second and therefore
+	// wins, matching how CFR_API_KEY overrides DEEPSEEK_API_KEY above.
+	setStr(&s.Providers.AlpacaKeyID, "APCA_API_KEY_ID")
+	setStr(&s.Providers.AlpacaSecret, "APCA_API_SECRET_KEY")
+	setStr(&s.Providers.AlpacaKeyID, "CFR_ALPACA_KEY_ID")
+	setStr(&s.Providers.AlpacaSecret, "CFR_ALPACA_SECRET_KEY")
 
 	// Cheap-research API engine. CFR_API_KEY is preferred; DEEPSEEK_API_KEY is
 	// accepted as an alias so a DeepSeek key already in the environment just works.
@@ -503,19 +582,37 @@ func (s *Settings) applyEnv() {
 	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")
 	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
 	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
-	setPosInt(&s.MaxQuantOnly, "CFR_MAX_QUANT_ONLY")
+	setPosInt(&s.MaxThinlyCovered, "CFR_MAX_THINLY_COVERED")
 	setPosInt(&s.ChiefAdjustBand, "CFR_CHIEF_ADJUST_BAND")
-	envFloat := func(dst *float64, key string) {
-		if v := os.Getenv(key); v != "" {
-			if x, err := strconv.ParseFloat(v, 64); err == nil && x > 0 {
-				*dst = x
-			}
+	// Presence, not sign, decides an override here too — see setRisk in
+	// applyFile. A var that is set and parses wins at whatever value it holds,
+	// so CFR_COST_BPS=0 is as expressible as cost_bps = 0 in the file.
+	envRisk := func(dst *float64, key, env string) {
+		v, ok := os.LookupEnv(env)
+		if !ok || v == "" {
+			return
 		}
+		x, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return
+		}
+		*dst = x
+		if s.Risk.Explicit == nil {
+			s.Risk.Explicit = map[string]bool{}
+		}
+		s.Risk.Explicit[key] = true
 	}
-	envFloat(&s.Risk.ADVMinUSD, "CFR_ADV_MIN_USD")
-	envFloat(&s.Risk.AccountEquity, "CFR_ACCOUNT_EQUITY")
-	envFloat(&s.Risk.RiskPerTradePct, "CFR_RISK_PER_TRADE_PCT")
-	envFloat(&s.Risk.RRMin, "CFR_RR_MIN")
-	envFloat(&s.Risk.EdgeSigmaDaily, "CFR_EDGE_SIGMA_DAILY")
-	envFloat(&s.Risk.MinExpectancyBps, "CFR_MIN_EXPECTANCY_BPS")
+	envRisk(&s.Risk.ADVMinUSD, "adv_min_usd", "CFR_ADV_MIN_USD")
+	envRisk(&s.Risk.AccountEquity, "account_equity", "CFR_ACCOUNT_EQUITY")
+	envRisk(&s.Risk.RiskPerTradePct, "risk_per_trade_pct", "CFR_RISK_PER_TRADE_PCT")
+	envRisk(&s.Risk.RRMin, "rr_min", "CFR_RR_MIN")
+	envRisk(&s.Risk.CostBps, "cost_bps", "CFR_COST_BPS")
+	envRisk(&s.Risk.StopSigmaMin, "stop_sigma_min", "CFR_STOP_SIGMA_MIN")
+	envRisk(&s.Risk.StopSigmaMax, "stop_sigma_max", "CFR_STOP_SIGMA_MAX")
+	envRisk(&s.Risk.TargetSigmaMax, "target_sigma_max", "CFR_TARGET_SIGMA_MAX")
+	envRisk(&s.Risk.MaxPairCorr, "max_pair_corr", "CFR_MAX_PAIR_CORR")
+	envRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", "CFR_MAX_PORTFOLIO_BETA")
+	envRisk(&s.Risk.EdgeSigmaDaily, "edge_sigma_daily", "CFR_EDGE_SIGMA_DAILY")
+	envRisk(&s.Risk.MinExpectancyR, "min_expectancy_r", "CFR_MIN_EXPECTANCY_R")
+	envRisk(&s.Risk.MinExpectancyBps, "min_expectancy_bps", "CFR_MIN_EXPECTANCY_BPS")
 }

@@ -76,9 +76,22 @@ h = 10 directly; scale them if you choose a different `h`.
 - **risk_reward** = |target − entry| / |entry − stop| ≥ **1.8**, hard. (The app recomputes
   it from your levels; a claimed ratio the levels do not support is corrected.)
 - **Expectancy**: the app simulates the price path to whichever barrier it reaches first,
-  charging a gap-through-stop at the price that gapped and 30bps of costs. **A negative
-  expectancy is rejected.** Geometry that satisfies every band above can still lose money,
-  because none of them measure how often a near stop is touched before a far target.
+  charging a gap-through-stop at the price that gapped and a round-trip cost of up to 30bps
+  (less for liquid names). It scores the result in **R** — multiples of your own
+  |entry − stop| — under a small assumed edge of 0.02σ/day, and **rejects anything under
+  +0.005R**. Geometry that satisfies every band above can still lose money, because none of
+  them measure how often a near stop is touched before a far target.
+
+  Two things about this check are worth knowing before you set levels, because the obvious
+  response to it is the wrong one:
+
+  - **A wider reward:risk does not help.** Raising the ratio by tightening the stop makes
+    this number *worse*: a nearer stop is touched more often, and the loss arrives sooner
+    and more surely than the gain. Across the whole legal band the geometry is worth under
+    0.01R either way.
+  - **The holding period is the lever.** Expectancy accumulates with `h`, so a name whose
+    construction is sound but whose expectancy is thin wants more days, not a moved
+    barrier — inside the 5–20 range, and only if the thesis really has that long to work.
 - **Liquidity**: a name under $20M average daily dollar volume is rejected — it cannot be
   sized.
 - **timeframe_days**: expected holding period in trading days (5–20 for this system).
@@ -115,6 +128,9 @@ in the Confluence Math line. The total across all of them is capped at ±10.
 - **−3 to −5 — the track record says otherwise:** a "Track record" block is in this prompt
   and this idea's stated confidence bucket has a realized win rate well below the
   confidence it claims. Name the bucket and its number.
+- **±3 to −5 — a lesson applies to this construction:** a "Lessons" block is in this
+  prompt and one of its lessons names a setup cell this idea sits in. Quote the lesson and
+  its `n`.
 
 ### When the prompt carries a track record
 It is this pipeline's own measured results, from replaying past ideas through their daily
@@ -130,6 +146,30 @@ anything. When it is there:
   those, or it is a 60.
 - **Small n means small conclusions.** Each cell carries its own count. Nine trades cannot
   tell a 45% domain from a 55% one; say so rather than reading a pattern into it.
+
+### When the prompt carries lessons
+A "Lessons from N closed ideas" block is this pipeline reading its own record back to
+itself: prose drawn from the same replayed trades as the track record above, grouped into
+cells — direction and stop width, coverage band, consensus band, sector, fill rate. Like
+the track record it appears only once enough ideas have closed. When it is there:
+
+- **A lesson is evidence about a shape, not about a name.** It says something about
+  wide-stop buys, or about ideas that shipped on thin coverage — never about this ticker,
+  which it has almost certainly never seen. Apply it to the *construction* of an idea and
+  never as a reason to overrule a domain score; the domains looked at this company and the
+  lesson did not.
+- **It moves a base inside the same ±10 band as every other reason.** It is one adjustment
+  among the others, not a second scoring pass layered on top, and it does not stack with
+  the track-record adjustment when both are pointing at the same thing — take the larger,
+  not the sum.
+- **Where a lesson and this run's own evidence disagree, the evidence wins.** The lessons
+  are a prior drawn from a handful of past trades; the reports and the quant block are
+  measurements of the situation in front of you. Say which you followed and why.
+- **Cite the cell and its count.** Every lesson carries the `n` it was drawn from, and the
+  app deletes any lesson whose cell does not exist or is too thin — so a lesson you cannot
+  quote a count for is one you should not be using either.
+- **Weight suggestions in that block are advisory and are never applied.** Do not treat a
+  proposed re-weighting as if it had already happened.
 
 Not adjustments, and never penalties on their own:
 - **Price near the 52-week high is continuation evidence** (George & Hwang), not extension.

@@ -41,11 +41,12 @@ type verified struct {
 	// check. Reading them back off disk would answer the same question slower.
 	Series map[string]*quant.Series
 	// RealizedR is the pipeline's measured average R per closed trade, present
-	// only once the scoreboard has enough closed history to mean anything. When
-	// set, the expectancy simulation runs on it instead of the assumed edge
-	// prior — including when it is negative, which is the whole point of
-	// measuring.
+	// only once the scoreboard has enough closed history to mean anything, and
+	// RealizedN the number of closed trades behind it. When set, the expectancy
+	// check blends the two — including when the record is negative, which is the
+	// whole point of measuring.
 	RealizedR *float64
+	RealizedN int
 }
 
 // validateIdeas normalises and checks the Chief Analyst's ideas against
@@ -248,6 +249,7 @@ func anchorConfidence(idea *model.TradeIdea, bases map[string]BaseScore, band in
 	}
 	idea.BaseConfidence = b.For(idea.Direction)
 	idea.DomainScores = b.Domains
+	idea.Consensus = math.Round(b.Consensus*100) / 100
 
 	lo, hi := idea.BaseConfidence-band, idea.BaseConfidence+band
 	if b.Cap > 0 && hi > b.Cap {

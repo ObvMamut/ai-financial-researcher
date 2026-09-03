@@ -362,3 +362,41 @@ func TestPrescreenReversalPenaltyNeverPaysABonus(t *testing.T) {
 			scoreOf(t, shorts, "CRASHED"), scoreOf(t, shorts, "STEADY"))
 	}
 }
+
+func TestMeritScoreCountsScoutAgreementAndDisagreement(t *testing.T) {
+	// The 2026-09-03 cut ran through twelve nominations inside 1.1 z of each
+	// other, so the two things the screening stage knew and the composite did
+	// not were worth more than their size suggests: REGN at 0.702 and AMGN at
+	// 1.094 were the only names two scouts agreed on and both were dropped, and
+	// QCOM shipped bearish only because sp500's list was walked first.
+	ps := &Prescreen{Rows: sortPrescreenRows([]PrescreenRow{
+		row("REGN", "sp500", func(r *PrescreenRow) { r.Score = 0.702 }),
+		row("QCOM", "sp500", func(r *PrescreenRow) { r.Score = -1.770 }),
+	})}
+
+	solo := model.Candidate{Ticker: "REGN", Index: "sp500", Bias: model.BiasBullish, Nominations: 1}
+	if got := meritScore(ps, solo); math.Abs(got-0.702) > 1e-9 {
+		t.Errorf("one nomination scored %+.3f, want the bare composite +0.702", got)
+	}
+
+	agreed := solo
+	agreed.Nominations = 2
+	if got := meritScore(ps, agreed); math.Abs(got-(0.702+meritAgreementBonus)) > 1e-9 {
+		t.Errorf("two agreeing scouts scored %+.3f, want +%.3f", got, 0.702+meritAgreementBonus)
+	}
+	if meritScore(ps, agreed) <= meritScore(ps, solo) {
+		t.Error("a name two scouts wanted did not outrank the same name one scout wanted")
+	}
+
+	contested := model.Candidate{Ticker: "QCOM", Index: "sp500", Bias: model.BiasBearish,
+		Nominations: 1, Contested: []string{"nq100"}}
+	want := 1.770 - meritContestedPenalty
+	if got := meritScore(ps, contested); math.Abs(got-want) > 1e-9 {
+		t.Errorf("a contested nomination scored %+.3f, want %+.3f", got, want)
+	}
+	// The penalty is a tie-break, not a veto: a strongly-supported contested
+	// name still outranks a weak uncontested one.
+	if meritScore(ps, contested) <= meritScore(ps, solo) {
+		t.Error("a 1.77 contested read fell below a 0.70 uncontested one — the penalty is a veto")
+	}
+}

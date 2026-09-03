@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"math/rand"
@@ -11,7 +12,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +80,18 @@ func syntheticChart(symbol string) []byte {
 	drift := (float64(seed%21) - 10) / 10000 // ±0.1% per day
 	vol := 0.008 + float64(seed%7)/1000      // 0.8%–1.4% daily
 	price := 50 + float64(seed%450)          // $50–$500
+
+	// The fake Chief ranks NVDA first, and enforcement deletes a score for a
+	// name that never made the shortlist — so NVDA has to survive the merit trim
+	// for the run to be testable end to end. It used to, on a random walk that
+	// drifts *down* 0.06% a day; which names topped the composite was luck, and
+	// reweighting the composite toward the 63-day term reshuffled it out.
+	// Giving the one name the test depends on a deliberate uptrend makes the
+	// fixture say what it means, and stops a change to the ranking formula
+	// reading as a broken pipeline.
+	if symbol == "NVDA" {
+		drift, vol = 0.0025, 0.010
+	}
 
 	// Walk back to the start date over weekdays, then forward again.
 	day := time.Now().UTC().Truncate(24 * time.Hour)
@@ -952,6 +967,57 @@ func TestSpecialistsReceiveTheComputedBlocksTheirPersonasAssume(t *testing.T) {
 	}
 }
 
+// A corrective re-prompt that does not land must say so. When the second Chief
+// call returned but its JSON did not parse there was no branch at all: no log,
+// no warning, the status row still reading `status: done, attempts: 2`, and
+// ideas.json announcing "after one corrective re-prompt" beside a book that was
+// the uncorrected first pass. The run spent a full synthesis call and left no
+// trace of having wasted it.
+func TestADiscardedCorrectiveRepromptIsRecorded(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "corrective-badjson")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	joined := strings.Join(logs, "\n")
+
+	if !strings.Contains(joined, "unparseable JSON") {
+		t.Errorf("a discarded corrective pass left no trace in the log:\n%s", joined)
+	}
+	if !strings.Contains(strings.Join(complete.Meta.Warnings, "\n"), "uncorrected first pass") {
+		t.Errorf("the run's own warnings do not say the book is uncorrected: %v", complete.Meta.Warnings)
+	}
+	var chief *model.DomainStatus
+	for i := range complete.Meta.Domains {
+		if complete.Meta.Domains[i].Domain == "chief-analyst" {
+			chief = &complete.Meta.Domains[i]
+		}
+	}
+	if chief == nil {
+		t.Fatal("no chief-analyst status row")
+	}
+	if chief.Corrective != "unparseable" {
+		t.Errorf("chief-analyst corrective = %q, want %q", chief.Corrective, "unparseable")
+	}
+	if chief.Attempts < 2 {
+		t.Errorf("the second call must still be accounted for: attempts = %d", chief.Attempts)
+	}
+	// And the note the reader sees must not claim a correction that never
+	// happened.
+	if strings.Contains(complete.Ideas.Notes, "after one corrective re-prompt") {
+		t.Errorf("notes claim a correction that did not land: %q", complete.Ideas.Notes)
+	}
+	if !strings.Contains(complete.Ideas.Notes, "did not land") {
+		t.Errorf("notes do not say the correction failed: %q", complete.Ideas.Notes)
+	}
+}
+
 // Every number the gate enforces used to be a preference in a persona, and a
 // model asked for "usually 1–2σ" and "risk_reward ≥ 1.5 preferred" satisfies it
 // at the cheapest edge of the band. Here the fake Chief does exactly that, and
@@ -1074,8 +1140,8 @@ func TestTrackRecordReachesTheChiefAndTheRiskGate(t *testing.T) {
 	}
 
 	// 31 closed trades is past MinClosedForEdge, so the expectancy check must
-	// be running on the measured −0.35R rather than the assumed prior.
-	if !anyLogContains(logs, "expectancy assumes the measured -0.35R edge") {
+	// be blending in the measured −0.35R rather than running on the prior alone.
+	if !anyLogContains(logs, "expectancy blends the simulation with the measured -0.35R") {
 		t.Errorf("the risk gate kept its prior despite a usable record:\n%s", strings.Join(logs, "\n"))
 	}
 }
@@ -1120,5 +1186,387 @@ func TestBaselinePersonaArmStillRuns(t *testing.T) {
 		if meta.PersonaSHA[role] == "" {
 			t.Errorf("baseline arm has no %s persona", role)
 		}
+	}
+}
+
+// syntheticBar returns the date and close of the bar `back` weekday sessions
+// before the end of a symbol's synthetic series. Seeding a past run needs a
+// generation date the fake price server can actually replay from, and the
+// series is generated rather than fixtured, so the test reads it the same way
+// the replay will.
+func syntheticBar(t *testing.T, symbol string, back int) (date string, close float64) {
+	t.Helper()
+	var resp struct {
+		Chart struct {
+			Result []struct {
+				Timestamp  []int64 `json:"timestamp"`
+				Indicators struct {
+					Quote []struct {
+						Close []float64 `json:"close"`
+					} `json:"quote"`
+				} `json:"indicators"`
+			} `json:"result"`
+		} `json:"chart"`
+	}
+	if err := json.Unmarshal(syntheticChart(symbol), &resp); err != nil {
+		t.Fatalf("synthetic chart for %s: %v", symbol, err)
+	}
+	res := resp.Chart.Result[0]
+	i := len(res.Timestamp) - 1 - back
+	if i < 0 {
+		t.Fatalf("synthetic series for %s has only %d bars", symbol, len(res.Timestamp))
+	}
+	return time.Unix(res.Timestamp[i], 0).UTC().Format("2006-01-02"), res.Indicators.Quote[0].Close[i]
+}
+
+// seedClosedTrades writes past run directories whose ideas all replay to a
+// closed outcome, so a hermetic run reaches the post-mortem's closed-trade
+// threshold without a network or a fixture of real history.
+//
+// The levels are chosen to make the outcome arithmetic rather than luck: the
+// entry sits above the price so the first session after generation fills it at
+// the open, and the stop and target sit ~4σ away over the holding period, so
+// every trade runs to the end of its window and closes as `expired`. That is a
+// closed trade — which is all the attribution counts — and it is the only
+// outcome a random-walk fixture can be relied on to produce.
+func seedClosedTrades(t *testing.T, runsDir string, tickers []string) {
+	t.Helper()
+	const perRun = 4
+	for i := 0; i < len(tickers); i += perRun {
+		end := min(i+perRun, len(tickers))
+		batch := tickers[i:end]
+
+		dir := filepath.Join(runsDir, fmt.Sprintf("2026-01-%02dT10-00-00", (i/perRun)+1))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var genAt string
+		ideas := &model.IdeasResult{Mode: "independent", Notes: "seeded"}
+		for rank, tk := range batch {
+			date, px := syntheticBar(t, tk, 40)
+			if genAt == "" {
+				genAt = date + "T21:00:00Z"
+			}
+			ideas.Ideas = append(ideas.Ideas, model.TradeIdea{
+				Rank: rank + 1, Ticker: tk, Index: "sp500", Direction: model.DirectionBuy,
+				Confidence: 60, BaseConfidence: 58, Consensus: 0.7,
+				Why:               "Seeded past idea for the post-mortem's own record.",
+				Entry:             px * 1.02,
+				Stop:              px * 0.85,
+				Target:            px * 1.30,
+				RiskReward:        2.0,
+				TimeframeDays:     15,
+				PriceAtGeneration: px,
+				DomainScores:      map[string]int{"quant": 6, "news": 4, "sentiment": -2},
+			})
+		}
+		ideas.GeneratedAt = genAt
+		data, err := json.MarshalIndent(ideas, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ideas.json"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// newestRunDir is runDir's equivalent for a RunsDir that was seeded with past
+// runs: the fresh run is the last one by name, because names are timestamps.
+func newestRunDir(t *testing.T, runsDir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	if len(dirs) == 0 {
+		t.Fatal("no run dirs")
+	}
+	sort.Strings(dirs)
+	return filepath.Join(runsDir, dirs[len(dirs)-1])
+}
+
+func TestPostMortemLessonsAreEnforcedAndReachTheChief(t *testing.T) {
+	// The post-mortem is the one agent whose subject is the pipeline itself,
+	// which makes it the easiest output in the system to invent: nothing in a
+	// sentence about "wide-stop shorts" is checkable by reading it. So the
+	// hermetic fake deliberately returns one lesson that counts, one that
+	// overstates its own sample, and one about a cell nobody counted — and this
+	// test is the record that the first survives, the second is corrected, and
+	// the third does not reach the Chief.
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.DataDir = t.TempDir() // private: this test writes its own postmortem.json
+	cfg.Indices = []string{"sp500"}
+
+	seedClosedTrades(t, cfg.RunsDir, []string{
+		"NVDA", "JPM", "NKE", "XOM", "AAPL", "MSFT", "AMD", "TSLA", "COST", "MRK", "AMGN", "KO",
+	})
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+
+	dir := newestRunDir(t, cfg.RunsDir)
+	report := readFile(t, filepath.Join(dir, "post-mortem.md"))
+	if !strings.Contains(report, "Fake post-mortem") {
+		t.Fatalf("the post-mortem stage did not run:\n%s\n%s", report, strings.Join(logs, "\n"))
+	}
+
+	pm := scoreboard.LoadPostMortem(cfg.DataDir)
+	if pm == nil {
+		t.Fatal("no post-mortem stored")
+	}
+	if pm.NClosed < scoreboard.MinClosedForPostMortem {
+		t.Fatalf("post-mortem ran on %d closed trades, below the %d threshold",
+			pm.NClosed, scoreboard.MinClosedForPostMortem)
+	}
+
+	// The fabricated cell is gone, and its deletion is on the record rather
+	// than silent.
+	for _, l := range pm.Lessons {
+		if strings.Contains(l.Cell, "on-a-tuesday") {
+			t.Errorf("a lesson naming an uncounted cell survived: %+v", l)
+		}
+	}
+	if !anyContains(pm.Rejected, "on-a-tuesday") {
+		t.Errorf("the uncounted cell was dropped without saying so: %v", pm.Rejected)
+	}
+	if !anyLogContains(logs, "post-mortem: dropped") {
+		t.Errorf("nothing in the run log reports the deletion:\n%s", strings.Join(logs, "\n"))
+	}
+
+	// The lesson that names a real cell survives, and carries the table's own
+	// count rather than the one it claimed.
+	if len(pm.Lessons) == 0 {
+		t.Fatal("every lesson was rejected — the fake's counted cell should have survived")
+	}
+	counted := pm.Lessons[0]
+	if counted.N != 12 {
+		t.Errorf("kept lesson reports n=%d, want the table's 12", counted.N)
+	}
+	if !anyContains(pm.Rejected, "claimed n=62") {
+		t.Errorf("the overstated sample was corrected without saying so: %v", pm.Rejected)
+	}
+
+	// Weight suggestions are advisory: a real domain survives to the run log, a
+	// made-up one does not survive at all.
+	for _, w := range pm.WeightSuggestions {
+		if w.Domain == "astrology" {
+			t.Errorf("a weight suggestion for a domain that does not exist survived: %+v", w)
+		}
+	}
+	if !anyLogContains(logs, "post-mortem suggests weighting sentiment down") {
+		t.Errorf("the advisory weight suggestion never reached the run log:\n%s", strings.Join(logs, "\n"))
+	}
+
+	// And the surviving lessons are in front of the Chief, which is the only
+	// reason to compute them.
+	chief := readFile(t, filepath.Join(dir, "chief-analyst.md"))
+	if !strings.Contains(chief, "saw-post-mortem") {
+		t.Errorf("the lessons never reached the chief prompt:\n%s", chief)
+	}
+
+	// The deletion is visible in the run's own metadata, next to every other
+	// domain's corrected scores.
+	meta := readMeta(t, dir)
+	var pmStatus *model.DomainStatus
+	for i := range meta.Domains {
+		if meta.Domains[i].Domain == "post-mortem" {
+			pmStatus = &meta.Domains[i]
+		}
+	}
+	if pmStatus == nil {
+		t.Fatal("metadata.json has no post-mortem row")
+	}
+	if !anyContains(pmStatus.CorrectedScores, "on-a-tuesday") {
+		t.Errorf("metadata.json does not record the deleted lesson: %v", pmStatus.CorrectedScores)
+	}
+}
+
+func anyContains(ss []string, substr string) bool {
+	for _, s := range ss {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// A spent AlphaVantage free tier is one fact about one key. It reached the
+// 2026-09-01 run as an identical data_error per ticker, so a key with nothing
+// left read like a handful of unlucky names. It must be one run-level warning,
+// and the count must be visible in the log before the run spends five minutes
+// rediscovering it.
+func TestSpentAlphaVantageBudgetIsOneWarningNotAScatterOfTickerErrors(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeSingle)
+	cfg.Ticker = "AAPL"
+	// Its own data dir: the limiter state below is a fixture, and sharedDataDir
+	// is read by every other test in this binary.
+	cfg.DataDir = t.TempDir()
+	cfg.Providers.AlphaVantageKey = "test-key-not-a-real-credential"
+
+	// A key whose whole day is already gone, exactly as .data/limiter-alphavantage.json
+	// stood at 24 of 25 on the morning of the incident.
+	state, err := json.Marshal(map[string]any{"daily_count": 25, "last_reset": time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.DataDir, "limiter-alphavantage.json"), state, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+
+	// 1. The count is announced at run start, before anything is spent on it.
+	if !anyLogContains(logs, "AlphaVantage daily budget") {
+		t.Errorf("the run never logged the remaining AlphaVantage budget:\n%s", strings.Join(logs, "\n"))
+	}
+
+	// 2. Exactly one run-level warning names the exhaustion.
+	meta := readMeta(t, runDir(t, cfg.RunsDir))
+	spent := 0
+	for _, w := range meta.Warnings {
+		if strings.Contains(w, "AlphaVantage") && strings.Contains(w, "budget") {
+			spent++
+		}
+	}
+	if spent != 1 {
+		t.Errorf("got %d AlphaVantage budget warnings, want exactly 1: %v", spent, meta.Warnings)
+	}
+
+	// 3. The per-ticker detail is not thrown away — it stays in data_errors.
+	if !anyContains(meta.DataErrors, "exhausted") {
+		t.Errorf("the per-ticker detail was removed from data_errors: %v", meta.DataErrors)
+	}
+}
+
+// No key configured is not a failure and must not warn: AlphaVantage is
+// optional enrichment on top of the keyless sources.
+func TestNoAlphaVantageKeyNeitherLogsNorWarnsAboutABudget(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeSingle)
+	cfg.Ticker = "AAPL"
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	if anyLogContains(logs, "AlphaVantage daily budget") {
+		t.Error("a keyless run reported a budget it never had")
+	}
+	meta := readMeta(t, runDir(t, cfg.RunsDir))
+	if anyContains(meta.Warnings, "AlphaVantage") {
+		t.Errorf("a keyless run warned about AlphaVantage: %v", meta.Warnings)
+	}
+}
+
+// fakeAlpaca stands up a bars endpoint and counts requests. Returns the
+// counter and the largest symbol count seen in one call, which is what
+// distinguishes a batched pre-screen from the per-ticker loop it replaces.
+func fakeAlpaca(t *testing.T) (hits *atomic.Int64, widest *atomic.Int64) {
+	t.Helper()
+	hits, widest = &atomic.Int64{}, &atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		syms := strings.Split(r.URL.Query().Get("symbols"), ",")
+		if n := int64(len(syms)); n > widest.Load() {
+			widest.Store(n)
+		}
+		var b strings.Builder
+		b.WriteString(`{"bars":{`)
+		for i, sym := range syms {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			// Reuse the synthetic chart's shape: enough bars for quant to work.
+			fmt.Fprintf(&b, `%q:[`, sym)
+			for j := 0; j < 400; j++ {
+				if j > 0 {
+					b.WriteString(",")
+				}
+				d := time.Now().AddDate(0, 0, -(400 - j)).Format("2006-01-02")
+				px := 100.0 + float64(j)/10
+				fmt.Fprintf(&b, `{"t":"%sT05:00:00Z","o":%.2f,"h":%.2f,"l":%.2f,"c":%.2f,"v":50000000,"n":10,"vw":%.2f}`,
+					d, px, px*1.01, px*0.99, px, px)
+			}
+			b.WriteString("]")
+		}
+		b.WriteString(`},"next_page_token":null}`)
+		fmt.Fprint(w, b.String())
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_ALPACA_BASE", srv.URL)
+	return hits, widest
+}
+
+// Yahoo's chart endpoint is one request per ticker, so a universe-wide
+// pre-screen fires one per constituent — ~272 a run, which is the shape that
+// got this host 429'd in the first place. Alpaca serves many symbols per
+// request, and the pre-screen must actually use that: one batched warm-up,
+// then the existing per-ticker loop served entirely from cache.
+func TestPrescreenBatchesUSNamesThroughAlpaca(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	hits, widest := fakeAlpaca(t)
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.DataDir = t.TempDir() // own cache: the batch must be observable
+	cfg.Indices = []string{"nq100"}
+	cfg.Providers.AlpacaKeyID = "test-id"
+	cfg.Providers.AlpacaSecret = "test-secret"
+
+	_, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+
+	if widest.Load() < 10 {
+		t.Errorf("widest Alpaca call carried %d symbols — the pre-screen is still going one at a time", widest.Load())
+	}
+	// nq100 is 57 names. Anything near that many requests means no batching.
+	if hits.Load() > 20 {
+		t.Errorf("made %d Alpaca requests for a 57-name index; batching is not working", hits.Load())
+	}
+	if !anyLogContains(logs, "pre-screen") {
+		t.Errorf("no pre-screen log line:\n%s", strings.Join(logs, "\n"))
+	}
+}
+
+// The regression that matters most: a run with no Alpaca key must behave
+// exactly as it did before Alpaca existed.
+func TestNoAlpacaKeyLeavesThePricePathUnchanged(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	hits, _ := fakeAlpaca(t)
+	cfg := testConfig(t, model.ModeSingle)
+	cfg.Ticker = "AAPL"
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	if hits.Load() != 0 {
+		t.Errorf("an unconfigured Alpaca was called %d time(s)", hits.Load())
 	}
 }

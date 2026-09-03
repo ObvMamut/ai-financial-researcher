@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"math"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
 )
 
 // gateMetrics is a name whose 10-day 1σ move is exactly $10 on a $100 stock:
@@ -168,30 +170,92 @@ func TestRiskGateRejectsALosingGeometry(t *testing.T) {
 }
 
 // The gate rejected only a negative expectancy, so it asked whether a geometry
-// was provably suicidal rather than whether it was worth doing. The 2026-09-01
-// run shipped ideas at +3.0 and +5.7 bps against a 30 bps cost assumption.
+// was provably suicidal rather than whether it was worth doing.
 func TestRiskGateEnforcesAnExpectancyFloor(t *testing.T) {
 	res := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 85, 130)}}
-	cfg := model.RiskConfig{MinExpectancyBps: 100}
+	cfg := model.RiskConfig{MinExpectancyR: 2.0}
 	fs := applyRiskGate(res, gateVerified(t, "AAA"), cfg)
 
-	if !hasHard(fs, "AAA", "under the 100 bps floor") {
-		t.Errorf("a positive expectancy below the floor was accepted: %+.1f bps, findings %v",
-			res.Ideas[0].ExpectancyBps, findingsFor(fs, "AAA"))
+	if !hasHard(fs, "AAA", "under the 2.000R floor") {
+		t.Errorf("a positive expectancy below the floor was accepted: %+.3fR, findings %v",
+			res.Ideas[0].ExpectancyR, findingsFor(fs, "AAA"))
 	}
-	if got := res.Ideas[0].ExpectancyBps; got <= 0 {
-		t.Fatalf("fixture expectancy = %+.1f bps; this test needs a *positive* one under the floor", got)
+	if got := res.Ideas[0].ExpectancyR; got <= 0 {
+		t.Fatalf("fixture expectancy = %+.3fR; this test needs a *positive* one under the floor", got)
 	}
 	// The wording has to distinguish the two: "loses money" is false about a
-	// geometry earning +33 bps, it is merely not earning enough.
+	// geometry that earns something, it is merely not earning enough.
 	if !hasHard(fs, "AAA", "indistinguishable from zero") {
 		t.Errorf("a positive-but-thin expectancy was reported as a loss: %v", findingsFor(fs, "AAA"))
 	}
+	// The re-prompt has to name a lever that works. Telling a model to raise
+	// reward:risk lowers this number, because a tighter stop is touched more
+	// often — that was the advice the gate gave for three ideas it dropped.
+	if !hasHard(fs, "AAA", "The lever is the holding period") {
+		t.Errorf("the finding does not name a lever that moves it: %v", findingsFor(fs, "AAA"))
+	}
 
-	// The same geometry clears a floor it actually beats.
+	// The same geometry clears the default floor it actually beats.
 	clear := &model.IdeasResult{Ideas: []model.TradeIdea{gateIdeaAt("AAA", 85, 130)}}
 	if fs := applyRiskGate(clear, gateVerified(t, "AAA"), model.RiskConfig{}); hasHard(fs, "AAA", "expectancy") {
 		t.Errorf("a sound geometry was refused by the default floor: %v", findingsFor(fs, "AAA"))
+	}
+}
+
+// The floor this replaced was denominated in basis points of entry, which is
+// proportional to the stop distance — so it graded volatility, not
+// construction. On 2026-09-01 five ideas with near-identical normalised
+// geometry were split by sigma_daily alone and the three calmest were dropped.
+func TestExpectancyFloorDoesNotGradeVolatility(t *testing.T) {
+	cfg := riskDefaults(model.RiskConfig{})
+	// Same geometry in sigma units, two names four times apart in volatility.
+	// stop 1.35 sigma over 15 days, target 2.57 sigma, R:R 1.90.
+	const days = 15
+	mk := func(sigma float64) (*model.TradeIdea, quant.Metrics) {
+		unit := sigma * math.Sqrt(days) * 100
+		return &model.TradeIdea{
+				Ticker: "AAA", Direction: model.DirectionBuy,
+				Entry: 100, Stop: 100 - 1.35*unit, Target: 100 + 2.57*unit, TimeframeDays: days,
+			}, quant.Metrics{
+				Symbol: "AAA", LastClose: 100, SigmaDaily: sigma,
+				AvgDollarVol20: 5e8, AvgDollarVol20USD: 5e8, Currency: "USD", FXToUSD: 1,
+			}
+	}
+	calmIdea, calmM := mk(0.0109) // BBVA.MC on that run: dropped at −3.1 bps
+	loudIdea, loudM := mk(0.0249) // STLAM.MI: shipped at +28.7 bps
+
+	calmBps, calmR := simulateExpectancy(calmIdea, calmM, cfg, effectiveCostBps(cfg, calmM), days)
+	loudBps, loudR := simulateExpectancy(loudIdea, loudM, cfg, effectiveCostBps(cfg, loudM), days)
+
+	if !(loudBps > 3*calmBps) {
+		t.Fatalf("fixture does not reproduce the bias: %.1f vs %.1f bps", loudBps, calmBps)
+	}
+	// In R the same construction scores the same, within simulation noise.
+	if spread := math.Abs(loudR - calmR); spread > 0.05 {
+		t.Errorf("identical geometry scored %.3fR and %.3fR — the floor still grades volatility", calmR, loudR)
+	}
+	if calmR < cfg.MinExpectancyR {
+		t.Errorf("the calm name is still refused: %+.3fR against a %.3fR floor", calmR, cfg.MinExpectancyR)
+	}
+}
+
+// A liquid name does not pay a $20M-a-day name's costs, and because expectancy
+// is a net-of-cost number the flat assumption taxed the largest names hardest
+// relative to their smaller stop distances.
+func TestCostScalesWithLiquidity(t *testing.T) {
+	cfg := riskDefaults(model.RiskConfig{})
+	thin := effectiveCostBps(cfg, quant.Metrics{AvgDollarVol20USD: 2.5e7})
+	mid := effectiveCostBps(cfg, quant.Metrics{AvgDollarVol20USD: 3e8})
+	mega := effectiveCostBps(cfg, quant.Metrics{AvgDollarVol20USD: 5e9})
+	if !(thin > mid && mid > mega) {
+		t.Errorf("cost does not fall with liquidity: %.1f / %.1f / %.1f bps", thin, mid, mega)
+	}
+	if thin != cfg.CostBps {
+		t.Errorf("a name at the liquidity floor should pay the configured cost: %.1f, want %.1f", thin, cfg.CostBps)
+	}
+	// An unknown ADV is assumed to be the expensive kind, not the cheap one.
+	if unknown := effectiveCostBps(cfg, quant.Metrics{}); unknown != cfg.CostBps {
+		t.Errorf("an unknown ADV paid %.1f bps, want the full %.1f", unknown, cfg.CostBps)
 	}
 }
 
@@ -751,50 +815,45 @@ func shiftedReturns(rets []float64) []float64 {
 	return out
 }
 
-func TestRealizedEdgeReplacesThePriorOnceThereIsARecord(t *testing.T) {
-	// The 0.02 prior is an assumption. Once the pipeline has enough closed
-	// trades, the drift the simulation assumes should be the drift the pipeline
-	// has actually delivered.
-	idea := &model.TradeIdea{
-		Ticker: "AAA", Direction: model.DirectionBuy,
-		Entry: 100, Stop: 96, Target: 110, TimeframeDays: 10,
-	}
-	m := quant.Metrics{Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02}
+func TestRealizedRecordMovesExpectancyTowardWhatWasMeasured(t *testing.T) {
+	// The 0.02σ prior is an assumption. Once the pipeline has enough closed
+	// trades the expectancy it reports should move toward what those trades
+	// actually returned, weighted by how many of them there are.
+	sim := 0.10
 
-	// risk is 4% of entry; over 10 days at σ=2%/day the simulation accumulates
-	// edge·σ·days, so an average of +0.2R per trade implies edge = 0.2·0.04 / 0.2.
-	got, ok := realizedEdgeSigma(idea, m, 0.2, 10)
-	if !ok {
-		t.Fatal("no edge computed from a usable geometry")
+	few := blendRealized(sim, 0.50, scoreboard.MinClosedForEdge)
+	if want := 0.30; math.Abs(few-want) > 1e-9 {
+		t.Errorf("at n = the prior weight the record and the simulation should count equally: got %.4f, want %.4f", few, want)
 	}
-	if want := 0.04; math.Abs(got-want) > 1e-9 {
-		t.Errorf("edge = %.4f, want %.4f", got, want)
+	many := blendRealized(sim, 0.50, 270)
+	if !(many > few) {
+		t.Errorf("more closed trades did not give the record more weight: %.4f vs %.4f", many, few)
 	}
-	// And it is a measurement, not the prior: a different record moves it.
-	if same, _ := realizedEdgeSigma(idea, m, 0.1, 10); same == got {
-		t.Error("the edge does not depend on the measured record")
+	if none := blendRealized(sim, 0.50, 0); none != sim {
+		t.Errorf("with no record the simulation should stand alone: got %.4f, want %.4f", none, sim)
 	}
 }
 
-func TestRealizedEdgeIsClampedInBothDirections(t *testing.T) {
-	// A finite sample can produce a number that would make the expectancy check
-	// vacuous (measured: at 0.05 every permitted geometry already passes) or
-	// reject everything outright. Neither belongs in a gate.
-	idea := &model.TradeIdea{
-		Ticker: "AAA", Direction: model.DirectionBuy,
-		Entry: 100, Stop: 96, Target: 110, TimeframeDays: 10,
-	}
-	m := quant.Metrics{Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02}
-
-	if got, _ := realizedEdgeSigma(idea, m, 5.0, 10); got != edgeSigmaCap {
-		t.Errorf("a +5R record produced edge %.4f, want the cap %.4f", got, edgeSigmaCap)
-	}
-	if got, _ := realizedEdgeSigma(idea, m, -5.0, 10); got != -edgeSigmaCap {
-		t.Errorf("a −5R record produced edge %.4f, want %.4f", got, -edgeSigmaCap)
+func TestRealizedRecordCannotSwitchTheCheckOffOrOn(t *testing.T) {
+	// The record used to arrive as a drift — avgR·riskFrac/(σ·days), clamped at
+	// 0.05 — and for any realistic avgR that expression lands on the clamp. The
+	// 30th closed trade would have flipped the gate from rejecting most of a
+	// book to never firing, with no regime in between. A blend has no cliff: an
+	// extraordinary record still leaves the simulation a share of the answer.
+	sim := 0.10
+	for _, n := range []int{scoreboard.MinClosedForEdge, 60, 120} {
+		got := blendRealized(sim, 5.0, n)
+		ceiling := 5.0
+		if got >= ceiling {
+			t.Errorf("n=%d: a +5R record produced %.3fR, at or above the record itself", n, got)
+		}
+		if got <= sim {
+			t.Errorf("n=%d: a +5R record did not raise expectancy above the simulation's %.3fR", n, sim)
+		}
 	}
 }
 
-func TestRealizedNegativeEdgeMakesTheGateStopShipping(t *testing.T) {
+func TestRealizedNegativeRecordMakesTheGateStopShipping(t *testing.T) {
 	// If the measured record is a losing one, the honest response is to reject
 	// geometries that only worked under an assumed edge — not to keep assuming.
 	idea := &model.TradeIdea{
@@ -804,17 +863,14 @@ func TestRealizedNegativeEdgeMakesTheGateStopShipping(t *testing.T) {
 	m := quant.Metrics{Symbol: "AAA", LastClose: 100, SigmaDaily: 0.02}
 	cfg := riskDefaults(model.RiskConfig{})
 
-	optimistic := simulateExpectancy(idea, m, cfg, 10)
-
-	losing := cfg
-	losing.EdgeSigmaDaily, _ = realizedEdgeSigma(idea, m, -0.4, 10)
-	pessimistic := simulateExpectancy(idea, m, losing, 10)
+	_, optimistic := simulateExpectancy(idea, m, cfg, cfg.CostBps, 10)
+	pessimistic := blendRealized(optimistic, -0.4, 60)
 
 	if pessimistic >= optimistic {
-		t.Errorf("a losing record did not lower expectancy: %.1f bps vs %.1f bps", pessimistic, optimistic)
+		t.Errorf("a losing record did not lower expectancy: %.3fR vs %.3fR", pessimistic, optimistic)
 	}
 	if pessimistic >= 0 {
-		t.Errorf("expectancy is %+.1f bps under a −0.4R record — the gate would keep shipping", pessimistic)
+		t.Errorf("expectancy is %+.3fR under a −0.4R record — the gate would keep shipping", pessimistic)
 	}
 }
 
@@ -837,12 +893,13 @@ func TestGateIdeaUsesTheRealizedEdgeWhenOneIsAvailable(t *testing.T) {
 
 	losing := -0.4
 	v.RealizedR = &losing
+	v.RealizedN = 60
 	measured := mk()
 	findings := gateIdea(measured, v, cfg)
 
-	if measured.ExpectancyBps >= prior.ExpectancyBps {
-		t.Fatalf("realized edge did not reach the simulation: %.1f vs %.1f bps",
-			measured.ExpectancyBps, prior.ExpectancyBps)
+	if measured.ExpectancyR >= prior.ExpectancyR {
+		t.Fatalf("realized record did not reach the expectancy check: %.3f vs %.3fR",
+			measured.ExpectancyR, prior.ExpectancyR)
 	}
 	if !hasHard(findings, "AAA", "expectancy") {
 		t.Errorf("a negative-expectancy idea was not flagged: %+v", findings)
@@ -898,5 +955,325 @@ func TestGateStillChecksDatesWhenVolatilityIsUnavailable(t *testing.T) {
 	}
 	if !sawNote {
 		t.Error("the unchecked geometry was not recorded at all")
+	}
+}
+
+// The book the gate refused. On 2026-09-01 the Chief returned these five ideas
+// and the expectancy check dropped three of them, leaving a run of two. Their
+// normalised geometry is near-identical — stop ~1.3σ, target ~2.6σ, R:R ~1.9,
+// breakeven ~34.5% — so whatever separated them was not construction.
+//
+// Kept as a regression fixture with the run's own verified σ and ADV: if a
+// future change to the expectancy check refuses any of these again, it should
+// have to say so here first.
+func TestTheBookTheExpectancyGateRefused(t *testing.T) {
+	cases := []struct {
+		ticker    string
+		dir       model.Direction
+		entry     float64
+		stop      float64
+		target    float64
+		days      int
+		sigma     float64
+		advUSD    float64
+		lastClose float64
+	}{
+		{"BBVA.MC", model.DirectionBuy, 24.7, 23.25, 27.45, 15, 0.01091567071394929, 164076757.53954, 24.860000610351562},
+		{"STLAM.MI", model.DirectionSell, 4.7, 5.29, 3.59, 12, 0.02486345779433801, 218571024.20592287, 4.641499996185303},
+		{"2330.TW", model.DirectionBuy, 2400.0, 2225.0, 2735.0, 15, 0.01380239988283415, 1447837949.3950777, 2405},
+		{"AMGN", model.DirectionBuy, 434.0, 397.0, 505.0, 15, 0.0177746176729581, 1017881450.1277466, 436.25},
+		{"O39.SI", model.DirectionBuy, 31.4, 29.4, 35.2, 15, 0.012287565120319272, 164401640.84516317, 31.520000457763672},
+	}
+	cfg := riskDefaults(model.RiskConfig{})
+	var scores []float64
+	for _, c := range cases {
+		idea := &model.TradeIdea{
+			Ticker: c.ticker, Direction: c.dir,
+			Entry: c.entry, Stop: c.stop, Target: c.target, TimeframeDays: c.days,
+		}
+		m := quant.Metrics{
+			Symbol: c.ticker, LastClose: c.lastClose, SigmaDaily: c.sigma,
+			AvgDollarVol20: c.advUSD, AvgDollarVol20USD: c.advUSD, Currency: "USD", FXToUSD: 1,
+		}
+		evBps, evR := simulateExpectancy(idea, m, cfg, effectiveCostBps(cfg, m), c.days)
+		t.Logf("%-9s %+.4fR (%+.1f bps, cost %.1f bps)", c.ticker, evR, evBps, effectiveCostBps(cfg, m))
+		if evR < cfg.MinExpectancyR {
+			t.Errorf("%s: %+.3fR is under the %.3fR floor — the gate would drop it again",
+				c.ticker, evR, cfg.MinExpectancyR)
+		}
+		scores = append(scores, evR)
+	}
+	// The residual spread is real rather than an artefact: a fixed round-trip
+	// cost is a larger share of a 5.9% stop than of a 12.6% one, so the calm
+	// names genuinely keep less of their edge. What is gone is the sign change —
+	// in bps these ran +28.7 down to −3.1, a range wider than the floor itself
+	// and ordered exactly by σ_daily.
+	lo, hi := scores[0], scores[0]
+	for _, s := range scores {
+		lo, hi = math.Min(lo, s), math.Max(hi, s)
+	}
+	if hi-lo > 0.05 {
+		t.Errorf("five near-identical geometries still spread %.3fR (%.3f…%.3f)", hi-lo, lo, hi)
+	}
+	if lo <= 0 {
+		t.Errorf("the weakest of the five is %+.3fR — still not paying for its own costs", lo)
+	}
+}
+
+// --- Phase 1.5: riskDefaults is the second zero-sentinel layer ---
+//
+// Fixing only the loader would have accomplished nothing: riskDefaults replaces
+// anything <= 0 with its default, so an explicit `cost_bps = 0` that survived
+// parsing was overwritten one call later. Presence has to travel the whole way.
+
+func TestRiskDefaultsKeepsAnExplicitlyZeroedFloor(t *testing.T) {
+	cfg := riskDefaults(model.RiskConfig{
+		Explicit: map[string]bool{"cost_bps": true, "rr_min": true, "adv_min_usd": true, "stop_sigma_min": true},
+	})
+	if cfg.CostBps != 0 {
+		t.Errorf("CostBps = %v, want 0 — the operator asked for a frictionless book", cfg.CostBps)
+	}
+	if cfg.RRMin != 0 {
+		t.Errorf("RRMin = %v, want 0 — the reward:risk floor was explicitly disabled", cfg.RRMin)
+	}
+	if cfg.ADVMinUSD != 0 {
+		t.Errorf("ADVMinUSD = %v, want 0 — the liquidity floor was explicitly disabled", cfg.ADVMinUSD)
+	}
+	if cfg.StopSigmaMin != 0 {
+		t.Errorf("StopSigmaMin = %v, want 0", cfg.StopSigmaMin)
+	}
+}
+
+func TestRiskDefaultsStillFillsAnAbsentPolicy(t *testing.T) {
+	// The whole point of riskDefaults: a zero-valued struct — a test, or a run
+	// with no [risk] block — must never leave the gate silently disabled.
+	cfg := riskDefaults(model.RiskConfig{})
+	for _, c := range []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"AccountEquity", cfg.AccountEquity, 100000},
+		{"RiskPerTradePct", cfg.RiskPerTradePct, 0.5},
+		{"CostBps", cfg.CostBps, 30},
+		{"RRMin", cfg.RRMin, 1.8},
+		{"StopSigmaMin", cfg.StopSigmaMin, 1.0},
+		{"StopSigmaMax", cfg.StopSigmaMax, 2.0},
+		{"TargetSigmaMax", cfg.TargetSigmaMax, 3.5},
+		{"ADVMinUSD", cfg.ADVMinUSD, defaultADVMinUSD},
+		{"MaxPairCorr", cfg.MaxPairCorr, 0.75},
+		{"MaxPortfolioBeta", cfg.MaxPortfolioBeta, 1.5},
+		{"EdgeSigmaDaily", cfg.EdgeSigmaDaily, defaultEdgeSigmaDaily},
+		{"MinExpectancyR", cfg.MinExpectancyR, defaultMinExpectancyR},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want default %v", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestRiskDefaultsKeepsAMeasuredNegativeEdge(t *testing.T) {
+	// A losing system has a negative edge. The loader already accepted one;
+	// riskDefaults then replaced it with the optimistic default, so the one
+	// regime the prior exists to describe was unreachable.
+	cfg := riskDefaults(model.RiskConfig{
+		EdgeSigmaDaily: -0.02,
+		Explicit:       map[string]bool{"edge_sigma_daily": true},
+	})
+	if cfg.EdgeSigmaDaily != -0.02 {
+		t.Errorf("EdgeSigmaDaily = %v, want -0.02 kept", cfg.EdgeSigmaDaily)
+	}
+}
+
+func TestAnExplicitlyZeroedCostReachesTheExpectancySimulation(t *testing.T) {
+	// The end-to-end point of the presence rule: cost_bps = 0 has to arrive at
+	// the number it is charged against, not just survive parsing.
+	cfg := riskDefaults(model.RiskConfig{Explicit: map[string]bool{"cost_bps": true}})
+	m := quant.Metrics{AvgDollarVol20USD: 5e9}
+	if got := effectiveCostBps(cfg, m); got != 0 {
+		t.Errorf("effectiveCostBps = %v, want 0 for an explicitly frictionless policy", got)
+	}
+}
+
+// An inverted σ band is the same footgun class as the zero ceiling validateRisk
+// already refuses: it loads clean and then rejects every idea the Chief writes,
+// reported as an ordinary run of risk-gate drops. The config loader cannot catch
+// it, because it runs before riskDefaults fills the side the operator left
+// unset — so the check lives where both effective values exist.
+func TestInvertedSigmaBandsAreRefusedBeforeTheRunStarts(t *testing.T) {
+	explicit := func(keys ...string) map[string]bool {
+		m := map[string]bool{}
+		for _, k := range keys {
+			m[k] = true
+		}
+		return m
+	}
+
+	cases := []struct {
+		name string
+		risk model.RiskConfig
+		want string // substring the message must carry; "" = must be accepted
+	}{
+		{
+			name: "both sides written and inverted",
+			risk: model.RiskConfig{
+				StopSigmaMin: 2.5, StopSigmaMax: 2.0, TargetSigmaMax: 3.5,
+				Explicit: explicit("stop_sigma_min", "stop_sigma_max", "target_sigma_max"),
+			},
+			want: "stop_sigma_min",
+		},
+		{
+			// The realistic one: only the floor is written, and it crosses a
+			// default ceiling the operator never saw.
+			name: "one side written, crossing the default",
+			risk: model.RiskConfig{
+				StopSigmaMin: 2.5,
+				Explicit:     explicit("stop_sigma_min"),
+			},
+			want: "default",
+		},
+		{
+			name: "target ceiling inside the stop floor",
+			risk: model.RiskConfig{
+				StopSigmaMin: 2.0, StopSigmaMax: 3.0, TargetSigmaMax: 1.5,
+				Explicit: explicit("stop_sigma_min", "stop_sigma_max", "target_sigma_max"),
+			},
+			want: "target_sigma_max",
+		},
+		{
+			name: "an ordinary policy is accepted",
+			risk: model.RiskConfig{
+				StopSigmaMin: 1.0, StopSigmaMax: 2.0, TargetSigmaMax: 3.5,
+				Explicit: explicit("stop_sigma_min", "stop_sigma_max", "target_sigma_max"),
+			},
+		},
+		{
+			name: "a config with no [risk] block at all is accepted",
+			risk: model.RiskConfig{},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateRiskPolicy(riskDefaults(tc.risk))
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("validateRiskPolicy rejected a workable policy: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("an unsatisfiable σ band loaded clean; every idea would have been dropped as an ordinary risk-gate finding")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("message does not name %q, so the operator cannot tell which key to fix: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// And it has to actually fail the run, before Stage 0.5 spends anything.
+func TestInvertedSigmaBandFailsTheRunNotTheBook(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeSingle)
+	cfg.Ticker = "AAPL"
+	cfg.Risk = model.RiskConfig{
+		StopSigmaMin: 2.5,
+		StopSigmaMax: 2.0,
+		Explicit:     map[string]bool{"stop_sigma_min": true, "stop_sigma_max": true},
+	}
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr == nil {
+		t.Fatalf("the run completed with an unsatisfiable stop band; ideas: %+v", complete)
+	}
+	if !strings.Contains(runErr.Message, "stop_sigma") {
+		t.Errorf("the run failed without naming the inverted keys: %s", runErr.Message)
+	}
+}
+
+func TestBookBetaCeilingCannotBeDilutedByPadding(t *testing.T) {
+	// 2026-09-03: the first pass failed the beta check at 1.62 and the Chief's
+	// corrective was to drop ORCL (base 38, five domains) and add 035720.KS
+	// (base 27, quant only), because "the slot had to be filled by something
+	// low-beta rather than left empty." Under a per-idea average that worked.
+	// It must not: a risk limit an extra position can satisfy is not a limit.
+	qp := quant.NewPack()
+	qp.ByTicker["MU"] = quant.Metrics{Symbol: "MU", Benchmark: "^GSPC", Beta: 2.87}
+	qp.ByTicker["INTC"] = quant.Metrics{Symbol: "INTC", Benchmark: "^GSPC", Beta: 2.41}
+	qp.ByTicker["035720.KS"] = quant.Metrics{Symbol: "035720.KS", Benchmark: "^KS11", Beta: 0.48}
+	v := verified{Universe: testUniverse(t), Quant: qp}
+	cfg := model.RiskConfig{AccountEquity: 100_000, MaxPortfolioBeta: 1.5}
+
+	betaFindings := func(ideas ...model.TradeIdea) []string {
+		var out []string
+		for _, f := range gateBook(&model.IdeasResult{Ideas: ideas}, v, cfg) {
+			if strings.Contains(f.Message, "beta-adjusted") {
+				out = append(out, f.Message)
+			}
+		}
+		return out
+	}
+
+	// Σ|beta × notional| = (2.87 + 2.41) × 25,000 = 132,000 → 1.32× equity on
+	// the gross leg, under the ceiling; both are BUYs, so the net leg is the
+	// same 1.32 and also passes.
+	hot := []model.TradeIdea{
+		{Ticker: "MU", Direction: model.DirectionBuy, Notional: 25_000},
+		{Ticker: "INTC", Direction: model.DirectionBuy, Notional: 25_000},
+	}
+	if got := betaFindings(hot...); len(got) != 0 {
+		t.Fatalf("1.32× the account is inside the 1.5 ceiling: %v", got)
+	}
+
+	// Add a third high-beta name and it breaches at 2.04×.
+	over := append(append([]model.TradeIdea{}, hot...),
+		model.TradeIdea{Ticker: "MU", Direction: model.DirectionBuy, Notional: 25_000})
+	breach := betaFindings(over...)
+	if len(breach) == 0 {
+		t.Fatal("2.04× the account did not breach the 1.5 ceiling")
+	}
+	if !strings.Contains(breach[0], "drop the highest-beta idea") {
+		t.Errorf("the finding names no remedy: %s", breach[0])
+	}
+
+	// The padding move: adding a low-beta name must not clear it. Under the old
+	// average it took the mean from 2.72 to 2.16 and would have kept going.
+	padded := append(append([]model.TradeIdea{}, over...),
+		model.TradeIdea{Ticker: "035720.KS", Direction: model.DirectionBuy, Notional: 25_000})
+	if got := betaFindings(padded...); len(got) < len(breach) {
+		t.Errorf("adding a 0.48-beta idea removed a finding — the ceiling is still dilutable: %v", got)
+	}
+
+	// Dropping exposure is what works.
+	if got := betaFindings(hot[1]); len(got) != 0 {
+		t.Errorf("one 2.41-beta position at 25%% of the account breached: %v", got)
+	}
+}
+
+func TestBookBetaCountsIdeasItCouldNotSize(t *testing.T) {
+	// An idea with no notional has unknown exposure, not zero. Counting it as
+	// zero would let an unsized high-beta name sit in the book invisibly.
+	qp := quant.NewPack()
+	qp.ByTicker["MU"] = quant.Metrics{Symbol: "MU", Benchmark: "^GSPC", Beta: 2.87}
+	qp.ByTicker["INTC"] = quant.Metrics{Symbol: "INTC", Benchmark: "^GSPC", Beta: 2.41}
+	v := verified{Universe: testUniverse(t), Quant: qp}
+	cfg := model.RiskConfig{AccountEquity: 100_000, MaxPortfolioBeta: 1.5}
+
+	res := &model.IdeasResult{Ideas: []model.TradeIdea{
+		{Ticker: "MU", Direction: model.DirectionBuy, Notional: 60_000},
+		{Ticker: "INTC", Direction: model.DirectionBuy}, // sizing produced no whole share
+	}}
+	var found string
+	for _, f := range gateBook(res, v, cfg) {
+		if strings.Contains(f.Message, "beta-adjusted") {
+			found = f.Message
+		}
+	}
+	if found == "" {
+		t.Fatal("1.72× the account did not breach")
+	}
+	if !strings.Contains(found, "could not be sized") {
+		t.Errorf("the finding hides that an idea was left out of the sum: %s", found)
 	}
 }

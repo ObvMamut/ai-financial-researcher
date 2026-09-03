@@ -102,6 +102,36 @@ func (p *DataPack) URLs() []string {
 	return out
 }
 
+// USLineFactLabel marks facts fetched under a foreign listing's US line, so a
+// reader knows which listing the coverage below describes.
+const USLineFactLabel = "US line"
+
+// HasDomainEvidence reports whether a ticker's facts include evidence that
+// belongs to this domain, rather than only the context every domain is handed.
+//
+// The news domain draws on two AlphaVantage calls that fail independently: the
+// bulk earnings calendar, which is one request for the whole run, and the
+// per-ticker headline feed. Coverage flipped true on any fact at all, so when
+// the free key's 25-request daily budget ran out mid-run the calendar fact
+// alone still marked the name covered. On 2026-09-01 2330.TW was recorded as
+// grounded for news carrying exactly one fact — a date — with every headline
+// lost to rate limiting, and it therefore never appeared in coverageGaps. The
+// starvation was invisible to the run's own verdict, which is the one place it
+// had to be visible.
+//
+// A date is a fact about the calendar, not a read on the flow. It still reaches
+// the prompt and still gates the trade; it just cannot claim the domain was
+// covered on its own.
+func HasDomainEvidence(domain string, td TickerData) bool {
+	for _, f := range td.Facts {
+		if domain == "news" && (f.Label == EarningsFactLabel || f.Label == USLineFactLabel) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // IsRegimeDomain reports whether a domain's evidence is market-wide rather than
 // per-ticker. Macro is the only one: the 10-year yield describes every name on
 // the shortlist or none of them, so it is never "missing for AAPL".
@@ -357,7 +387,26 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			if len(data.Facts) > 0 {
 				merged := pack.ByTicker[t]
 				merged.Ticker = t
-				merged.Facts = append(merged.Facts, data.Facts...)
+				// News is the one domain where two providers carry the *same*
+				// evidence rather than different evidence: the same wire story
+				// reaches both feeds for a US name. Printed twice it reads as
+				// two outlets corroborating each other, so an exact repeat of a
+				// headline already merged is dropped. See newsHeadlineKey.
+				seenHeadlines := map[string]bool{}
+				for _, f := range merged.Facts {
+					if k := newsHeadlineKey(f); k != "" {
+						seenHeadlines[k] = true
+					}
+				}
+				for _, f := range data.Facts {
+					if k := newsHeadlineKey(f); k != "" {
+						if seenHeadlines[k] {
+							continue
+						}
+						seenHeadlines[k] = true
+					}
+					merged.Facts = append(merged.Facts, f)
+				}
 				pack.ByTicker[t] = merged
 				pack.Coverage[t] = true
 				recordEventDate(pack, t, data.Facts)
@@ -370,15 +419,55 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			}
 		}
 
-		// The insider and options legs come from different providers, so their
-		// combined verdict can only be formed once both have merged.
-		if td, ok := pack.ByTicker[t]; ok {
-			addPositioningSignal(&td)
-			pack.ByTicker[t] = td
-		}
 	}
 
+	// The combined positioning verdict is formed last, in its own pass over the
+	// whole pack. The insider and options legs come from different providers, so
+	// it needs both merged — and the options leg is judged against the run's own
+	// cross-section of put/call ratios, so it needs every chain fetched. Doing it
+	// inside the per-ticker loop meant the first name was classified against a
+	// cross-section of one.
+	peerMedian := PutCallMedian(pack.ByTicker)
+	for t := range pack.ByTicker {
+		td := pack.ByTicker[t]
+		addPositioningSignal(&td, peerMedian)
+		pack.ByTicker[t] = td
+	}
+
+	flagSharedHeadlineSets(pack)
+
 	return pack
+}
+
+// flagSharedHeadlineSets records the one relevance failure a single ticker
+// cannot see: two different companies handed exactly the same headlines.
+//
+// Per-ticker, a set of stories with a plausible date and a real publisher is
+// indistinguishable from coverage. Across a run it is not — Kakao and a
+// Singapore bank were served the same eight oil and photonics stories on
+// 2026-09-03, which is a search endpoint answering an unresolvable query from a
+// default set. The zero-tagged rule in headlineFacts catches most of these; this
+// catches the ones a feed does tag, and it costs one pass over facts already in
+// memory.
+func flagSharedHeadlineSets(p *DataPack) {
+	if p.Domain != "news" || len(p.ByTicker) < 2 {
+		return
+	}
+	byKey := map[string][]string{}
+	for t, td := range p.ByTicker {
+		if k := headlineSetKey(td.Facts); k != "" {
+			byKey[k] = append(byKey[k], t)
+		}
+	}
+	for _, tickers := range byKey {
+		if len(tickers) < 2 {
+			continue
+		}
+		sort.Strings(tickers)
+		p.Errors = append(p.Errors, fmt.Sprintf(
+			"news: %s were served an identical set of headlines — different companies are not in the news for the same stories word for word, so this is one feed answering every one of them from the same fallback",
+			strings.Join(tickers, ", ")))
+	}
 }
 
 // recordEventDate lifts a verified earnings date out of the facts into the

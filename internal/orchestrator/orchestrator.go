@@ -102,12 +102,11 @@ type Config struct {
 	// MaxPerIndex caps how many of those names one index may contribute before
 	// the merit backfill. Zero means 5.
 	MaxPerIndex int
-	// MaxQuantOnly caps how many shortlisted names no per-ticker provider can
-	// reach. SEC EDGAR and AlphaVantage are US-only, so such a name is graded by
-	// quant alone — 35% of the weight, one domain of five — and on 2026-09-01
+	// MaxThinlyCovered caps how many shortlisted names the run's sources can
+	// ground less than thinCoverage of the domain weight for. On 2026-09-01
 	// seven of twelve shortlisted names were in that position, with three of the
 	// five shipped ideas resting on a single domain. Zero means 4.
-	MaxQuantOnly int
+	MaxThinlyCovered int
 	// Risk is the deterministic risk policy applied after synthesis: stop and
 	// target bands, the reward:risk floor, expectancy, liquidity, book-level
 	// correlation and beta, and position sizing. Zero fields take the defaults
@@ -242,8 +241,8 @@ func (c *Config) applyDefaults() {
 	// A third of a twelve-name shortlist. Enough that a genuinely strong non-US
 	// nomination still reaches the specialists, few enough that the book cannot
 	// be mostly names four of the five domains must abstain on.
-	if c.MaxQuantOnly <= 0 {
-		c.MaxQuantOnly = 4
+	if c.MaxThinlyCovered <= 0 {
+		c.MaxThinlyCovered = 4
 	}
 	c.Risk = riskDefaults(c.Risk)
 	// Ten points is roughly one confidence band in scoring.md's calibration
@@ -381,6 +380,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if err != nil {
 		return err
 	}
+	// And the risk policy, for the same reason again: an unsatisfiable σ band
+	// drops every idea the Chief writes, which is indistinguishable from the
+	// Chief writing nothing sound. Checked here rather than in config.Load
+	// because riskDefaults has filled the unset side by now — see
+	// validateRiskPolicy.
+	if err := validateRiskPolicy(cfg.Risk); err != nil {
+		return err
+	}
 	// Validate the optional Chief Analyst DeepSeek fallback up front too, for
 	// the same reason: a broken [chief_fallback] should surface now, not after
 	// a full 15-minute synthesis attempt has already failed.
@@ -433,13 +440,37 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			log(ch, fmt.Sprintf("Pruned %d cached data file(s) older than %d days", n, cfg.DataCacheDays))
 		}
 	}
+	// Yahoo News comes before AlphaVantage on the news domain deliberately. It is
+	// keyless and global, so it is the source that covers the whole shortlist;
+	// AlphaVantage adds its scored articles and the earnings calendar on top when
+	// its 25-a-day free budget allows. The order is what a reader sees first, and
+	// it should be the evidence that is actually there for every name.
+	avProvider := marketdata.NewAlphaVantageProvider(cfg.Providers.AlphaVantageKey, cfg.DataDir)
 	dataSvc := marketdata.NewService(
 		cache,
 		marketdata.NewEdgarProvider(cfg.Providers.ContactEmail, cache),
-		marketdata.NewAlphaVantageProvider(cfg.Providers.AlphaVantageKey, cfg.DataDir),
+		// Alpaca before Yahoo on the news domain: it is keyed and answering,
+		// where Yahoo's endpoints are currently 429 to this host. Yahoo stays
+		// second because it is the only source that reaches a foreign listing
+		// under its own symbol. Both merge, and pack.go drops an exact repeat
+		// of a headline the other already supplied.
+		marketdata.NewAlpacaNewsProvider(cfg.Providers.AlpacaKeyID, cfg.Providers.AlpacaSecret),
+		marketdata.NewYahooNewsProvider(),
+		avProvider,
 		marketdata.NewYahooOptionsProvider(),
 		marketdata.NewFredProvider(cfg.Providers.FredKey),
 	)
+	// AlphaVantage's free tier is 25 requests a day against the key, not against
+	// the run, so a run can start with the budget already gone. Say so up front:
+	// on 2026-09-01 the counter stood at 24 of 25 and the run discovered it one
+	// ticker at a time, five minutes in, as a scatter of unrelated-looking
+	// failures. A run with no key configured is not degraded and says nothing.
+	avBudget := dailyBudgetOf(avProvider)
+	if avBudget != nil {
+		used, limit := avBudget.DailyBudget()
+		log(ch, fmt.Sprintf("AlphaVantage daily budget: %d of %d requests spent, %d left for this run",
+			used, limit, limit-used))
+	}
 
 	var shortlist []model.Candidate
 	var domainStatuses []model.DomainStatus
@@ -452,11 +483,21 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	var dataErrors []string
 	stage := func(name string, t time.Time) { stageMS[name] = time.Since(t).Milliseconds() }
 
-	yc := marketdata.NewYahooClient(cache)
-	yc.SetPriceTTL(cfg.PriceTTL)
+	// Prices route per symbol: Alpaca for US equities when a key is configured,
+	// Yahoo for foreign listings, index benchmarks and FX. With no Alpaca key
+	// this is Yahoo alone and the run behaves exactly as it did before.
+	yahoo := marketdata.NewYahooClient(cache)
+	yahoo.SetPriceTTL(cfg.PriceTTL)
+	prices := marketdata.NewPrices(cfg.Providers.AlpacaKeyID, cfg.Providers.AlpacaSecret, cache)
+	prices.SetPriceTTL(cfg.PriceTTL)
 	// One FX table for the whole run: every liquidity floor and every position
 	// size is stated in USD, and half this universe does not trade in it.
-	fx := marketdata.NewFXRates(yc)
+	//
+	// FX deliberately holds the *Yahoo* client, not the router. Its symbols are
+	// synthetic pairs like EURUSD=X, which carry no exchange suffix and so read
+	// as US listings — routing them would send a currency pair to an equities
+	// API that has never heard of it.
+	fx := marketdata.NewFXRates(yahoo)
 
 	var indices []string
 	if cfg.Mode == model.ModeIndependent {
@@ -482,7 +523,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		log(ch, fmt.Sprintf("Stage 0.5: pre-screening %d names across %s (cold fetch, cached ~0s)…",
 			total, strings.Join(indices, ", ")))
-		prescreen = runPrescreen(ctx, ch, yc, fx, uni, indices, prescreenParams)
+		prescreen = runPrescreen(ctx, ch, prices, fx, uni, indices, prescreenParams)
 		logPackErrors(ch, "prescreen", prescreen.Errors)
 		dataErrors = append(dataErrors, prefixed("prescreen", prescreen.Errors)...)
 		if err := run.WritePrescreen(prescreen); err != nil {
@@ -570,19 +611,34 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 		shortlist = universe.Dedupe(shortlist)
 		log(ch, fmt.Sprintf("Shortlist after dedup: %d names", len(shortlist)))
+		// Agreement and disagreement between scouts are the two things the merge
+		// used to swallow. Both are worth saying out loud: the run log is where
+		// a reader finds out that two independent tables produced the same name,
+		// or that which direction a name shipped in was decided by collection
+		// order rather than by evidence.
+		for _, c := range shortlist {
+			if len(c.Contested) > 0 {
+				log(ch, fmt.Sprintf("warn: %s was nominated %s here and the opposite way by %s — keeping the first reading and charging its merit for the contradiction",
+					c.Ticker, c.Bias, strings.Join(c.Contested, ", ")))
+			}
+			if c.Nominations > 1 {
+				log(ch, fmt.Sprintf("%s was nominated by %d scouts in the same direction", c.Ticker, c.Nominations))
+			}
+		}
 		before := len(shortlist)
 		// Merit, not round-robin: keep the nominations the pre-screen composite
 		// agrees with, in the direction they were nominated in.
 		shortlist = universe.CapMerit(shortlist, universe.MeritCaps{
-			Max:       cfg.MaxShortlist,
-			PerIndex:  cfg.MaxPerIndex,
-			QuantOnly: cfg.MaxQuantOnly,
-			Score:     func(c model.Candidate) float64 { return meritScore(prescreen, c) },
-			Reachable: func(c model.Candidate) bool { return marketdata.Reachable(c.Ticker) },
+			Max:           cfg.MaxShortlist,
+			PerIndex:      cfg.MaxPerIndex,
+			ThinlyCovered: cfg.MaxThinlyCovered,
+			CoverageFloor: thinCoverage,
+			Score:         func(c model.Candidate) float64 { return meritScore(prescreen, c) },
+			Coverage:      func(c model.Candidate) float64 { return expectedCoverage(cfg.Weights, c.Ticker) },
 		})
 		if len(shortlist) < before {
-			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index, max %d quant-only)",
-				before, len(shortlist), cfg.MaxPerIndex, cfg.MaxQuantOnly))
+			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index, max %d under %.0f%% coverage)",
+				before, len(shortlist), cfg.MaxPerIndex, cfg.MaxThinlyCovered, thinCoverage*100))
 		}
 		for _, c := range shortlist {
 			log(ch, fmt.Sprintf("shortlist: %s (%s, %s) — scout %s, merit %+.2f",
@@ -604,14 +660,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		log(ch, fmt.Sprintf("Single-stock mode: analysing %s", c.Ticker))
 	}
 
-	// SEC and AlphaVantage are both US-only, so the non-US half of a balanced
-	// shortlist can only ever be graded on quant. Say so once, plainly: nothing
-	// in the run said it, and three domains reporting gaps for those names read
-	// as three domains failing.
-	quantOnly := quantOnlyNames(shortlist)
-	if len(quantOnly) > 0 {
-		log(ch, fmt.Sprintf("%d of %d shortlisted names are non-US listings (%s): US filings, news and sentiment do not cover them, so they are graded on quant alone.",
-			len(quantOnly), len(shortlist), strings.Join(quantOnly, ", ")))
+	// SEC filings and listed option chains are US instruments, so the non-US half
+	// of a balanced shortlist reaches fewer domains than the rest of it. Say so
+	// once, plainly: nothing in the run said it, and two domains reporting gaps
+	// for those names read as two domains failing.
+	thinlyCovered := thinlyCoveredNames(shortlist, cfg.Weights, thinCoverage)
+	if len(thinlyCovered) > 0 {
+		log(ch, fmt.Sprintf("%d of %d shortlisted names reach under %.0f%% of the domain weight (%s): US filings and option chains do not cover them, so fundamentals and sentiment must stand down.",
+			len(thinlyCovered), len(shortlist), thinCoverage*100, strings.Join(thinlyCovered, ", ")))
 	}
 
 	stage("screening", scoutStart)
@@ -622,7 +678,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	agentStatus(ch, "quant-data", model.StatusRunning, nil)
 	// The pre-screen already fetched every one of these series; the shared cache
 	// serves them back here without a second round trip.
-	quantPack, quantSeries := buildQuantPack(ctx, ch, run, yc, fx, shortlist)
+	quantPack, quantSeries := buildQuantPack(ctx, ch, run, prices, fx, shortlist)
 	logPackErrors(ch, "quant", quantPack.Errors)
 	dataErrors = append(dataErrors, prefixed("quant", quantPack.Errors)...)
 	if len(quantPack.ByTicker) > 0 {
@@ -785,7 +841,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// is written so the artifact is exactly what the Chief read.
 		var enf enforcement
 		if r.Status != model.StatusFailed {
-			corrected, e, err := enforceSpecialistTail(sp.role, r.Stdout, ungrounded[i], abstained[i], tickers)
+			corrected, e, err := enforceSpecialistTail(sp.role, r.Stdout, ungrounded[i], abstained[i], shortlist)
 			switch {
 			case err != nil:
 				// A report with no usable tail is a refusal or a truncation. It
@@ -796,6 +852,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				log(ch, fmt.Sprintf("warn: %s report unusable: %v", sp.role, err))
 			default:
 				r.Stdout, enf = corrected, e
+				if len(enf.Renamed) > 0 {
+					log(ch, fmt.Sprintf("%s named %d company(ies) instead of their symbols (%s) — resolved, scores kept",
+						sp.role, len(enf.Renamed), strings.Join(enf.Renamed, ", ")))
+				}
 				if len(enf.Corrected) > 0 {
 					log(ch, fmt.Sprintf("warn: %s scored %d ticker(s) it had no verified data for (%s) — scores removed, names moved to `missing`",
 						sp.role, len(enf.Corrected), strings.Join(enf.Corrected, ", ")))
@@ -831,6 +891,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			CorrectedScores:        enf.Corrected,
 			OffShortlistScores:     enf.OffShortlist,
 			SelfContradictedScores: enf.SelfContradicted,
+			NeutralScores:          enf.Neutral,
 			FabricatedCitations:    fabricated,
 			ScoredNames:            enf.Scored,
 		}
@@ -890,7 +951,28 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// past ideas. It reaches the Chief as context for how hard to lean on
 	// today's evidence, and the risk gate as the edge its expectancy check
 	// assumes — replacing a prior with a measurement.
-	cal := trackRecord(ctx, ch, cfg, yc)
+	cal := trackRecord(ctx, ch, cfg, prices)
+
+	// And what that record *shows*, which the arithmetic cannot say on its own:
+	// the attribution counts outcomes, and only the reasoning recorded with each
+	// past idea says what the winners had in common. One cheap-engine call,
+	// enforced against the counted cells, and skipped entirely below the closed-
+	// trade threshold.
+	pmRes := postMortem(ctx, ch, cfg, reg, p, cheapCLI, cheapCaps, prices)
+	if pmRes.Status.Domain != "" {
+		domainStatuses = append(domainStatuses, pmRes.Status)
+	}
+	if pmRes.Report != "" {
+		if err := run.WriteReport("post-mortem", pmRes.Report); err != nil {
+			log(ch, fmt.Sprintf("warn: write post-mortem report: %v", err))
+		}
+	}
+	if pmRes.PM != nil {
+		if err := pmRes.PM.Save(run.Dir); err != nil {
+			log(ch, fmt.Sprintf("warn: copy the post-mortem into the run: %v", err))
+		}
+	}
+
 	verifiedCtx := verified{
 		Universe:  uni,
 		Quant:     quantPack,
@@ -918,8 +1000,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 	if r, ok := cal.RealizedEdge(); ok {
 		verifiedCtx.RealizedR = &r
-		log(ch, fmt.Sprintf("risk: expectancy assumes the measured %+.2fR edge, not the %.2fσ prior",
-			r, riskDefaults(cfg.Risk).EdgeSigmaDaily))
+		verifiedCtx.RealizedN = cal.NClosed
+		log(ch, fmt.Sprintf("risk: expectancy blends the simulation with the measured %+.2fR over %d closed idea(s)",
+			r, cal.NClosed))
 	}
 	for _, b := range bases {
 		if b.Direction == "" {
@@ -946,6 +1029,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		QuantBlock:       quantPack.CompactBlock() + regimeSuffix(quantPack),
 		BaseScoreBlock:   baseScoreBlock(bases, cfg.ChiefAdjustBand),
 		TrackRecordBlock: cal.Block(),
+		PostMortemBlock:  pmRes.PM.Block(),
 	})
 	if err != nil {
 		return fmt.Errorf("assemble chief-analyst prompt: %w", err)
@@ -1028,6 +1112,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			// fix the account's equity or the run's missing price history spends
 			// it on something no re-emission can change.
 			var repromptReasons []string
+			// Whether the one corrective call actually landed. The drop note
+			// below used to claim it had, unconditionally.
+			correctiveApplied := false
 			for _, f := range findings {
 				log(ch, "risk: "+f.Message)
 				if f.actionable() {
@@ -1062,18 +1149,33 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 					st.Status, st.Err = r.Status, r.Err
 				}
 
-				if r.Status != model.StatusFailed {
-					if newIdeas, err := parseIdeas(r.Stdout); err == nil {
-						ideas = newIdeas
-						warnings = validateIdeas(ideas, cfg, verifiedCtx)
-						findings = applyRiskGate(ideas, verifiedCtx, cfg.Risk)
-						// Persist the reasoning that produced the ideas actually
-						// shipped. Only the first response used to be written, so
-						// chief-analyst.md documented ranks, levels and
-						// confidences that contradicted the ideas.json beside it.
-						if err := run.WriteReport("chief-analyst", correctedReport(first.Stdout, r.Stdout, repromptReasons)); err != nil {
-							log(ch, fmt.Sprintf("warn: write corrected chief-analyst report: %v", err))
-						}
+				// Every outcome of the corrective call is recorded. A silent
+				// discard here is worse than no re-prompt at all: the run spends
+				// a full synthesis call, keeps the uncorrected book, and then
+				// describes itself as having been corrected.
+				switch newIdeas, err := parseIdeas(r.Stdout); {
+				case r.Status == model.StatusFailed:
+					st.Corrective = "failed"
+					log(ch, fmt.Sprintf("warn: the corrective re-prompt failed (%v) — shipping the first pass unchanged", r.Err))
+					warnings = append(warnings, warning{Message: fmt.Sprintf(
+						"the corrective re-prompt failed (%v); the ideas below are the uncorrected first pass", r.Err)})
+				case err != nil:
+					st.Corrective = "unparseable"
+					log(ch, fmt.Sprintf("warn: the corrective re-prompt returned unparseable JSON (%v) — shipping the first pass unchanged", err))
+					warnings = append(warnings, warning{Message: fmt.Sprintf(
+						"the corrective re-prompt returned unparseable JSON (%v); the ideas below are the uncorrected first pass", err)})
+				default:
+					st.Corrective = "applied"
+					correctiveApplied = true
+					ideas = newIdeas
+					warnings = validateIdeas(ideas, cfg, verifiedCtx)
+					findings = applyRiskGate(ideas, verifiedCtx, cfg.Risk)
+					// Persist the reasoning that produced the ideas actually
+					// shipped. Only the first response used to be written, so
+					// chief-analyst.md documented ranks, levels and
+					// confidences that contradicted the ideas.json beside it.
+					if err := run.WriteReport("chief-analyst", correctedReport(first.Stdout, r.Stdout, repromptReasons)); err != nil {
+						log(ch, fmt.Sprintf("warn: write corrected chief-analyst report: %v", err))
 					}
 				}
 			}
@@ -1090,13 +1192,24 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				warnings = append(warnings, warning{Ticker: f.Ticker, Message: "risk gate: " + msg})
 			}
 			if dropped := dropViolating(ideas, findings); len(dropped) > 0 {
-				log(ch, fmt.Sprintf("Risk gate dropped %d idea(s) that a corrective re-prompt did not fix", len(dropped)))
+				// Say which it was. "After one corrective re-prompt" was printed
+				// whether or not the corrective pass had produced anything, so
+				// the artifact could not distinguish a book the Chief had been
+				// given a chance to fix from one it had not.
+				after := "after one corrective re-prompt"
+				switch {
+				case len(repromptReasons) == 0:
+					after = "with no corrective re-prompt spent"
+				case !correctiveApplied:
+					after = "after a corrective re-prompt that did not land"
+				}
+				log(ch, fmt.Sprintf("Risk gate dropped %d idea(s) %s", len(dropped), after))
 				for _, d := range dropped {
 					log(ch, "dropped: "+d)
 				}
 				ideas.Notes = strings.TrimSpace(ideas.Notes + fmt.Sprintf(
-					" Risk gate dropped %d idea(s) after one corrective re-prompt: %s. Fewer ideas is the intended outcome — an unsound construction is worse than none.",
-					len(dropped), strings.Join(dropped, "; ")))
+					" Risk gate dropped %d idea(s) %s: %s. Fewer ideas is the intended outcome — an unsound construction is worse than none.",
+					len(dropped), after, strings.Join(dropped, "; ")))
 			}
 		} else {
 			log(ch, fmt.Sprintf("warn: parse ideas JSON: %v", parseErr))
@@ -1138,6 +1251,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			Message: fmt.Sprintf("%s: no verified data for %s — names it could have covered", g.Domain, strings.Join(g.Missing, ", ")),
 		})
 	}
+	// One warning for one spent key. The per-ticker refusals stay in
+	// data_errors, where the detail belongs; what was missing was the single
+	// line that says they are all the same fact.
+	if avBudget != nil {
+		if used, limit := avBudget.DailyBudget(); used >= limit {
+			warnings = append(warnings, warning{Message: fmt.Sprintf(
+				"AlphaVantage daily budget exhausted (%d of %d requests spent) — every per-ticker AlphaVantage failure in data_errors is this one spent key, not a separate problem per name; its scored news and earnings dates are missing from this run and the budget resets at 00:00 UTC",
+				used, limit)})
+		}
+	}
 	for _, c := range confab {
 		for _, m := range c.messages() {
 			warnings = append(warnings, warning{Message: m})
@@ -1166,17 +1289,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	stage("synthesis", synthStart)
 
 	meta := model.RunMeta{
-		Mode:        string(cfg.Mode),
-		Ticker:      cfg.Ticker,
-		Indices:     indices,
-		GeneratedAt: ideas.GeneratedAt,
-		Shortlist:   shortlist,
-		Domains:     domainStatuses,
-		Weights:     cfg.Weights,
-		QuantOnly:   quantOnly,
-		Warnings:    warnMsgs,
-		Outcome:     outcome,
-		Duration:    time.Since(start).Milliseconds(),
+		Mode:          string(cfg.Mode),
+		Ticker:        cfg.Ticker,
+		Indices:       indices,
+		GeneratedAt:   ideas.GeneratedAt,
+		Shortlist:     shortlist,
+		Domains:       domainStatuses,
+		Weights:       cfg.Weights,
+		ThinlyCovered: thinlyCovered,
+		Warnings:      warnMsgs,
+		Outcome:       outcome,
+		Duration:      time.Since(start).Milliseconds(),
 
 		Engine:                  string(cfg.CheapEngine),
 		EngineModel:             cheapModelName(cfg),
@@ -1200,6 +1323,28 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 // selectIndices validates the requested index keys against the universe,
 // preserving canonical order. Empty input means all indices.
+// dailyBudgeted is the narrow seam for a provider whose API key carries a daily
+// quota. Only AlphaVantage has one, so this is a type assertion rather than a
+// method on marketdata.Provider — widening Provider would put a meaningless
+// DailyBudget on five other implementations.
+type dailyBudgeted interface {
+	DailyBudget() (used, limit int)
+}
+
+// dailyBudgetOf returns the provider's budget accessor, or nil when the
+// provider has no quota to report or no key to spend. An unconfigured key is a
+// choice, not a failure, and must produce neither a log line nor a warning.
+func dailyBudgetOf(p marketdata.Provider) dailyBudgeted {
+	if p == nil || !p.Available() {
+		return nil
+	}
+	b, ok := p.(dailyBudgeted)
+	if !ok {
+		return nil
+	}
+	return b
+}
+
 func selectIndices(requested []string) []string {
 	all := universe.AllIndices()
 	if len(requested) == 0 {

@@ -21,6 +21,68 @@ domain had no verified data for is deleted and the ticker moved into `missing`
 (`internal/orchestrator/enforce.go`). So "covered" below means *the run supplied that
 domain with data for that name*, not *the model claimed to know it*.
 
+What counts as data is the domain's **own** evidence, not the context every domain is
+handed (`coveredBy` in `internal/orchestrator/coverage.go`):
+
+- **quant** — a row in the computed metrics pack.
+- **news** — at least one headline. A bare `Next earnings` date does not cover the domain:
+  the calendar is one bulk request and the headline feed is a per-ticker one, and they fail
+  independently. On 2026-09-01 the free AlphaVantage key hit its 25-request daily budget
+  mid-run, 2330.TW was recorded as grounded for news carrying only a date, and the gap
+  therefore never reached `coverageGaps` — the run could not see its own starvation.
+- **fundamentals** — at least one verified EDGAR fact.
+- **sentiment** — a *directional* computed positioning verdict
+  (`marketdata.HasPositioningSignal`), not merely a fetch that returned rows. A quiet name
+  is an abstention, recorded separately so it does not degrade the run. See
+  *Positioning legs* below for what the verdict is computed from.
+- **macro** — a computed market regime for the benchmark this name is measured against
+  (`quant.Metrics.Benchmark` present in `quant.Pack.Benchmarks`). Macro grounded on
+  `IsUSListing && FRED facts` until 2026-09-02, which was the rule from when FRED was the
+  whole of its evidence; the computed regime block had since been added to the macro prompt
+  and the predicate never moved. The domain was handed evidence for twelve names, scored
+  twelve, and had seven deleted for having none — past the confabulation threshold, which
+  marked a run degraded for an enforcement error rather than an agent one.
+
+## Positioning legs
+
+The sentiment domain is the one place where the verdict is computed in Go and the agent is
+bound by it (`internal/marketdata/insidersignal.go`). It has six legs, each with its own
+classifier and its own abstention, combined into one `Positioning signal (computed)` fact
+that names every leg and then either states `Directional evidence: …` or says nothing was
+found. A name where nothing was found goes to `missing`.
+
+| Leg | Source | Reads | Votes when |
+| --- | --- | --- | --- |
+| insider | SEC Form 4, 45d | open-market buys and sales by role | an officer buys ≥$100k, any two insiders buy, a 10% owner adds ≥$250k, one seller moves ≥33% of their holding, or three sellers act *and the window was not pre-declared* |
+| options | Yahoo chain, front 2 expiries | put/call **open interest** | the ratio is outside 0.45–2.0 **and** 1.5× clear of the run's own median — contrarian, against the crowded side |
+| flow | Yahoo chain, front 2 expiries | traded **volume** | one side leads by 2.5× in dollars, its heaviest strike trades ≥3× its own open interest, and that volume sits ≥1% away from spot on the side a directional bet would take — *with* the direction, not against it |
+| planned sales | SEC Form 144, 45d | proposed sales, split scheduled vs not | ≥$5M of unscheduled notices, or two unscheduled filers. Bearish or silent only: there is no form an insider files to announce a purchase |
+| activist stakes | SEC 13D/13G, 90d | who crossed 5% and why | a **new** 13D. A 13G is the index owning the index; a 13D/A may be an exit as easily as an add |
+| institutional | SEC 13F, 23 tracked managers | quarter-over-quarter change | a manager opened, closed or moved ≥50% of a ≥$25M position, and the quarter is under 150 days old |
+
+Three rules run through all six:
+
+- **Abstention is first-class.** Each leg's default is silence, and a name whose every leg is
+  quiet is an abstention (`abstainedFor`) rather than a coverage gap — the run is not
+  degraded by evidence correctly declining to say anything.
+- **Volume and open interest are different facts.** Open interest is a stock of positions
+  with nobody left to add, which is why the crowding leg is contrarian; volume is the adding
+  itself, which is why the flow leg is not. The two may disagree, and that is information.
+- **Scheduled selling is not selling.** Officers are paid in stock and sell on plans adopted
+  months earlier. The Form 144 leg refuses to read a plan as a view, and it also *suppresses*
+  the Form 4 breadth test when the same window's notices are entirely scheduled and cover at
+  least half the Form 4 sale value. That cross-reference was added after raising the Form 4
+  document cap from 5 to 12 turned NKE's five routine, plan-declared disposals — $400k in
+  total — into a bearish verdict. The deeper window had not found more information, it had
+  found more of the payroll. Depth is not suppressed the same way: a plan that takes a third
+  of somebody's holding is still a third of their holding gone.
+
+Reachability is uneven and is not a failure. Listed options are a US instrument and Form 4
+is a US filing, so a foreign primary listing reaches the sentiment domain with the 13D/G and
+13F legs at most. A foreign private issuer gets no insider leg at all — "no Form 4 filings in
+45 days" would be a statement about US filing law dressed as a statement about its insiders —
+but it does get the other legs, which are not Section 16 evidence.
+
 ## Weights
 
 | Domain        | Weight |
@@ -94,6 +156,27 @@ comparable across runs — which is what the scoreboard's calibration needs it t
 - **direction** = the sign of `base` (positive → BUY, negative → SELL). Exactly zero, or
   no coverage at all, means no direction and no idea.
 - **confidence** = `round(|base| · 100)`, then capped.
+
+### Consensus — the second axis
+
+```
+consensus = |Σ wᵈ · signᵈ · strengthᵈ| / Σ wᵈ · strengthᵈ     ∈ [0, 1]
+```
+
+One means every domain that spoke pointed the same way; zero means they cancelled exactly.
+
+It reads no evidence `base` does not already read, and it **changes nothing** — not the
+ranking, not the caps, not the Chief's band. It exists because `base` is one number doing
+two jobs, *how much evidence* and *how much agreement*, and they are different facts. On
+2026-09-01 O39.SI scored 32 on a single loud domain and MRK scored 31 on five that
+disagreed; the number said they were equally good ideas, and no consumer of it — the Chief,
+the confidence bar, the scoreboard's buckets — could tell which was which.
+
+It is shown as `agree` in the Chief's base-score table (explicitly marked "already inside
+`base`, do not adjust for it"), recorded as `consensus` on each idea, and printed under the
+confidence bar in the TUI. The scoreboard buckets closed trades by it, which is how the
+question *does thin-but-unanimous beat thick-but-split?* eventually gets an answer instead
+of a guess.
 
 ### Coverage caps
 
@@ -209,11 +292,31 @@ outcome, not a shortfall.
 | Target distance | `≤ 3.5σ` | `target_sigma_max` |
 | Reward:risk | `≥ 1.8` | `rr_min` |
 | Liquidity | `AvgDollarVol20USD ≥ $20M` (FX-converted) | `adv_min_usd` |
-| Expectancy | `> 0` | `cost_bps`, `edge_sigma_daily` |
+| Expectancy | `≥ 0.005R` | `min_expectancy_r`, `cost_bps`, `edge_sigma_daily` |
 
-**Expectancy** is a seeded Monte-Carlo first-passage simulation (5,000 lognormal paths,
-seed derived from the idea, so the same idea always scores the same number). Two details
-decide whether the number means anything:
+Every key in that column is **presence-detected**: what you write is what is used, zero
+included, and only an omitted key takes its default. Zero is the identity for a floor —
+`cost_bps = 0` prices the book frictionless, `rr_min = 0` and `adv_min_usd = 0` turn those
+checks off — and it used to be unsayable, discarded once by the config loader and again by
+`riskDefaults`. The four ceilings and the two sizing inputs (`stop_sigma_max`,
+`target_sigma_max`, `max_pair_corr`, `max_portfolio_beta`, `account_equity`,
+`risk_per_trade_pct`) are the exception and are refused at startup if set to zero: a ceiling
+of zero disables nothing, it rejects every idea, so it is a typo rather than a policy.
+`edge_sigma_daily`, `min_expectancy_r` and `min_expectancy_bps` accept negative values,
+which is what a losing record and a deliberately weaker floor look like.
+
+Ordering is checked too, but *after* defaults are filled (`validateRiskPolicy`,
+`riskgate.go`), because the config loader runs before `riskDefaults` and so only ever sees
+the side you wrote. `stop_sigma_min` above `stop_sigma_max`, or `target_sigma_max` below
+`stop_sigma_min`, fails the run at startup — including the realistic case of writing one
+side against a default you never saw (`stop_sigma_min = 2.5` against the 2.0 ceiling). An
+unsatisfiable band loads clean and then drops every idea at the gate, which is reported as
+an ordinary run of risk-gate findings and ships an empty book. A floor *equal* to its
+ceiling is allowed: absurd is not the same as meaningless.
+
+**Expectancy** is a seeded Monte-Carlo first-passage simulation (10,000 antithetic
+lognormal path *pairs*, seed derived from the idea, so the same idea always scores the same
+number). Three details decide whether the number means anything:
 
 - The step is `exp(μ − σ²/2 + σz)`, not `exp(μ + σz)`. Without the Itô term the *expected
   price* grows at `μ + σ²/2`, which pays every idea free return in proportion to its
@@ -222,29 +325,58 @@ decide whether the number means anything:
   from 92 to 85 through a stop at 90 loses 15%, not 10%. A target books exactly, because a
   limit order at that price fills at that price or better.
 
-Together those two were worth about +40bps to every idea scored — more than the entire
+- **It is judged in R, not in basis points of entry.** Expectancy in bps is proportional to
+  the stop distance, so a floor denominated in it grades the name's volatility rather than
+  the construction. The check reduced to roughly `200·σ_daily(%)·h − cost`: on 2026-09-01
+  five ideas with near-identical normalised geometry — stop ≈1.3σ, target ≈2.6σ, R:R ≈1.9,
+  breakeven ≈34.5% — scored +28.7, +21.4, +8.2, +4.6 and −3.1bps in exact order of
+  `σ_daily`, and a floor of 10bps dropped the three calmest, which are the calm trends the
+  pre-screen exists to find. Worse, the only lever the re-prompt named — "move the target
+  out or the stop in" — *lowers* the number, because a tighter stop is touched more often.
+  In R, with costs scaled to liquidity, the same five run +0.032, +0.045, +0.039, +0.015
+  and +0.009 (`TestTheBookTheExpectancyGateRefused` keeps them as a fixture).
+
+Together the first two were worth about +40bps to every idea scored — more than the entire
 edge prior. `edge_sigma_daily` is that prior, in units of σ_daily per day, and it is small
 on purpose: at 0.05 every geometry the bands permit measures between +97 and +149bps and
 the check never fires; at 0.02 the same geometries spread from +10 to +64bps.
 
-**Once the pipeline has a record, the prior is replaced by it.** At `n_closed ≥ 30` closed
-ideas (`scoreboard.MinClosedForEdge`) the simulation runs on the *measured* average R per
-closed trade instead. The conversion is a derivation, not another assumption: the
-simulation accumulates `edge·σ·days` of return over the holding period, and the record says
-a trade of this kind returns `avgR` multiples of its own risk, which for this idea is
-`avgR·|entry − stop|/entry`. Setting the two equal gives
+`min_expectancy_r` (default **0.005**) is set just clear of the simulation's own standard
+error — under a basis point, about 0.001R, with antithetic sampling — and no higher. The
+*level* of the whole distribution comes from `edge_sigma_daily`, which is an assumption, so
+only the ordering is earned; a floor placed inside an assumed distribution measures the
+assumption. Setting the previous floor at 10bps because one book's observed spread ran
+3.0–24.1 is exactly that mistake, and it cost the next run three of its five ideas.
+
+`cost_bps` is the cost of trading a name at the liquidity floor, scaled down for more
+liquid names (`costTiers`): ×0.85 above $50M ADV, ×0.6 above $200M, ×0.35 above $1B. A flat
+30bps charged to a mega-cap is not a cost assumption, it is a penalty on the names whose
+stops are tightest.
+
+**Once the pipeline has a record, the simulated figure is blended with it.** At
+`n_closed ≥ 30` closed ideas (`scoreboard.MinClosedForEdge`) the expectancy becomes
 
 ```
-edge_sigma_daily = avgR × (|entry − stop| / entry) / (σ_daily × timeframe_days)
+w = n_closed / (n_closed + 30)
+expectancy_R = w · avgR_measured + (1 − w) · expectancy_R_simulated
 ```
 
-clamped to ±0.05 in both directions — beyond that the check stops discriminating between
-geometries, and no finite sample should be allowed to switch it off or reject everything on
-arithmetic alone. A **negative** measured record produces a negative edge and the gate stops
-shipping, which is the correct response to a system that is losing money.
+The simulation supplies the per-idea discrimination the record cannot — the record is one
+book-wide number — and the record supplies the level the simulation can only assume. At
+`n_closed = 30` they count equally and the record's share grows from there. A **negative**
+measured record pulls expectancy down and the gate stops shipping, which is the correct
+response to a system that is losing money.
 
-Each idea records `expectancy_bps` and `breakeven_win_rate` (`risk / (risk + reward)` — the
-hit rate the geometry alone demands).
+The record used to arrive as a *drift* instead — `avgR·(|entry−stop|/entry)/(σ_daily·h)`,
+clamped to ±0.05 — and every term in it was measured, but the arithmetic had a cliff. For
+any realistic `avgR` that expression lands far above the clamp: with the 2026-09-01 book and
+`avgR` 0.49 it gave 0.157–0.206 on every idea. The 30th closed trade would have flipped the
+check from rejecting most of a book to never firing at all, with no regime in between.
+
+Each idea records `expectancy_r`, `expectancy_bps` and `breakeven_win_rate`
+(`risk / (risk + reward)` — the hit rate the geometry alone demands). The bps figure is kept
+because it is what an operator reads and what past runs recorded; the R figure is the one
+the gate judges.
 
 **Per idea — penalties**, applied in Go and logged:
 
@@ -264,7 +396,10 @@ not a risk control.
 
 - Two same-direction ideas whose daily returns correlate above `max_pair_corr` (0.75).
 - More than 2 ideas sharing a sector.
-- Average absolute beta, or net signed beta, beyond `max_portfolio_beta` (1.5).
+- Beta-adjusted gross exposure `Σ|beta × notional| / account_equity`, or the signed
+  equivalent, beyond `max_portfolio_beta` (1.5). Measured against the account rather than
+  averaged over the idea count, so adding a low-beta name can never satisfy the limit —
+  the remedy the finding names is to drop or shrink the exposure.
 - All ideas one direction: **logged only**. Deliberately not a short quota — in the runs
   this system has produced, the token short was reliably the worst idea in the book.
 

@@ -95,6 +95,21 @@ type Candidate struct {
 	Reason string `json:"reason"`
 	Sector string `json:"sector,omitempty"` // from the universe row (set by the orchestrator)
 	Index  string `json:"index,omitempty"`  // source index key (set by the orchestrator)
+
+	// Nominations is how many scouts put this name forward in the same
+	// direction, filled in by universe.Dedupe when it merges their lists. One is
+	// the normal case; two is the strongest cross-index agreement the screening
+	// stage can produce, and until it was counted nothing downstream could see
+	// it. On 2026-09-03 REGN and AMGN were each nominated by two independent
+	// scouts, the merit sort ranked purely on the pre-screen composite, and both
+	// were dropped for names one scout had mentioned once.
+	Nominations int `json:"nominations,omitempty"`
+	// Contested names the indices that nominated this ticker in the *opposite*
+	// direction, when two scouts disagreed. Dedupe keeps the first-seen reading
+	// and records the collision here rather than resolving it silently: on
+	// 2026-09-03 QCOM was nominated bullish by nq100 and bearish by sp500, and
+	// which one shipped was decided by the order the scouts were collected in.
+	Contested []string `json:"contested,omitempty"`
 }
 
 // ScoutResult is the structured tail a scout emits for one index.
@@ -164,6 +179,12 @@ type TradeIdea struct {
 	// whether the trade worked.
 	BaseConfidence int            `json:"base_confidence,omitempty"`
 	DomainScores   map[string]int `json:"domain_scores,omitempty"`
+	// Consensus is how much of the evidence's magnitude survived the domains
+	// disagreeing, |Σ w·sign·s| / Σ w·|s| ∈ [0, 1]. It is already inside
+	// BaseConfidence and changes no ranking; it is recorded so the scoreboard
+	// can ask whether thin-but-unanimous beats well-covered-but-split, which is
+	// a question the single base number cannot be asked.
+	Consensus float64 `json:"consensus,omitempty"`
 
 	// Position size, computed in Go from the account's risk budget and the
 	// idea's own stop distance — never authored by the model. "Half size" is
@@ -180,10 +201,17 @@ type TradeIdea struct {
 
 	// ExpectancyBps is the simulated expected value of the trade in basis
 	// points of the entry price, net of costs, under an explicit small edge.
+	// ExpectancyR is the same quantity divided by the trade's own risk, which
+	// is the unit the gate actually judges it in: expressed in basis points of
+	// notional, expectancy is proportional to the stop distance, so the check
+	// graded volatility rather than construction and refused the three
+	// lowest-sigma names in the 2026-09-01 book while passing the two highest
+	// on identical geometry.
 	// BreakevenWinRate is the hit rate the geometry alone requires to break
 	// even: risk / (risk + reward). An idea whose implied win rate is
 	// implausible is a losing construction however good the thesis.
 	ExpectancyBps    float64 `json:"expectancy_bps,omitempty"`
+	ExpectancyR      float64 `json:"expectancy_r,omitempty"`
 	BreakevenWinRate float64 `json:"breakeven_win_rate,omitempty"`
 }
 
@@ -221,14 +249,41 @@ type RiskConfig struct {
 	// optimistic one is vacuous the other way, so the prior is explicit and
 	// configurable rather than hidden. P5 replaces it with realized hit rates.
 	EdgeSigmaDaily float64 `json:"edge_sigma_daily"`
-	// MinExpectancyBps is the simulated expectancy, in basis points of entry and
-	// net of costs, below which a geometry is refused. The gate rejected only
-	// `ev <= 0`, which let the 2026-09-01 run ship ideas at +3.0 and +5.7 bps —
-	// numbers indistinguishable from zero against a 30 bps cost assumption and a
-	// prior for the edge. A floor makes the check say "this geometry has to earn
-	// something" rather than "this geometry must not be provably suicidal".
+	// MinExpectancyR is the simulated expectancy, as a multiple of the trade's
+	// own risk and net of costs, below which a geometry is refused. This is the
+	// gate's primary expectancy test.
+	//
+	// It replaced a floor denominated in basis points of entry, which could not
+	// do the job it was given. Expectancy in bps is proportional to the stop
+	// distance, so the check reduced to roughly 200*sigma_daily(%)*days - cost:
+	// on 2026-09-01 five ideas with near-identical geometry (stop ~1.3 sigma,
+	// target ~2.6 sigma, R:R ~1.9) scored +28.7 bps down to -3.1 bps purely by
+	// volatility, and the three calmest were dropped. Worse, the only lever the
+	// re-prompt offered — "move the target out or the stop in" — makes the
+	// number *worse*, because a tighter stop is touched more often.
+	MinExpectancyR float64 `json:"min_expectancy_r"`
+	// MinExpectancyBps is a secondary floor in basis points of entry, kept so an
+	// operator who set one explicitly still gets it. Its default is zero: at
+	// zero it refuses only a geometry that loses money outright, which is the
+	// one thing the bps figure can honestly say.
 	MinExpectancyBps float64 `json:"min_expectancy_bps"`
+
+	// Explicit names the risk keys an operator set by hand, spelled as their
+	// TOML keys ("cost_bps", "rr_min", …). Every field above is a float64 whose
+	// zero value is also a legal setting, so without this the struct cannot tell
+	// "the operator wants no cost assumption" from "nobody filled this in" — and
+	// both the loader and riskDefaults resolved that ambiguity the same wrong
+	// way, replacing an explicit `cost_bps = 0` with 30. A key listed here keeps
+	// the value it was given, zero included.
+	//
+	// It is plumbing between config.Load and riskDefaults, not part of any
+	// artifact, so it stays out of the JSON.
+	Explicit map[string]bool `json:"-"`
 }
+
+// Set reports whether key was explicitly provided by the operator, and is the
+// only thing that distinguishes a deliberate zero from an absent one.
+func (c RiskConfig) Set(key string) bool { return c.Explicit[key] }
 
 // IdeasResult is the Chief Analyst's final JSON payload.
 type IdeasResult struct {
@@ -297,6 +352,8 @@ type ProviderConfig struct {
 	ContactEmail    string
 	AlphaVantageKey string
 	FredKey         string
+	AlpacaKeyID     string
+	AlpacaSecret    string
 }
 
 // APIConfig configures the OpenAI-compatible engine (CLIApi). Most often this
@@ -350,6 +407,13 @@ type DomainStatus struct {
 	// its own `missing` array. The score is deleted: a report that disclaims its
 	// own number should not have that number weighted.
 	SelfContradictedScores []string `json:"self_contradicted_scores,omitempty"`
+	// NeutralScores lists tickers the agent scored `neutral` on evidence it did
+	// have. Nothing is deleted — a genuine standoff is a legitimate verdict —
+	// but sign 0 contributes nothing to the weighted score while consuming the
+	// domain's full weight, so it costs more than a gap and earns none of the
+	// coverage cap relief a gap would. It is recorded because it was otherwise
+	// indistinguishable from a name the domain simply had nothing on.
+	NeutralScores []string `json:"neutral_scores,omitempty"`
 	// FabricatedCitations lists [source:] domains the agent cited on a
 	// search-less engine. Non-empty means the report's sourcing was invented and
 	// the orchestrator has rewritten those tags to [unverified].
@@ -359,6 +423,17 @@ type DomainStatus struct {
 	// meaningful against: six deletions out of six is a domain that invented its
 	// entire output, and six out of forty is a domain that overreached.
 	ScoredNames int `json:"scored_names,omitempty"`
+	// Corrective records what became of the one corrective re-prompt, when one
+	// was spent: "applied", "unparseable" or "failed". Empty means none was
+	// attempted.
+	//
+	// The re-prompt used to be able to fail in total silence. When the second
+	// call returned but its JSON did not parse there was no branch at all — no
+	// log, no warning — and the status row still read `status: done, attempts:
+	// 2`. On 2026-09-01 that spent a five-minute synthesis call for nothing
+	// while ideas.json announced "after one corrective re-prompt" beside a book
+	// that was in fact the uncorrected first pass.
+	Corrective string `json:"corrective,omitempty"`
 }
 
 // RunMeta captures all parameters and outcomes of a run for audit.
@@ -370,14 +445,20 @@ type RunMeta struct {
 	Shortlist   []Candidate    `json:"shortlist"`
 	Domains     []DomainStatus `json:"domains"`
 	Weights     DomainWeights  `json:"weights"`
-	// QuantOnly names the shortlisted tickers no per-ticker provider can reach:
-	// SEC EDGAR and AlphaVantage are US-only, so a non-US listing is graded on
-	// quant alone. This is a known structural limit, deliberately kept out of
-	// Warnings — an expected limit is not a warning.
-	QuantOnly []string `json:"quant_only,omitempty"`
-	Warnings  []string `json:"warnings"`
-	Outcome   string   `json:"outcome"` // complete | degraded | failed
-	Duration  int64    `json:"total_duration_ms"`
+	// ThinlyCovered names the shortlisted tickers the run's sources can ground
+	// less than 60% of the domain weight for: SEC filings and listed option
+	// chains are US instruments, so fundamentals and sentiment cannot reach a
+	// foreign listing with no US line. This is a known structural limit,
+	// deliberately kept out of Warnings — an expected limit is not a warning.
+	//
+	// It was `quant_only` until news and macro became globally groundable, at
+	// which point "no provider reaches this at all" was true of nothing and the
+	// field would have been empty on every run while three of five domains were
+	// still missing on some names.
+	ThinlyCovered []string `json:"thinly_covered,omitempty"`
+	Warnings      []string `json:"warnings"`
+	Outcome       string   `json:"outcome"` // complete | degraded | failed
+	Duration      int64    `json:"total_duration_ms"`
 
 	// Engine names the cheap-research engine the scouts and specialists ran on
 	// ("gemini" | "api"), and EngineModel the model it was pointed at.

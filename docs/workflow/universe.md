@@ -38,6 +38,13 @@ keep the exchange/country so agents can disambiguate:
   `ASML.AS`) collapses to the unsuffixed primary listing. A stem match alone is never
   enough — the company name must also match (`SAN.MC` Santander vs `SAN.PA` Sanofi stay
   separate, as do class-share tickers like `BRK.B`).
+
+  A merge is not a discard. Two scouts nominating the same name **in the same direction**
+  is the strongest agreement this stage produces and raises `Candidate.Nominations`; two
+  nominating it in **opposite** directions records the other index in `Candidate.Contested`
+  and keeps the first-seen reading. Both used to vanish into "whichever came first", which
+  is how QCOM shipped bearish on 2026-09-03 — nominated `+1.770` bullish by nq100 and
+  `−1.596` bearish by sp500, resolved by iteration order. `meritScore` reads both.
 - `CapMerit(candidates, max, maxPerIndex, score)` — trim the merged shortlist to at most
   `max` names (config `max_shortlist`, default 12), keeping the highest-scoring
   nominations and letting no index contribute more than `maxPerIndex` (default 5) before
@@ -76,12 +83,35 @@ symbol that trades the same company, and the providers ask under that symbol.
 Facts stay keyed to the ticker the run asked about and carry a "US line: TSM"
 note, so an agent never mistakes ADR coverage for local-market coverage.
 
-Only **major-exchange (NYSE/NASDAQ)** lines are mapped. The OTC pink-sheet ADRs
-covering most of the remainder — ENLAY, TCEHY, BASFY, SFTBY — are deliberately
-excluded: their news coverage is thin and intermittent, and a mapping that
-returns two stale headlines is worse than an honest gap, because the pipeline
-would then count the name as grounded. Names with no US line at all (Samsung, SK
-Hynix, TCS, the .BK and .SI rows) stay quant-only and the run says so.
+Only **major-exchange (NYSE/NASDAQ)** lines are mapped, and the `venue` column
+records the audit that decided it. Widening the map to the sponsored OTC ADRs
+covering most of the remainder — BAYRY, BMWYY, TOELY, SFTBY, TCEHY — was
+specified, probed against live Alpaca on 2026-09-03, and abandoned on the
+evidence: **68 of 77 candidate OTC lines returned zero headlines over 21 days**,
+and the nine that returned any averaged three. A mapping is not free — `Reachable`
+stops counting the name as structurally quant-only — so a row yielding no news
+converts an honest coverage gap into a domain scoring a name on nothing. OTC bars
+could not have validated those rows either: `feed=otc` answers HTTP 403,
+"subscription does not permit querying OTC data".
+
+That audit also caught a row that had gone stale in the other direction.
+Telefonica's NYSE ADR stopped trading on **2026-01-16** and the issuer filed to
+suspend its SEC reporting obligations four days later, so `TEF.MC` had been
+resolving to a dead symbol while EDGAR still served its pre-deregistration
+filings as though current. It is now venued `DELISTED`: the row stays in the file
+as documentation and the loader does not resolve it, so re-adding it from a stale
+reference trips a test rather than the pipeline. The same pass added `2412.TW` →
+`CHT`, a live NYSE line (168 sessions in 2026, 17 headlines) the map had missed.
+
+Names with no US line at all (Samsung, SK Hynix, TCS, the .BK and .SI rows) stay
+quant-only and the run says so.
+
+Section 16 exemption is decided on the **resolved** symbol, not the requested
+one. ASML sits in `nq100` as the bare US line and in `eu50` as `ASML.AS`, so one
+issuer enters under two spellings; testing the request exempted the dotted one
+and handed the other "no Form 4 filings in the last 45 days" read as *no signal*.
+The map's own `us_line` column is the foreign-private-issuer registry that
+separates them.
 
 `marketdata.Reachable(ticker)` is the single question the coverage bookkeeping
 asks — "can any per-ticker provider get anything for this name" — and

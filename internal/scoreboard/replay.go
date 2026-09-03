@@ -52,7 +52,7 @@ const defaultTimeframeDays = 10
 // whatever the stock has done since; and an entry that never filled counted as a
 // flat trade that dragged the win rate toward zero. None of those describe the
 // trade the idea actually specified.
-func Replay(ctx context.Context, runsDir string, yc *marketdata.YahooClient, fillWindow int) (*Summary, error) {
+func Replay(ctx context.Context, runsDir string, yc marketdata.PriceSource, fillWindow int) (*Summary, error) {
 	runs, err := store.ListRuns(runsDir)
 	if err != nil {
 		return nil, err
@@ -69,10 +69,20 @@ func Replay(ctx context.Context, runsDir string, yc *marketdata.YahooClient, fil
 		if err != nil || ideas == nil {
 			continue
 		}
-		// Which prompt set produced these ideas. Read once per run: it is the
-		// same answer for every idea in it.
+		// Which prompt set produced these ideas, and which sector each name was
+		// screened as. Both read once per run: they are the same answer for
+		// every idea in it. Sector lives on the shortlist rather than on the
+		// idea, so this is the only place it can be recovered.
 		meta, _ := store.LoadMeta(r.Dir)
 		persona := personaKey(meta)
+		sectors := map[string]string{}
+		if meta != nil {
+			for _, c := range meta.Shortlist {
+				if c.Sector != "" {
+					sectors[strings.ToUpper(c.Ticker)] = c.Sector
+				}
+			}
+		}
 
 		counted := false
 		for _, idea := range ideas.Ideas {
@@ -83,6 +93,7 @@ func Replay(ctx context.Context, runsDir string, yc *marketdata.YahooClient, fil
 			counted = true
 			e := replayIdea(ctx, r, ideas.GeneratedAt, idea, series, fillWindow)
 			e.PersonaSet = persona
+			e.Sector = sectors[strings.ToUpper(idea.Ticker)]
 			sum.Entries = append(sum.Entries, e)
 		}
 		if counted {
@@ -109,7 +120,16 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 		Target:        idea.Target,
 		TimeframeDays: idea.TimeframeDays,
 		DomainScores:  idea.DomainScores,
-		Outcome:       OutcomeError,
+		// Everything the idea said about itself, so a post-mortem can ask why
+		// rather than only whether. Sector is filled by the caller, which holds
+		// the producing run's shortlist.
+		Why:            idea.Why,
+		PositionNote:   idea.PositionNote,
+		BaseConfidence: idea.BaseConfidence,
+		Consensus:      idea.Consensus,
+		ExpectancyR:    idea.ExpectancyR,
+		BreakevenWin:   idea.BreakevenWinRate,
+		Outcome:        OutcomeError,
 	}
 	if e.TimeframeDays <= 0 {
 		e.TimeframeDays = defaultTimeframeDays
@@ -277,7 +297,7 @@ func walkToExit(bars []quant.Bar, idea model.TradeIdea, timeframe int) exitResul
 // as `open` forever, which is a closed trade quietly missing from the record the
 // Chief and the risk gate both read.
 type seriesCache struct {
-	yc       *marketdata.YahooClient
+	yc       marketdata.PriceSource
 	bySymbol map[string]*quant.Series
 	byRun    map[string]*quant.Series
 }

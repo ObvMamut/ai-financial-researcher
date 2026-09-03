@@ -100,3 +100,172 @@ func TestOptionsSkipsListingsWithNoUSChain(t *testing.T) {
 		t.Fatalf("a Paris listing has no US chain; want ErrNotApplicable, got %v", err)
 	}
 }
+
+// legWithVolume is the same leg shape with the traded-volume key present. The
+// bare leg() above deliberately omits it, because that is the exact shape the
+// warning below exists to catch.
+func legWithVolume(strike, oi, iv, vol float64) string {
+	return fmt.Sprintf(`{"strike":%.2f,"openInterest":%.0f,"impliedVolatility":%.4f,"volume":%.0f}`,
+		strike, oi, iv, vol)
+}
+
+func TestOptionsWarnsWhenNoStrikeCarriesTradedVolume(t *testing.T) {
+	// Open interest and volume arrive in the same object. A chain that parsed
+	// strikes and open interest but reported volume on none of them is the
+	// signature of a renamed or dropped field, not of a quiet name — and
+	// without this warning the whole flow leg vanishes from every ticker with
+	// no error, no data_error and no log line.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSON(1000, []int64{1000}, 178.40,
+			leg(175, 500, 0.38)+","+leg(180, 500, 0.42),
+			leg(175, 700, 0.46)+","+leg(180, 300, 0.44)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "NVDA")
+	if err != nil {
+		t.Fatalf("Fetch: %v — a missing field must not discard the whole chain", err)
+	}
+	joinedWarn := strings.Join(td.Warnings, " | ")
+	if joinedWarn == "" {
+		t.Fatalf("no warning: the flow leg disappeared silently")
+	}
+	if !strings.Contains(joinedWarn, "volume") {
+		t.Errorf("the warning does not name the volume field: %s", joinedWarn)
+	}
+	if !strings.Contains(joinedWarn, "open interest") {
+		t.Errorf("the warning does not say open interest arrived, which is what makes it a schema signal: %s", joinedWarn)
+	}
+
+	// The open-interest positioning leg is unaffected and must still land.
+	joined := fmt.Sprintf("%+v", td.Facts)
+	if !strings.Contains(joined, "put/call open interest") {
+		t.Errorf("the open-interest fact was lost:\n%s", joined)
+	}
+	// And the flow leg still correctly emits nothing — the absence is right,
+	// only the silence was wrong.
+	for _, f := range td.Facts {
+		if f.Label == UnusualOptionsLabel || f.Label == OptionsFlowSignalLabel {
+			t.Errorf("flow fact %q emitted with no volume behind it: %+v", f.Label, f)
+		}
+	}
+}
+
+func TestOptionsDoesNotWarnWhenTheChainIsMerelyQuiet(t *testing.T) {
+	// Real volume, just not much of it: classifyUnusualOptions abstains and
+	// that is a plain abstention, not a schema problem. No warning.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSON(1000, []int64{1000}, 178.40,
+			legWithVolume(175, 500, 0.38, 40)+","+legWithVolume(180, 500, 0.42, 12),
+			legWithVolume(175, 700, 0.46, 25)+","+legWithVolume(180, 300, 0.44, 8)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "NVDA")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(td.Warnings) != 0 {
+		t.Errorf("a quiet chain must stay a plain abstention, got warnings: %v", td.Warnings)
+	}
+}
+
+func TestOptionsWithholdsAnImplausibleImpliedVolatility(t *testing.T) {
+	// Yahoo publishes a placeholder rather than an absence on a contract it has
+	// no quote for. atmIV accepted anything above zero, so on 2026-09-03 six of
+	// seven names carried "0.1%–0.8% annualized" into the sentiment prompt, and
+	// the agent scored the run's strongest verdict on an option that looked free.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSON(1000, []int64{1000}, 90.05,
+			legWithVolume(90, 4000, 0.00001, 13424),
+			legWithVolume(90, 4000, 0.002, 4835)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "INTC")
+	if err != nil {
+		t.Fatalf("Fetch: %v — a broken quote must not discard the whole chain", err)
+	}
+	for _, f := range td.Facts {
+		if strings.HasPrefix(f.Label, "Implied volatility") {
+			t.Errorf("a %v implied volatility was written as a fact: %s", f.Value, f.Label)
+		}
+	}
+	joined := strings.Join(td.Warnings, " | ")
+	if !strings.Contains(joined, "implied volatility withheld") {
+		t.Errorf("no warning naming the withheld quote: %q", joined)
+	}
+	// The rest of the chain is unaffected — this is one leg, not the provider.
+	if len(td.Facts) == 0 {
+		t.Error("withholding the IV fact took the whole chain with it")
+	}
+}
+
+func TestOptionsKeepsAPlausibleImpliedVolatility(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSON(1000, []int64{1000}, 178.40,
+			legWithVolume(180, 3000, 0.42, 900),
+			legWithVolume(180, 3000, 0.44, 900)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "NVDA")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if !strings.Contains(fmt.Sprintf("%+v", td.Facts), "43.0% annualized") {
+		t.Errorf("a 43%% ATM IV was not written:\n%+v", td.Facts)
+	}
+}
+
+func TestOptionsWarnsWhenNoStrikeCarriesOpenInterest(t *testing.T) {
+	// The mirror of TestOptionsWarnsWhenNoStrikeCarriesTradedVolume, and the one
+	// that actually happened. That warning is guarded on open interest being
+	// present, so it could never fire here: on 2026-09-03 INTC traded 90,677
+	// call contracts against no reported standing position at all, both
+	// open-interest legs went dark, and nothing said so.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSON(1000, []int64{1000}, 90.05,
+			legWithVolume(90, 0, 0.42, 13424),
+			legWithVolume(88, 0, 0.44, 4835)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "INTC")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	joined := strings.Join(td.Warnings, " | ")
+	if !strings.Contains(joined, "openInterest") {
+		t.Errorf("the warning does not name the openInterest field: %q", joined)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", td.Facts), "put/call open interest") {
+		t.Error("a put/call ratio was computed with no open interest to divide")
+	}
+}
+
+func TestOptionsRefusesAPutCallRatioOnAThinBook(t *testing.T) {
+	// BBVA's ADR line shipped "put/call open interest 8.14 (676 puts vs 83
+	// calls)" — 759 contracts, where one order moves the ratio further than the
+	// signal it carries. The volume leg has always had this floor.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSON(1000, []int64{1000}, 29.16,
+			legWithVolume(30, 83, 0.35, 10),
+			legWithVolume(30, 676, 0.36, 15)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "BBVA")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", td.Facts), "put/call open interest") {
+		t.Errorf("759 contracts produced a positioning ratio:\n%+v", td.Facts)
+	}
+}

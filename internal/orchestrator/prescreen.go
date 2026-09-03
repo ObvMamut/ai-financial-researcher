@@ -51,7 +51,7 @@ const (
 	prescreenVolTrendFlag = 1.5
 	// prescreenFormula is written into the artifact so a row's Score is legible
 	// without reading this file.
-	prescreenFormula = "z(mom12-1) + 0.5·z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
+	prescreenFormula = "0.5·z(mom12-1) + z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
 	// defaultADVMinUSD is the tradeable-size floor, in 20-day average dollar
 	// volume. A swing position sized off a real account cannot be entered or
 	// exited in a name that trades a few million a day, so such names are
@@ -326,7 +326,25 @@ func scorePrescreen(rows []PrescreenRow) {
 		zR63 := zscores(pick(func(r PrescreenRow) float64 { return r.Ret63d }))
 
 		for k, i := range members {
-			score := zMom[k] + 0.5*zR63[k]
+			// The 63-day return leads and the 12-1 momentum supports it, not the
+			// other way round.
+			//
+			// This system holds for 5–20 sessions. A 12-month trend measured to a
+			// month ago describes a name's last year; it is the classic
+			// cross-sectional momentum factor, and it is right about the next
+			// twelve months rather than the next fortnight. Weighted 1.0 against
+			// 0.5 it decided the shortlist on its own — on 2026-09-03 the sp500
+			// scout read its own ranked table and wrote that MU at rank 1 and
+			// INTC at rank 2 "have already broken their trend; the score is stale
+			// off the 12m return, not a fresh setup. Avoid both directions." The
+			// merit sort took both anyway, at ranks 1 and 3, and dropped the four
+			// health-care longs the same scout had nominated.
+			//
+			// Reversing the weights on the same run's table lifts MRK, AMGN and
+			// REGN into the top twelve and drops the two extremes down it. The
+			// short-term reversal penalty below is unchanged: it is what keeps a
+			// heavier 63-day term from simply buying the most extended name.
+			score := 0.5*zMom[k] + zR63[k]
 			// Short-term reversal only argues against the trend when the recent
 			// move ran *with* it: a name that has just spiked on top of an
 			// uptrend is the classic thing that gives the spike back, while an
@@ -460,7 +478,7 @@ func sameSign(a, b float64) bool {
 // few hundred JSON files per run for names that never reach the shortlist. They
 // land in the shared data cache, where Stage 1.5 reads the dozen it needs back
 // for free.
-func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClient, fx *marketdata.FXRates, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
+func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSource, fx *marketdata.FXRates, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
 	ps := &Prescreen{Indices: indices, Params: params}
 
 	// One benchmark fetch per distinct symbol; several indices, and several
@@ -479,6 +497,25 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc *marketdata.YahooClie
 		}
 		benchRet63[sym] = v
 		return v
+	}
+
+	// One batched warm-up before the per-ticker loop below.
+	//
+	// That loop is one HTTP request per constituent, and a universe-wide
+	// pre-screen therefore fires a few hundred of them per run — which is the
+	// shape that got this host answered with 429 on every Yahoo endpoint.
+	// Alpaca serves many symbols per request, so warming the cache first turns
+	// the US half of the loop into disk reads and leaves Yahoo only the foreign
+	// names it alone can answer. Ineligible symbols and an unconfigured Alpaca
+	// both prefetch nothing, and the loop below is unchanged either way.
+	var warm []string
+	for _, idx := range indices {
+		for _, c := range uni.Constituents(idx) {
+			warm = append(warm, c.Ticker)
+		}
+	}
+	if n := yc.Prefetch(ctx, warm); n > 0 {
+		log(ch, fmt.Sprintf("pre-screen: %d of %d symbols pre-fetched in batch", n, len(warm)))
 	}
 
 	var rows []PrescreenRow
@@ -559,7 +596,46 @@ func plural(n int, format string) string {
 // puts it between the two and lets the scout's own reasoning stand on its own.
 // A neutral nomination scores 0 for the same reason: the composite is
 // directional, and there is no direction to align it with.
+//
+// On top of that sits the one thing the screening stage knows that the
+// pre-screen does not: whether more than one scout wanted the name.
+//
+//   - Agreement pays meritAgreementBonus per extra nomination. Two scouts
+//     reaching the same name from different index tables is independent
+//     evidence, and the composite cannot contain it — it is computed from
+//     prices, and both scouts read the same prices. On 2026-09-03 REGN and AMGN
+//     were the only two names any pair of scouts agreed on, and the merit sort,
+//     ranking on the composite alone, dropped both.
+//   - A contested name is charged meritContestedPenalty. Two scouts nominating
+//     opposite directions is not a signal with a sign; it is the screening stage
+//     saying it does not know. That belongs below an uncontested read of similar
+//     strength, not above it on whichever bias happened to be collected first.
+//
+// Both are in z-score units, so they are on the composite's own scale: one extra
+// scout is worth about a third of a standard deviation of relative strength, and
+// a contradiction costs about two thirds. Neither is large enough to lift a name
+// the data argues against, which is the point — this breaks ties between names
+// the composite has already ranked closely, and this run's cut ran through
+// twelve nominations inside 1.1 z of each other.
+const (
+	meritAgreementBonus   = 0.35
+	meritContestedPenalty = 0.65
+)
+
 func meritScore(ps *Prescreen, c model.Candidate) float64 {
+	base := meritComposite(ps, c)
+	if n := c.Nominations; n > 1 {
+		base += float64(n-1) * meritAgreementBonus
+	}
+	if len(c.Contested) > 0 {
+		base -= meritContestedPenalty
+	}
+	return base
+}
+
+// meritComposite is the direction-aligned pre-screen composite, before the
+// screening stage's own agreement is counted.
+func meritComposite(ps *Prescreen, c model.Candidate) float64 {
 	r, ok := ps.Row(c.Index, c.Ticker)
 	if !ok || r.Excluded != "" {
 		return 0

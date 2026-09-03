@@ -211,6 +211,12 @@ func (y *YahooClient) LastClose(ctx context.Context, symbol string) (float64, st
 	return s.LastClose(), s.AsOf(), nil
 }
 
+// Prefetch satisfies PriceSource. Yahoo's chart endpoint is one symbol per
+// request with no batch form, so there is nothing to warm ahead of the
+// per-ticker loop and this is deliberately a no-op rather than a hidden N-call
+// fan-out that would look cheap at the call site.
+func (y *YahooClient) Prefetch(context.Context, []string) int { return 0 }
+
 // wait blocks until the rate limiter admits one request or ctx expires.
 func (y *YahooClient) wait(ctx context.Context) error {
 	deadline := time.Now().Add(30 * time.Second)

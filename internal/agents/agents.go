@@ -95,6 +95,9 @@ type PromptParams struct {
 	QuantBlock           string              // chief-analyst: compact verified quant lines per ticker
 	BaseScoreBlock       string              // chief-analyst: computed weighted domain scores per ticker
 	TrackRecordBlock     string              // chief-analyst: the pipeline's realized record, when there is enough of one
+	PostMortemBlock      string              // chief-analyst: lessons drawn from that record, when there are enough closed trades
+	AttributionBlock     string              // post-mortem: the computed per-cell record
+	ClosedTradesBlock    string              // post-mortem: one line per closed trade, with the reasoning behind it
 	Weights              model.DomainWeights // structured weights
 	IndexConstituentList string              // scout only: formatted constituent list
 	PrescreenTable       string              // scout only: Stage 0.5 ranked table for this index
@@ -182,6 +185,12 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 			sb.WriteString("\n")
 			sb.WriteString(p.TrackRecordBlock)
 		}
+		// And the reading of that record follows the record itself, so the Chief
+		// sees the numbers before the interpretation of them.
+		if p.PostMortemBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.PostMortemBlock)
+		}
 
 		if p.QuantBlock != "" {
 			sb.WriteString("\n### Quant reference (verified)\n\n")
@@ -199,6 +208,20 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 			sb.WriteString(fmt.Sprintf("---\n#### %s specialist report\n\n", capitalize(rc.Domain)))
 			sb.WriteString(rc.Content)
 			sb.WriteString("\n\n")
+		}
+
+	case "post-mortem":
+		// No shortlist, no prices, no reports. This role is looking backwards at
+		// the pipeline's own closed trades and must not be handed anything about
+		// today — being unable to see the current book is what keeps it from
+		// writing a lesson that is really a view.
+		if p.AttributionBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.AttributionBlock)
+		}
+		if p.ClosedTradesBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.ClosedTradesBlock)
 		}
 
 	default: // specialists: news, fundamentals, quant, sentiment, macro

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13D" xmlns:com="http://www.sec.gov/edgar/common">
+  <schemaVersion>X0202</schemaVersion>
+<headerData>
+    <submissionType>SCHEDULE 13D</submissionType>
+    <filerInfo>
+      <filer>
+        <filerCredentials>
+          <!-- Field: Pseudo-Tag; ID: Name; Data: Guo Li -->
+          <cik>0002121334</cik>
+          <ccc>XXXXXXXX</ccc>
+        </filerCredentials>
+      </filer>
+      <liveTestFlag>LIVE</liveTestFlag>
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <coverPageHeader>
+      <securitiesClassTitle>Class A common shares, par value US$0.0001 per share</securitiesClassTitle>
+      <dateOfEvent>07/14/2026</dateOfEvent>
+      <previouslyFiledFlag>false</previouslyFiledFlag>
+      <issuerInfo>
+        <issuerCIK>0001603993</issuerCIK>
+        <issuerCusips>
+          <issuerCusipNumber>G6593L130</issuerCusipNumber>
+        </issuerCusips>
+        <issuerName>AIOS Tech Inc.</issuerName>
+        <address>
+          <com:street1>Room 407, Tower 2, Harbour Centre</com:street1>
+          <com:street2>8 Hok Cheung Street</com:street2>
+          <com:city>Hunghom, Kowloon</com:city>
+          <com:stateOrCountry>K3</com:stateOrCountry>
+          <com:zipCode>000000</com:zipCode>
+        </address>
+      </issuerInfo>
+      <authorizedPersons>
+        <notificationInfo>
+          <personName>Guo Li</personName>
+          <personPhoneNum>852 400 603 7555</personPhoneNum>
+          <personAddress>
+            <com:street1>Room 407, Tower 2, Harbour Centre</com:street1>
+            <com:street2>8 Hok Cheung Street</com:street2>
+            <com:city>Hunghom, Kowloon</com:city>
+            <com:stateOrCountry>K3</com:stateOrCountry>
+            <com:zipCode>000000</com:zipCode>
+          </personAddress>
+        </notificationInfo>
+      </authorizedPersons>
+    </coverPageHeader>
+    <reportingPersons>
+      <reportingPersonInfo>
+        <reportingPersonNoCIK>Y</reportingPersonNoCIK>
+        <reportingPersonName>Swift Prime Limited</reportingPersonName>
+        <fundType>AF</fundType>
+        <legalProceedings>N</legalProceedings>
+        <citizenshipOrOrganization>D8</citizenshipOrOrganization>
+        <soleVotingPower>5000000.00</soleVotingPower>
+        <sharedVotingPower>0.00</sharedVotingPower>
+        <soleDispositivePower>5000000.00</soleDispositivePower>
+        <sharedDispositivePower>0.00</sharedDispositivePower>
+        <aggregateAmountOwned>5000000.00</aggregateAmountOwned>
+        <isAggregateExcludeShares>N</isAggregateExcludeShares>
+        <percentOfClass>60.6</percentOfClass>
+        <typeOfReportingPerson>CO</typeOfReportingPerson>
+        <commentContent>Note to Rows 7, 9 and 11: Represents 5,000,000 Class A common shares, par value US$0.0001 per share (the "Class A Common Shares"), of AIOS Tech Inc. issuable upon conversion of 5,000,000 Class B common shares, par value US$0.0001 per share (the "Class B Common Shares"), of AIOS Tech Inc. directly held by Swift Prime Limited. Each Class B Common Share is convertible into one Class A Common Share at the option of the holder at any time. Guo Li is the sole shareholder of Swift Prime Limited. Note to Row 13: The percentage calculation is based on 3,249,337 Class A Common Shares outstanding as of July 16, 2026, plus the 5,000,000 Class A Common Shares issuable upon conversion of the Class B Common Shares held by the Reporting Persons (the Class A Common Shares and the Class B Common Shares, collectively, the "Common Shares"), in accordance with Rule 13d-3(d)(1)(i) under the Securities Exchange Act of 1934, as amended.</commentContent>
+      </reportingPersonInfo>
+      <reportingPersonInfo>
+        <reportingPersonCIK>0002121334</reportingPersonCIK>
+        <reportingPersonNoCIK>N</reportingPersonNoCIK>
+        <reportingPersonName>Guo Li</reportingPersonName>
+        <fundType>PF</fundType>
+        <legalProceedings>N</legalProceedings>
+        <citizenshipOrOrganization>F4</citizenshipOrOrganization>
+        <soleVotingPower>5000000.00</soleVotingPower>
+        <sharedVotingPower>0.00</sharedVotingPower>
+        <soleDispositivePower>5000000.00</soleDispositivePower>
+        <sharedDispositivePower>0.00</sharedDispositivePower>
+        <aggregateAmountOwned>5000000.00</aggregateAmountOwned>
+        <isAggregateExcludeShares>N</isAggregateExcludeShares>
+        <percentOfClass>60.6</percentOfClass>
+        <typeOfReportingPerson>IN</typeOfReportingPerson>
+        <commentContent>Note to Rows 7, 9 and 11: Represents 5,000,000 Class A common shares, par value US$0.0001 per share (the "Class A Common Shares"), of AIOS Tech Inc. issuable upon conversion of 5,000,000 Class B common shares, par value US$0.0001 per share (the "Class B Common Shares"), of AIOS Tech Inc. directly held by Swift Prime Limited. Each Class B Common Share is convertible into one Class A Common Share at the option of the holder at any time. Guo Li is the sole shareholder of Swift Prime Limited. Note to Row 13: The percentage calculation is based on 3,249,337 Class A Common Shares outstanding as of July 16, 2026, plus the 5,000,000 Class A Common Shares issuable upon conversion of the Class B Common Shares held by the Reporting Persons (the Class A Common Shares and the Class B Common Shares, collectively, the "Common Shares"), in accordance with Rule 13d-3(d)(1)(i) under the Securities Exchange Act of 1934, as amended.</commentContent>
+      </reportingPersonInfo>
+    </reportingPersons>
+    <items1To7>
+      <item1>
+        <securityTitle>Class A common shares, par value US$0.0001 per share</securityTitle>
+        <issuerName>AIOS Tech Inc.</issuerName>
+        <issuerPrincipalAddress>
+          <com:street1>Room 407, Tower 2, Harbour Centre</com:street1>
+          <com:street2>8 Hok Cheung Street</com:street2>
+          <com:city>Hunghom, Kowloon</com:city>
+          <com:stateOrCountry>K3</com:stateOrCountry>
+          <com:zipCode>000000</com:zipCode>
+        </issuerPrincipalAddress>
+      </item1>
+      <item2>
+        <filingPersonName>This statement on Schedule 13D is being jointly filed by Swift Prime Limited ("SPL") and Guo Li (the "Reporting Persons").</filingPersonName>
+        <principalBusinessAddress>The business address of SPL is Craigmur Chambers , Road Town, Tortola VG1110, British Virgin Islands. The business address of Guo Li is Room 407, Tower 2, Harbour Centre, 8 Hok Cheung Street, Hunghom, Kowloon, Hong Kong.</principalBusinessAddress>
+        <principalJob>The principal business of SPL is investment holding. Guo Li serves as the sole director of SPL, and as a Director and Co-Chief Executive Officer of the Issuer.</principalJob>
+        <hasBeenConvicted>During the last five years, none of the Reporting Persons has been convicted in a criminal proceeding (excluding traffic violations or similar misdemeanors).</hasBeenConvicted>
+        <convictionDescription>During the last five years, none of the Reporting Persons has been a party to a civil proceeding of a judicial or administrative body of competent jurisdiction and, as a result of such proceeding, is or was subject to a judgment, decree or final order enjoining future violations of, or prohibiting or mandating activities subject to, federal or state securities laws or finding any violation with respect to such law.</convictionDescription>
+        <citizenship>SPL is a business company incorporated under the laws of British Virgin Islands. Guo Li is a citizen of The People's Republic of China.</citizenship>
+      </item2>
+      <item3>
+        <fundsSource>The information set forth in Item 4 and Item 5 of this Schedule 13D is incorporated herein by reference into this Item 3. The aggregate consideration for the acquisition of Class B Common Shares described in Item 5 was US$500. The transaction was funded by Guo Li with his personal funds. No part of the consideration was borrowed or otherwise obtained for the purpose of acquiring, holding, trading or voting the Class B Common Shares.</fundsSource>
+      </item3>
+      <item4>
+        <transactionPurpose>The information set forth in Item 5 of this Schedule 13D is incorporated herein by reference into this Item 4. The Reporting Persons' acquisition of beneficial ownership of the Class B Common Shares was effected pursuant to a strategic equity issuance by the Issuer (the "Transaction"). The Transaction closed on July 14, 2026, upon the issuance of the 5,000,000 Class B Common Shares to SPL. As a result of the Transaction, Mr. Guo Li, through SPL, holds approximately 99.4% of the aggregate voting power of the Issuer, which constitutes a change in control of the Issuer. Mr. Guo Li serves as a Director and Co-Chief Executive Officer of the Issuer. The purpose of the Transaction is to establish a stable governance and control structure during a critical period of strategic transformation, thereby enabling the Issuer to implement its long-term strategic initiatives. The Transaction forms an integral part of the Issuer's strategic transformation plan as it transitions from its traditional business operations to a focus on artificial intelligence and technology services. The Reporting Persons have agreed that, for a period of five years from the date of issuance on July 14, 2026, the Class B Common Shares may not be transferred, sold, or otherwise disposed of without prior approval of the board of directors of the Issuer (the "Board"). Each Reporting Person may, from time to time, evaluate its position with respect to the Issuer and may take such actions as it deems appropriate in furtherance of the Transaction and the Issuer's strategic objectives, including changing its current intentions with respect to any or all matters required to be disclosed in this Schedule 13D, depending on various factors, including but not limited to the Issuer's business, prospects, financial position and strategic direction, and general economic and industry conditions. Consistent with the Transaction's strategic purposes, the Reporting Persons may engage in communications with, without limitation, one or more shareholders of the Issuer, management of the Issuer or one or more members of the Board regarding the Issuer's operations, prospects, business and financial strategies, strategic direction and transactions, assets and liabilities, business and financing alternatives and such other matters as the Reporting Persons may deem relevant to the Transaction and the Issuer's long-term development. Except as set forth in this Item 4 or Item 6 below, the Reporting Persons have no present plans or proposals that relate to or that would result in any of the actions specified in clauses (a) through (j) of Item 4 of Schedule 13D.</transactionPurpose>
+      </item4>
+      <item5>
+        <percentageOfClassSecurities>The responses of each of the Reporting Persons to Rows (7) through (13), including the footnotes thereto, of the cover pages of this Schedule 13D are hereby incorporated by reference in this Item 5. SPL directly holds 5,000,000 Class B Common Shares of the Issuer. Each Class B Common Share is convertible into one Class A Common Share at the option of the holder at any time, and the Reporting Persons are accordingly deemed to beneficially own 5,000,000 Class A Common Shares, representing approximately 60.6% of the Class A Common Shares outstanding on an as converted basis. Guo Li is the sole shareholder of SPL and is therefore deemed to beneficially own the securities held by SPL. The percentage of beneficial ownership of each Reporting Person is calculated in accordance with Rule 13d-3(d)(1)(i) under the Act and is based on 3,249,337 Class A Common Shares outstanding as of July 16, 2026, plus the 5,000,000 Class A Common Shares issuable upon conversion of the Class B Common Shares held by the Reporting Persons.</percentageOfClassSecurities>
+        <numberOfShares>SPL has the sole power to vote and to dispose of the Class B Common Shares reported in this Schedule 13D and the Class A Common Shares issuable upon conversion thereof. Mr. Guo Li, as the sole shareholder of SPL, may be deemed to have sole voting and dispositive power over such securities.</numberOfShares>
+        <transactionDesc>On June 26, 2026, SPL entered into a share subscription agreement (the "Share Subscription Agreement") with the Issuer. Under the Share Subscription Agreement, SPL subscribed for 5,000,000 Class B Common Shares of the Issuer at a price of US$0.0001 per share, which is the par value of Class B Common Shares, for a total consideration of US$500. The Transaction closed on July 14, 2026, on which date the 5,000,000 Class B Common Shares were issued to SPL. SPL has voluntarily agreed that, for a period of five years from the date of issuance, the Class B Common Shares may not be transferred, sold, or otherwise disposed of without prior approval of the Board. Upon completion of the Transaction, Mr. Guo Li, through SPL, beneficially owns approximately 60.6% of the Issuer's outstanding Common Shares, representing approximately 99.4% of the aggregate voting power of the Issuer. Each Class A Common Share is entitled to one vote per share and each Class B Common Share is entitled to one hundred votes per share. Except as described in this Schedule 13D, none of the Reporting Persons has effected any transaction in the Common Shares during the past 60 days.</transactionDesc>
+        <listOfShareholders>To the best knowledge of the Reporting Persons, no one other than the Reporting Persons, or the holders of interests in the Reporting Persons, has the right to receive or the power to direct the receipt of dividends from, or the proceeds from the sale of, the Class B Common Shares.</listOfShareholders>
+        <date5PercentOwnership>Not applicable.</date5PercentOwnership>
+      </item5>
+      <item6>
+        <contractDescription>The information set forth in Item 3, Item 4 and Item 5 of this Schedule 13D is incorporated by reference. Pursuant to Rule 13d-1(k) under the Act, the Reporting Persons have entered into a Joint Filing Agreement, dated July 16, 2026, pursuant to which they have agreed to the joint filing of this Schedule 13D and any amendments thereto; a copy is filed as Exhibit 1 to this Schedule 13D. In addition, SPL and the Issuer are parties to the Share Subscription Agreement described in Items 4 and 5 above, which includes a restriction for five years from the date of issuance on any transfer, sale or other disposition of the Class B Common Shares without prior approval of the Board. Except as described above or elsewhere in this Statement or incorporated by reference in this Statement, there are no contracts, arrangements, understandings or relationships (legal or otherwise) between the Reporting Persons and any person with respect to any securities of the Issuer, including, but not limited to, transfer or voting of any securities, finder's fees, joint ventures, loan or option arrangements, puts or calls, guarantees of profits, division of profits or losses, or the giving or withholding of proxies.</contractDescription>
+      </item6>
+      <item7>
+        <filedExhibits>Exhibit 1: Joint Filing Agreement dated July 16, 2026 by and between the Reporting Persons
+Exhibit 2: Form of Share Subscription Agreement, dated June 26, 2026, by and between AIOS Tech Inc. and Swift Prime Limited</filedExhibits>
+      </item7>
+    </items1To7>
+    <signatureInfo>
+      <signaturePerson>
+        <signatureReportingPerson>Swift Prime Limited</signatureReportingPerson>
+        <signatureDetails>
+          <signature>/s/ Guo Li</signature>
+          <title>Guo Li/Director</title>
+          <date>07/16/2026</date>
+        </signatureDetails>
+      </signaturePerson>
+      <signaturePerson>
+        <signatureReportingPerson>Guo Li</signatureReportingPerson>
+        <signatureDetails>
+          <signature>/s/ Guo Li</signature>
+          <title>Guo Li</title>
+          <date>07/16/2026</date>
+        </signatureDetails>
+      </signaturePerson>
+    </signatureInfo>
+  </formData>
+
+</edgarSubmission>

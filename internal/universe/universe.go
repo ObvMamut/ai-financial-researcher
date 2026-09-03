@@ -165,33 +165,70 @@ func firstToken(name string) string {
 // company (same stem under a known exchange suffix + matching company name,
 // e.g. ASML and ASML.AS) also collapse, preferring the unsuffixed listing.
 // Insertion order is preserved.
+//
+// A merge is not a discard. Two scouts nominating the same name in the same
+// direction is the strongest agreement this stage produces, and two nominating
+// it in opposite directions is the loudest disagreement; both used to vanish
+// into "keep whichever came first". The counts go on the surviving Candidate —
+// Nominations and Contested — for the merit sort and the run's warnings to read.
 func Dedupe(candidates []model.Candidate) []model.Candidate {
-	seen := make(map[string]bool, len(candidates))
 	out := make([]model.Candidate, 0, len(candidates))
-	for _, c := range candidates {
-		k := strings.ToUpper(c.Ticker)
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
+	// at reports where an already-merged candidate for this name lives.
+	at := func(k string, c model.Candidate) int {
 		stem, suffixed := splitSuffix(k)
-		merged := false
 		for j := range out {
-			ostem, osuffixed := splitSuffix(strings.ToUpper(out[j].Ticker))
+			ok := strings.ToUpper(out[j].Ticker)
+			if ok == k {
+				return j
+			}
+			ostem, osuffixed := splitSuffix(ok)
 			if ostem != stem || !sameCompany(c.Name, out[j].Name) {
 				continue
 			}
+			// A cross-listing of the same company: prefer the primary listing's
+			// symbol but keep the tallies already on the row.
 			if osuffixed && !suffixed {
-				out[j] = c // replace suffixed listing with the primary one
+				kept := out[j]
+				c.Nominations, c.Contested = kept.Nominations, kept.Contested
+				out[j] = c
 			}
-			merged = true
-			break
+			return j
 		}
-		if !merged {
+		return -1
+	}
+
+	for _, c := range candidates {
+		k := strings.ToUpper(c.Ticker)
+		if c.Nominations == 0 {
+			c.Nominations = 1
+		}
+		j := at(k, c)
+		if j < 0 {
 			out = append(out, c)
+			continue
 		}
+		if out[j].Bias != c.Bias {
+			// Opposite readings of the same name. The first-seen one stays —
+			// there is no basis here for preferring either — but the collision
+			// is recorded so the orchestrator can warn and the merit sort can
+			// see the name is contested rather than agreed.
+			if from := c.Index; from != "" && !containsString(out[j].Contested, from) {
+				out[j].Contested = append(out[j].Contested, from)
+			}
+			continue
+		}
+		out[j].Nominations += c.Nominations
 	}
 	return out
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 // MeritCaps are the constraints CapMerit trims a merged shortlist under.
@@ -202,24 +239,36 @@ type MeritCaps struct {
 	// backfill. It is a diversification preference: the backfill overrides it
 	// rather than hand back a five-name shortlist when twelve were asked for.
 	PerIndex int
-	// QuantOnly caps the names Reachable returns false for — the ones only the
-	// quant domain can grade. Unlike PerIndex this one is hard, in both passes:
-	// a soft cap here would be no cap at all, since the backfill would refill
-	// exactly the slots the first pass had protected. Zero or less, or a nil
-	// Reachable, disables it.
-	QuantOnly int
+	// ThinlyCovered caps the names whose expected domain coverage falls below
+	// CoverageFloor — the ones the run can only partly grade. Unlike PerIndex
+	// this one is hard, in both passes: a soft cap here would be no cap at all,
+	// since the backfill would refill exactly the slots the first pass had
+	// protected. Zero or less, or a nil Coverage, disables it.
+	ThinlyCovered int
+	// CoverageFloor is the share of total domain weight below which a name
+	// counts as thinly covered. Zero disables the cap with ThinlyCovered.
+	CoverageFloor float64
 	// Score ranks a candidate. Supplied by the caller (the orchestrator aligns
 	// each candidate's pre-screen composite with the direction it was nominated
 	// in), which keeps this package free of scoring policy.
 	Score func(model.Candidate) float64
-	// Reachable reports whether the run's per-ticker providers can see a name at
-	// all. Also the caller's to answer: this package knows about index
-	// membership, not about which endpoints a run has keys for.
-	Reachable func(model.Candidate) bool
+	// Coverage reports the share of total domain weight the run's sources can
+	// actually ground for a name. The caller's to answer: this package knows
+	// about index membership, not about which endpoints a run has keys for or
+	// which of them reach a given listing.
+	//
+	// It replaced a boolean "can any per-ticker provider reach this at all",
+	// which stopped being the right question once the domains reached listings
+	// unevenly. A name with a global news source and a global regime read is not
+	// in the same position as one with neither, and calling both "quant-only"
+	// hid the difference — it also made the cap answer in a unit unrelated to
+	// the base score the shortlist is eventually graded on.
+	Coverage func(model.Candidate) float64
 }
 
-func (c MeritCaps) unreachable(cand model.Candidate) bool {
-	return c.QuantOnly > 0 && c.Reachable != nil && !c.Reachable(cand)
+func (c MeritCaps) thinlyCovered(cand model.Candidate) bool {
+	return c.ThinlyCovered > 0 && c.CoverageFloor > 0 && c.Coverage != nil &&
+		c.Coverage(cand) < c.CoverageFloor
 }
 
 // CapMerit trims the shortlist to at most caps.Max names, keeping the
@@ -231,14 +280,13 @@ func (c MeritCaps) unreachable(cand model.Candidate) bool {
 // throwaway one from another index.
 //
 // Ranking on the composite alone had no notion of whether the run's providers
-// could reach a name. SEC EDGAR and AlphaVantage are US-only, so a non-US listing
-// without a US line can only ever be graded by quant — 35% of the domain weight,
-// one of five domains. On 2026-09-01 that put 7 quant-only names on a shortlist
-// of 12, and three of the five shipped ideas rested on a single domain; the
-// arithmetic even let the lone domain outrank a consensus, O39.SI's one `quant 8`
-// scoring 36 against ORCL's five-domain 26. QuantOnly bounds how much of the
-// shortlist can be evidence the run cannot gather. The pre-screen ranking is
-// untouched — this only decides who reaches the specialists.
+// could reach a name. On 2026-09-01 that put 7 names the research layer could
+// barely see on a shortlist of 12, and three of the five shipped ideas rested on
+// a single domain; the arithmetic even let the lone domain outrank a consensus,
+// O39.SI's one `quant 8` scoring 36 against ORCL's five-domain 26. ThinlyCovered
+// bounds how much of the shortlist can be evidence the run cannot gather, in the
+// same unit the base score is computed in. The pre-screen ranking is untouched —
+// this only decides who reaches the specialists.
 //
 // Two passes. The first respects PerIndex, which is what spreads the book across
 // regions. The second fills any slots that cap left empty, in pure score order.
@@ -263,7 +311,7 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 	out := make([]model.Candidate, 0, caps.Max)
 	taken := make([]bool, len(ranked))
 	perIndex := map[string]int{}
-	quantOnly := 0
+	thin := 0
 	for i, c := range ranked {
 		if len(out) == caps.Max {
 			break
@@ -271,11 +319,11 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 		if caps.PerIndex > 0 && perIndex[c.Index] >= caps.PerIndex {
 			continue
 		}
-		if caps.unreachable(c) {
-			if quantOnly >= caps.QuantOnly {
+		if caps.thinlyCovered(c) {
+			if thin >= caps.ThinlyCovered {
 				continue
 			}
-			quantOnly++
+			thin++
 		}
 		perIndex[c.Index]++
 		taken[i] = true
@@ -288,11 +336,11 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 		if taken[i] {
 			continue
 		}
-		if caps.unreachable(c) {
-			if quantOnly >= caps.QuantOnly {
+		if caps.thinlyCovered(c) {
+			if thin >= caps.ThinlyCovered {
 				continue
 			}
-			quantOnly++
+			thin++
 		}
 		out = append(out, c)
 	}

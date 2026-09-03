@@ -15,7 +15,8 @@ For every saved run under `runs/`, each idea in `ideas.json` is walked forward
 from the session *after* `generated_at` (the generation-day bar is the one the
 idea was priced off; entering on it would be hindsight).
 
-Daily bars come from the keyless Yahoo chart API through the shared cache, and
+Daily bars come through the routed price source — Alpaca for US listings where a key is
+configured, the keyless Yahoo chart API otherwise — via the shared cache, and
 fall back to the run's own saved `prices/` — which is what keeps an old run
 scorable after a ticker is delisted or renamed.
 
@@ -91,6 +92,37 @@ for; scoring it on trades it called the other way, or had no view on, measures
 nothing. A domain that keeps backing losers is the one to reweight in
 `[weights]`.
 
+## Attribution: which *kind* of call worked
+
+The slices above answer "did it work". Attribution (`internal/scoreboard/attribution.go`)
+answers "which kind of it". Over the same closed trades it accumulates four further cells,
+each carrying its own `n`:
+
+| Cell | Key | Why it exists |
+| --- | --- | --- |
+| `by_setup` | `buy/wide-stop`, `sell/tight-stop`, … | direction crossed with how much room the trade gave itself (stop distance as a share of entry: `<5%` tight, `<10%` medium, else wide). This is the shape a "why did it work" answer actually lives in. |
+| `by_coverage` | how many domains scored the name | does thin evidence lose? The weights are not recorded per idea, so this counts domains rather than weight — coarser, but recoverable from what the idea stored. |
+| `by_consensus` | the recorded `consensus` band | the other half of the same question: does thin-but-unanimous beat well-covered-but-split? |
+| `by_sector` | the shortlist's sector for the name | joined from the producing run's `metadata.json`, which is the only place sector lives. |
+
+And a **fill record**, which measures the thing every other slice takes for granted:
+
+```
+fills: 22 of 49 replayable ideas filled, 0 never traded their limit,
+       27 still inside the window, 0 had no usable history, 45 had no levels to replay
+entry at the close (±0.25%): n=5, 100% filled, avg +0.49R over 5 closed
+```
+
+`by_offset` buckets ideas by where the limit sat relative to the price at generation,
+**signed toward the trade's own direction** — a buy limit 1% below and a sell limit 1% above
+are the same decision and belong in the same bucket. An entry rule that does not fill is not
+a strategy however good the ideas behind it, and until this table existed nothing in the
+system measured it.
+
+`Lines(minN)` and `Cells(minN)` both suppress cells under `MinCellN` (**5** closed trades).
+A cell below that cannot support a claim, so it is not shown and — see below — cannot be
+written about either.
+
 ## Calibration: feeding the record back
 
 `Calibrate` reduces a replayed summary to `.data/calibration.json` — overall win rate,
@@ -108,6 +140,46 @@ Two consumers:
 
 Both thresholds exist because a thin record is worse than none: it reads as evidence and is
 noise.
+
+## Post-mortem: the part counting cannot do
+
+Attribution counts outcomes. Only the reasoning recorded with each past idea says what the
+winners had in common, and that is prose. So one cheap-engine call
+(`agents/post-mortem.md`, driven by `internal/orchestrator/postmortem.go`) reads the
+attribution table plus one line per closed trade — ticker, direction, base score, consensus,
+per-domain scores, the Chief's own `why` at the time, outcome, R, bars held — and writes
+lessons.
+
+The split is the same one every domain in this system uses: **Go counts, the model reads.**
+
+- **Gated at `MinClosedForPostMortem` (10 closed trades)**, matching the track record's
+  threshold. Below it the block is simply absent.
+- **Enforced against the counted cells.** A lesson must name a cell that appears in the
+  attribution table, spelled the way that table spells it, with at least `MinCellN` closed
+  trades behind it. One that does not is deleted and the deletion is reported — in the run
+  log, and in `metadata.json`'s `post-mortem` row alongside every other domain's corrected
+  scores. A lesson that *overstates* its own `n` is not deleted; the table's number replaces
+  the claimed one, and the correction is recorded. At most `MaxLessons` (**8**) survive.
+  This is the same guard that catches a specialist scoring a name it had no data on, and it
+  is here for a stronger reason: a confident sentence about the system's own performance is
+  the easiest output in the pipeline to invent and the hardest for a reader to check.
+- **Weight suggestions are advisory and never applied.** The tail may propose nudging a
+  domain up or down; a suggestion naming something that is not a domain, not a direction, or
+  carrying no reason is dropped. The rest surface in the run log for a human to act on by
+  editing `[weights]`. Nothing in the pipeline reweights itself.
+- **A run never blocks on it.** A failed call, an unparseable tail, or a missing persona
+  (`agents.v1` has none, so the A/B control arm runs without one) leaves the Chief simply
+  untold — which is the state every fresh install starts in.
+- **Stored** as `.data/postmortem.json` with the same 24h staleness rule as the calibration,
+  copied into `runs/<ts>/`, and written as `runs/<ts>/post-mortem.md` so it appears in the
+  reports screen.
+
+The surviving lessons reach the Chief as a `### Lessons from N closed ideas` block beside the
+track record. They qualify the base scores inside the existing `chief_adjust_band`; they are
+not a second scoring layer and they are not evidence about any name in today's shortlist.
+
+Adding a persona file changes `persona_sha`, so the post-mortem's arrival registers as a new
+A/B arm. That is expected, not a bug.
 
 ## Persona A/B
 
@@ -156,13 +228,20 @@ Configure via `keep_runs` in `cfr.toml` or `CFR_KEEP_RUNS`.
 - **TUI**: headline (win rate over closed, avg P&L, avg R), the outcome tally,
   and scrollable per-idea rows with fill → exit, coloured P&L, R, and the outcome
   that ended the trade.
-- **`cfr scoreboard`**: the same as plain text, plus the slice lines.
+- **`cfr scoreboard`**: the same as plain text, plus the slice lines and the
+  attribution cells (replay mode only — the legacy math has no notion of a trade
+  closing, so it produces none of them).
 - **`cfr scoreboard --json`**: the full `scoreboard.Summary`
   (`entries[]`, `replay`, `scored`, `closed`, `wins`, `losses`, `win_rate`,
   `avg_pnl_pct`, `avg_r`, `avg_excess_pnl_pct`, `by_outcome`, `by_direction`,
   `by_index`, `by_confidence`, `by_domain`, `skipped`, `run_count`).
 - **`cfr scoreboard --legacy`**: the old mark-to-current-price numbers, for
   comparison against the replay on the same runs.
+- **`cfr postmortem`**: the attribution table computed fresh, plus whatever
+  lessons are stored in `.data/postmortem.json`. `--min-n` lowers the cell floor
+  for reading (it does not lower what a lesson may be written about);
+  `--json` emits `{attribution, post_mortem}` — the attribution's own shape,
+  kept out of `cfr scoreboard --json` so that stays a bare `scoreboard.Summary`.
 
 ## Configuration
 
@@ -170,3 +249,8 @@ Configure via `keep_runs` in `cfr.toml` or `CFR_KEEP_RUNS`.
 | --- | --- | --- |
 | `[scoreboard] fill_window_days` | `3` | sessions a limit entry stays live (`CFR_FILL_WINDOW_DAYS`, `--fill-window`) |
 | `keep_runs` | `100` | run directories retained, i.e. how much history there is to score |
+
+Two thresholds are constants rather than settings, because they are statements about when a
+number becomes readable rather than preferences: `MinClosedForPostMortem` (**10** closed
+trades before any lesson is drawn) and `MinCellN` (**5** closed trades before a cell may be
+shown or written about).

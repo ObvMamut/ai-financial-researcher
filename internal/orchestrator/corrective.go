@@ -48,7 +48,25 @@ func correctivePrompt(prompt, previous string, reasons []string) string {
 	b.WriteString("to move, keep the same thesis and say in `notes` what you changed and why. ")
 	b.WriteString("Your `notes` must not contradict a fact this run collected: if a finding ")
 	b.WriteString("says a date is unverified, drop the claim — do not assert that the run ")
-	b.WriteString("holds no such data unless the findings say so.\n")
+	b.WriteString("holds no such data unless the findings say so.\n\n")
+	// Every finding the risk gate writes uses a substitution verb — "swap the
+	// weaker one for something that adds breadth", "replace the weakest with a
+	// different one" — and the beta finding names no remedy at all. Read beside
+	// "changing only what the findings above name", that told the Chief the book
+	// had to stay five names long. On 2026-09-03 it dropped ORCL (base 38, five
+	// domains) for 035720.KS (base 27, quant only) to satisfy an average-beta
+	// ceiling, and said so: "the slot had to be filled by something low-beta
+	// rather than left empty."
+	//
+	// The persona already permits a shorter book. This is the prompt that
+	// forbade it.
+	b.WriteString("**Removing an idea is always an available answer.** Where a finding asks ")
+	b.WriteString("you to swap or replace something, deleting it and shipping fewer ideas ")
+	b.WriteString("satisfies the finding too, and is the better answer whenever the ")
+	b.WriteString("replacement would be weaker than what it replaces — a name carried by one ")
+	b.WriteString("domain, or one you would not have ranked at all. Do not fill a slot to ")
+	b.WriteString("keep the count. Re-rank the survivors 1..N contiguously and say in ")
+	b.WriteString("`notes` what you dropped and why.\n")
 	return b.String()
 }
 

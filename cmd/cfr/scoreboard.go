@@ -28,7 +28,7 @@ func runScoreboard(settings *config.Settings, args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
+	yc := marketdata.NewPrices(settings.Providers.AlpacaKeyID, settings.Providers.AlpacaSecret, marketdata.NewCache(settings.DataDir))
 	sum, err := scoreboard.Replay(ctx, settings.RunsDir, yc, *fillWindow)
 	if *legacy {
 		sum, err = scoreboard.Build(ctx, settings.RunsDir, yc)
@@ -56,6 +56,8 @@ func runScoreboard(settings *config.Settings, args []string) int {
 		}
 		return 0
 	}
+	// FormatText already carries the attribution cells for a replay summary; the
+	// legacy math has no notion of a trade closing and so produces none.
 	fmt.Print(sum.FormatText())
 	return 0
 }

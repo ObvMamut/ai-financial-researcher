@@ -32,11 +32,13 @@ func main() {
 			os.Exit(runHeadless(settings, os.Args[2:]))
 		case "scoreboard":
 			os.Exit(runScoreboard(settings, os.Args[2:]))
+		case "postmortem":
+			os.Exit(runPostMortem(settings, os.Args[2:]))
 		case "-h", "--help", "help":
-			fmt.Println("usage: cfr [run|scoreboard] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)")
+			fmt.Println("usage: cfr [run|scoreboard|postmortem] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)\n  cfr postmortem  what the closed trades show, by cell (see cfr postmortem -h)")
 			os.Exit(0)
 		default:
-			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard)\n", os.Args[1])
+			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard, cfr postmortem)\n", os.Args[1])
 			os.Exit(2)
 		}
 	}
@@ -50,7 +52,7 @@ func main() {
 		return orchestrator.Run(ctx, orchestratorConfig(settings, req))
 	}
 	sbFn := func(ctx context.Context) (*scoreboard.Summary, error) {
-		yc := marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir))
+		yc := marketdata.NewPrices(settings.Providers.AlpacaKeyID, settings.Providers.AlpacaSecret, marketdata.NewCache(settings.DataDir))
 		sum, err := scoreboard.Replay(ctx, settings.RunsDir, yc, settings.FillWindowDays)
 		if err == nil {
 			// Opening the scoreboard is also how the track record gets refreshed
@@ -90,7 +92,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		PrescreenTopPerIndex: s.PrescreenTopPerIndex,
 		MaxShortlist:         s.MaxShortlist,
 		MaxPerIndex:          s.MaxPerIndex,
-		MaxQuantOnly:         s.MaxQuantOnly,
+		MaxThinlyCovered:     s.MaxThinlyCovered,
 		ChiefAdjustBand:      s.ChiefAdjustBand,
 		FillWindowDays:       s.FillWindowDays,
 		Risk:                 s.Risk,

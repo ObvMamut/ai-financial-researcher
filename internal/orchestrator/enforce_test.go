@@ -2,13 +2,25 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/parse"
 )
 
 // report builds a specialist report with the given structured tail.
+// sl builds the shortlist argument from bare tickers, for tests that do not
+// care about the company names the alias resolution reads.
+func sl(tickers ...string) []model.Candidate {
+	out := make([]model.Candidate, 0, len(tickers))
+	for _, t := range tickers {
+		out = append(out, model.Candidate{Ticker: t})
+	}
+	return out
+}
+
 func report(prose, tail string) string {
 	return prose + "\n\n```json\n" + tail + "\n```\n"
 }
@@ -48,7 +60,7 @@ func TestEnforceStripsUngroundedScores(t *testing.T) {
 	  {"ticker":"MSFT","bias":"bullish","strength":8,"note":"invented"}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("sentiment", in, []string{"MSFT"}, nil, []string{"AAPL", "MSFT"})
+	out, res, err := enforceSpecialistTail("sentiment", in, []string{"MSFT"}, nil, sl("AAPL", "MSFT"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -76,7 +88,7 @@ func TestEnforceDropsOffShortlistTickers(t *testing.T) {
 	  {"ticker":"TSLA","bias":"bearish","strength":7,"note":"never asked for"}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("news", in, nil, nil, []string{"AAPL"})
+	out, res, err := enforceSpecialistTail("news", in, nil, nil, sl("AAPL"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -99,7 +111,7 @@ func TestEnforceDropsOffShortlistTickers(t *testing.T) {
 func TestEnforceLeavesHonestReportUntouched(t *testing.T) {
 	in := report("prose", `{"domain":"news","scores":[{"ticker":"AAPL","bias":"bullish","strength":6,"note":"ok"}],"missing":["MSFT"]}`)
 
-	out, res, err := enforceSpecialistTail("news", in, []string{"MSFT"}, nil, []string{"AAPL", "MSFT"})
+	out, res, err := enforceSpecialistTail("news", in, []string{"MSFT"}, nil, sl("AAPL", "MSFT"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -116,7 +128,7 @@ func TestEnforceLeavesHonestReportUntouched(t *testing.T) {
 func TestEnforceDoesNotDuplicateMissing(t *testing.T) {
 	in := report("prose", `{"domain":"news","scores":[{"ticker":"AAPL","strength":6}],"missing":["msft"," NVDA "]}`)
 
-	out, _, err := enforceSpecialistTail("news", in, []string{"MSFT", "NVDA"}, nil, []string{"AAPL", "MSFT", "NVDA"})
+	out, _, err := enforceSpecialistTail("news", in, []string{"MSFT", "NVDA"}, nil, sl("AAPL", "MSFT", "NVDA"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -129,10 +141,10 @@ func TestEnforceDoesNotDuplicateMissing(t *testing.T) {
 // No parseable tail means the report is unusable — a refusal or a truncation.
 // The run must not treat it as a successful domain.
 func TestEnforceRejectsReportWithNoTail(t *testing.T) {
-	if _, _, err := enforceSpecialistTail("news", "I cannot help with that request.", nil, nil, []string{"AAPL"}); err == nil {
+	if _, _, err := enforceSpecialistTail("news", "I cannot help with that request.", nil, nil, sl("AAPL")); err == nil {
 		t.Fatal("expected an error for a report with no JSON tail")
 	}
-	if _, _, err := enforceSpecialistTail("news", report("p", `{"domain":"news",`), nil, nil, []string{"AAPL"}); err == nil {
+	if _, _, err := enforceSpecialistTail("news", report("p", `{"domain":"news",`), nil, nil, sl("AAPL")); err == nil {
 		t.Fatal("expected an error for a malformed JSON tail")
 	}
 }
@@ -144,7 +156,7 @@ func TestEnforceStripsEntireRegimeDomain(t *testing.T) {
 	  {"ticker":"AAPL","strength":8},{"ticker":"MSFT","strength":7}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("macro", in, []string{"AAPL", "MSFT"}, nil, []string{"AAPL", "MSFT"})
+	out, res, err := enforceSpecialistTail("macro", in, []string{"AAPL", "MSFT"}, nil, sl("AAPL", "MSFT"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -181,7 +193,7 @@ func TestEnforceDropsScoresTheAgentItselfCallsMissing(t *testing.T) {
 	  {"ticker":"ORCL","bias":"neutral","strength":3,"note":"positioning evidence is empty"}
 	],"missing":["ORCL"]}`)
 
-	out, res, err := enforceSpecialistTail("sentiment", in, nil, nil, []string{"AMGN", "ORCL"})
+	out, res, err := enforceSpecialistTail("sentiment", in, nil, nil, sl("AMGN", "ORCL"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -213,7 +225,7 @@ func TestEnforceLabelsProseAboutStrippedNames(t *testing.T) {
 	  {"ticker":"AMGN","bias":"bullish","strength":4,"note":"SPX near highs"}
 	],"missing":[]}`)
 
-	out, res, err := enforceSpecialistTail("macro", in, []string{"9984.T"}, nil, []string{"9984.T", "AMGN"})
+	out, res, err := enforceSpecialistTail("macro", in, []string{"9984.T"}, nil, sl("9984.T", "AMGN"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -241,7 +253,7 @@ func TestEnforceAddsNoNoticeWhenNothingWasRemoved(t *testing.T) {
 	in := report("prose", `{"domain":"quant","scores":[
 	  {"ticker":"AMGN","bias":"bullish","strength":7,"note":"ok"}
 	],"missing":[]}`)
-	out, res, err := enforceSpecialistTail("quant", in, nil, nil, []string{"AMGN"})
+	out, res, err := enforceSpecialistTail("quant", in, nil, nil, sl("AMGN"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -273,7 +285,7 @@ func TestEnforceNoticeDistinguishesAbstentionFromAbsentData(t *testing.T) {
 	out, res, err := enforceSpecialistTail("sentiment", in,
 		[]string{"AMGN", "BAYN.DE"}, // both lose their scores
 		[]string{"AMGN"},            // but only AMGN was an abstention
-		[]string{"AMGN", "BAYN.DE"})
+		sl("AMGN", "BAYN.DE"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -315,7 +327,7 @@ func TestEnforceNoticeSeparatesADisownedScoreFromAbsentData(t *testing.T) {
 	],"missing":["ORCL"]}`)
 
 	out, res, err := enforceSpecialistTail("sentiment", in,
-		[]string{"BAYN.DE"}, nil, []string{"ORCL", "BAYN.DE"})
+		[]string{"BAYN.DE"}, nil, sl("ORCL", "BAYN.DE"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -340,7 +352,7 @@ func TestEnforceNoticeSeparatesADisownedScoreFromAbsentData(t *testing.T) {
 // An abstention-free run must read exactly as it did before.
 func TestEnforceNoticeUnchangedWithoutAbstentions(t *testing.T) {
 	in := report("prose", `{"domain":"macro","scores":[{"ticker":"AAPL","strength":8}],"missing":[]}`)
-	out, _, err := enforceSpecialistTail("macro", in, []string{"AAPL"}, nil, []string{"AAPL"})
+	out, _, err := enforceSpecialistTail("macro", in, []string{"AAPL"}, nil, sl("AAPL"))
 	if err != nil {
 		t.Fatalf("enforceSpecialistTail: %v", err)
 	}
@@ -349,5 +361,128 @@ func TestEnforceNoticeUnchangedWithoutAbstentions(t *testing.T) {
 	}
 	if strings.Contains(out, "did* have") {
 		t.Errorf("an abstention clause appeared with no abstentions:\n%s", out)
+	}
+}
+
+// A `neutral` vote is the most expensive answer a domain can give: sign 0
+// contributes nothing to the weighted score while still consuming the domain's
+// full weight, so it costs more than a gap and earns none of the coverage cap
+// relief a gap would. On 2026-09-01 news scored AMGN neutral while its own
+// paragraph named a regulator suspending a marketed drug that morning, and
+// nothing in the run distinguished that from a name news had nothing on.
+func TestNeutralScoresAreRecordedButNotDeleted(t *testing.T) {
+	stdout := "Report.\n\n```json\n" + `{"domain":"news","scores":[
+      {"ticker":"AMGN","bias":"neutral","strength":0,"note":"mixed"},
+      {"ticker":"MRK","bias":"BULLISH","strength":7,"note":"clear"},
+      {"ticker":"ORCL","bias":"Neutral","strength":3,"note":"standoff"}
+    ],"missing":[]}` + "\n```\n"
+
+	out, enf, err := enforceSpecialistTail("news", stdout, nil, nil, sl("AMGN", "MRK", "ORCL"))
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if want := []string{"AMGN", "ORCL"}; !reflect.DeepEqual(enf.Neutral, want) {
+		t.Errorf("Neutral = %v, want %v (case-insensitive)", enf.Neutral, want)
+	}
+	// Recorded, not removed: a genuine standoff is a legitimate verdict.
+	for _, ticker := range []string{"AMGN", "MRK", "ORCL"} {
+		if !strings.Contains(out, ticker) {
+			t.Errorf("%s was deleted from the tail; a neutral score is kept", ticker)
+		}
+	}
+	if len(enf.Corrected) != 0 {
+		t.Errorf("a neutral score is not a correction: %v", enf.Corrected)
+	}
+	if enf.Scored != 3 {
+		t.Errorf("Scored = %d, want 3", enf.Scored)
+	}
+}
+
+func TestEnforcementResolvesACompanyNameToItsTicker(t *testing.T) {
+	// 2026-09-03: macro scored twelve names and wrote OCBC, KAKAO and MEDIATEK
+	// for O39.SI, 035720.KS and 2454.TW — the names in the shortlist block it
+	// was handed, which carries `name` beside `ticker`. All three scores were
+	// struck as off-shortlist, and those are exactly the names that then shipped
+	// as ideas 3 and 5 on one domain each.
+	shortlist := []model.Candidate{
+		{Ticker: "O39.SI", Name: "Oversea-Chinese Banking Corporation"},
+		{Ticker: "035720.KS", Name: "Kakao Corp."},
+		{Ticker: "2454.TW", Name: "MediaTek Inc."},
+		{Ticker: "MU", Name: "Micron Technology, Inc."},
+	}
+	in := report("Regional banks are carrying the ^STI.", `{"domain":"macro","scores":[
+		{"ticker":"OCBC","bias":"bullish","strength":4},
+		{"ticker":"KAKAO","bias":"bearish","strength":3},
+		{"ticker":"MEDIATEK","bias":"bullish","strength":5},
+		{"ticker":"MU","bias":"neutral","strength":0}
+	],"missing":[]}`)
+
+	out, res, err := enforceSpecialistTail("macro", in, nil, nil, shortlist)
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if len(res.OffShortlist) != 0 {
+		t.Errorf("OffShortlist = %v — three real scores were deleted for naming the company", res.OffShortlist)
+	}
+	want := []string{"KAKAO→035720.KS", "MEDIATEK→2454.TW", "OCBC→O39.SI"}
+	if !equalStrings(res.Renamed, want) {
+		t.Errorf("Renamed = %v, want %v", res.Renamed, want)
+	}
+	// The tail must be rewritten to the symbol, or the score is still invisible
+	// to base scoring, the Chief's table and the risk gate.
+	for _, sym := range []string{`"O39.SI"`, `"035720.KS"`, `"2454.TW"`} {
+		if !strings.Contains(out, sym) {
+			t.Errorf("the corrected tail does not carry %s:\n%s", sym, out)
+		}
+	}
+	for _, alias := range []string{`"OCBC"`, `"KAKAO"`, `"MEDIATEK"`} {
+		if strings.Contains(out, alias) {
+			t.Errorf("the corrected tail still scores under %s:\n%s", alias, out)
+		}
+	}
+	if res.Scored != 4 {
+		t.Errorf("Scored = %d, want 4", res.Scored)
+	}
+}
+
+func TestEnforcementStillDeletesAnInventedTicker(t *testing.T) {
+	// The alias map must not become a way for a hallucinated symbol to survive.
+	shortlist := []model.Candidate{{Ticker: "MU", Name: "Micron Technology, Inc."}}
+	in := report("p", `{"domain":"news","scores":[
+		{"ticker":"ZZZZ","bias":"bullish","strength":6},
+		{"ticker":"MU","bias":"bullish","strength":5}
+	],"missing":[]}`)
+
+	_, res, err := enforceSpecialistTail("news", in, nil, nil, shortlist)
+	if err != nil {
+		t.Fatalf("enforceSpecialistTail: %v", err)
+	}
+	if !equalStrings(res.OffShortlist, []string{"ZZZZ"}) {
+		t.Errorf("OffShortlist = %v, want [ZZZZ]", res.OffShortlist)
+	}
+}
+
+func TestShortlistAliasesRefuseAnAmbiguousKey(t *testing.T) {
+	// Two shortlisted companies whose first word is the same cannot both claim
+	// it, and neither may — resolving to one of them would be a coin toss that
+	// silently reassigns a score.
+	a := shortlistAliases([]model.Candidate{
+		{Ticker: "SAN.MC", Name: "Banco Santander"},
+		{Ticker: "BBVA.MC", Name: "Banco Bilbao Vizcaya Argentaria"},
+	})
+	if got, ok := a["BANCO"]; ok && got != "" {
+		t.Errorf("BANCO resolved to %q — two shortlisted banks share it", got)
+	}
+	if a["SANTANDER"] != "" {
+		t.Errorf("a non-first word became an alias: %q", a["SANTANDER"])
+	}
+
+	// And an alias may never shadow a real shortlisted ticker.
+	b := shortlistAliases([]model.Candidate{
+		{Ticker: "MU", Name: "Micron Technology, Inc."},
+		{Ticker: "035720.KS", Name: "MU Holdings"},
+	})
+	if b["MU"] != "" {
+		t.Errorf("MU as a company name shadowed MU the ticker: %q", b["MU"])
 	}
 }

@@ -43,13 +43,24 @@
 #max_shortlist = 12
 #max_per_index = 5
 
-# Cap on shortlisted names no per-ticker provider can reach. SEC EDGAR and
-# AlphaVantage are US-only, so a non-US listing with no US line is graded by
-# quant alone — one domain of five, 35% of the weight. Unlike max_per_index this
-# cap is hard: the merit backfill respects it, so a shortlist can come back
-# shorter than max_shortlist rather than filled with names four of the five
-# domains must abstain on.
-#max_quant_only = 4
+# Cap on shortlisted names the run's sources can ground less than 60% of the
+# domain weight for. SEC filings and listed option chains are US instruments, so
+# fundamentals, sentiment and news cannot reach a non-US listing with no US
+# line; quant and macro, computed from the name's own bars, can reach any
+# listing. So an unmapped foreign name expects 0.45 of the weight, under the 0.6
+# floor. Unlike max_per_index this cap is hard: the merit backfill respects it,
+# so a shortlist can come back shorter than max_shortlist rather than filled with
+# names three of the five domains must abstain on.
+#
+# It was max_quant_only, a count of names *no* provider could reach — true of
+# nothing, and in a unit unrelated to the base score. The replacement was then
+# dead for a different reason: news was counted as global on the strength of a
+# keyless headline search that takes the local symbol, which put every listing at
+# 0.70 and left nothing under the floor. On 2026-09-03 that search answered all
+# five unmapped foreign names with the same eight untagged stories, the domain
+# recorded every one as missing, metadata.json read "thinly_covered": null, and
+# three of the five shipped ideas were scored by one domain or two.
+#max_thinly_covered = 4
 
 # How far, in confidence points, the Chief Analyst may move an idea from its
 # computed base score (docs/workflow/scoring.md). Confidence outside the band is
@@ -187,14 +198,39 @@
 # cheapest edge of the band.
 #[risk]
 
+# Every key in this block is presence-detected: a value you write here is used
+# at exactly the value you wrote, including 0, and only a key you leave out
+# takes its default. `cost_bps = 0` therefore prices the book frictionless and
+# `rr_min = 0` turns the reward:risk floor off, where before either one was
+# silently replaced by the default and there was no way to say them at all. The
+# CFR_* overrides below behave the same way.
+#
+# The exception is the four ceilings and the two sizing inputs — account_equity,
+# risk_per_trade_pct, stop_sigma_max, target_sigma_max, max_pair_corr and
+# max_portfolio_beta. Zero is how you disable a floor, but a ceiling of zero
+# rejects every idea rather than disabling anything, so setting one to 0 (or
+# negative) is refused at startup instead of being honoured or quietly ignored.
+# edge_sigma_daily, min_expectancy_r and min_expectancy_bps accept a negative
+# value on purpose: a losing system has a negative edge, and a negative floor is
+# a weaker floor.
+#
+# The sigma band is also checked for ordering, once the defaults below are
+# filled: stop_sigma_min above stop_sigma_max, or target_sigma_max below
+# stop_sigma_min, fails the run at startup. Setting just one side counts —
+# stop_sigma_min = 2.5 crosses the default stop_sigma_max of 2.0 — and an
+# inverted band otherwise loads clean and then drops every idea at the risk
+# gate, which reads like a run that simply found nothing worth trading.
+
 # Position sizing. Currency at risk per trade = account_equity x
 # risk_per_trade_pct / 100; shares = that divided by the stop distance, with any
 # one position capped at 25% of equity.
 #account_equity      = 100000
 #risk_per_trade_pct  = 0.5
 
-# Round-trip cost assumption (spread + commission + slippage), charged against
-# every expectancy calculation.
+# Round-trip cost assumption (spread + commission + slippage) for a name at the
+# liquidity floor below. It is scaled down for more liquid names — a mega-cap
+# does not pay a $20M-a-day listing's spread — so this is a ceiling rather than a
+# flat charge. See costTiers in internal/orchestrator/riskgate.go.
 #cost_bps = 30
 
 # Hard geometry limits, in units of sigma_daily x sqrt(timeframe_days).
@@ -209,8 +245,13 @@
 #adv_min_usd = 20000000
 
 # Book-level limits: pairwise return correlation above which two same-direction
-# ideas are one position, and the bound on both the average absolute beta and the
-# net signed beta of the book.
+# ideas are one position, and the bound on the book's beta-adjusted exposure —
+# Σ|beta × notional| / account_equity for the gross limit and the signed sum for
+# the net one, both read as a multiple of the account. It used to be a per-idea
+# *average*, which any low-beta name could dilute: on 2026-09-03 a book that
+# failed at 1.62 was fixed by dropping a five-domain idea for a quant-only one
+# whose only merit was a low beta. Every position adds to the new figure, so the
+# only way down is to drop or shrink the exposure itself.
 #max_pair_corr      = 0.75
 #max_portfolio_beta = 1.5
 
@@ -223,11 +264,22 @@
 # replaces this prior entirely and the value below stops being used.
 #edge_sigma_daily = 0.02
 
-# Simulated expectancy floor, in basis points of entry and net of costs. The gate
-# used to reject only a negative expectancy, so a run shipped ideas at +3.0 and
-# +5.7bps — numbers indistinguishable from zero against a 30bps cost assumption
-# and an assumed edge. Ten sits inside the observed 3.0–24.1 spread.
-#min_expectancy_bps = 10
+# Simulated expectancy floor, as a multiple of the trade's own risk and net of
+# costs. This is the gate's expectancy test.
+#
+# It replaced a floor in basis points of entry, which was proportional to the
+# stop distance and so graded volatility rather than construction: on 2026-09-01
+# five ideas with near-identical geometry (stop ~1.3σ, target ~2.6σ, R:R ~1.9)
+# scored +28.7 down to −3.1bps in exact order of σ_daily, and the three calmest
+# were dropped. The floor sits just clear of the simulation's own error (about
+# 0.001R) and no higher: the *level* of this distribution is set by the assumed
+# edge below, and a floor placed inside an assumption measures the assumption.
+#min_expectancy_r = 0.005
+
+# A secondary floor in basis points of entry, default 0 — which refuses only a
+# geometry that loses money outright, the one verdict that figure can carry on
+# its own. Set it if you want the old test back as well.
+#min_expectancy_bps = 0
 
 # How past ideas are replayed by `cfr scoreboard`.
 #[scoreboard]
@@ -242,3 +294,29 @@
 #contact_email    = "you@example.com"  # sent to SEC EDGAR as User-Agent contact
 #alphavantage_key = ""
 #fred_key         = ""
+
+# Alpaca Markets: daily bars and Benzinga headlines for US listings.
+#
+# Read-only market data — paper-trading keys are sufficient and are the safer
+# credential to put here, since they cannot place an order. Both halves are
+# needed; with neither set, prices and news fall back to Yahoo exactly as before.
+#
+# Why it is worth setting: Yahoo's chart endpoint is one request per ticker, so a
+# universe-wide pre-screen fires ~272 of them per run and this host has been
+# answered with HTTP 429 on every Yahoo endpoint as a result. Alpaca serves many
+# symbols per request — 154 US names in 2 calls — which both restores the US half
+# of the universe and takes the load off Yahoo for the foreign half, which nothing
+# else can reach. Alpaca is US-only: eu50 and asia100 stay on Yahoo, as do index
+# benchmarks (^GSPC, ^N225, …) and FX pairs.
+#
+# The free "Basic" plan is enough: daily bars back to 2016 and news back to 2015,
+# 200 requests a minute. Bars are always requested on the consolidated SIP feed,
+# never IEX. Measured over the 119 US universe names, IEX reports dollar volume a
+# median 24x too small (11.8x-49.1x) while returning HTTP 200 and closes matching
+# SIP to a few cents; 13 of those 119 mega-caps then fall under the $20M ADV floor
+# and vanish from the pre-screen, looking like a perfectly normal result.
+#
+# Env: APCA_API_KEY_ID / APCA_API_SECRET_KEY (Alpaca's own names), or
+# CFR_ALPACA_KEY_ID / CFR_ALPACA_SECRET_KEY, which take precedence.
+#alpaca_key_id     = ""
+#alpaca_secret_key = ""

@@ -101,8 +101,23 @@ func (d *detailModel) View() string {
 	}
 	sb.WriteString(titleStyle.Render(fmt.Sprintf("#%d %s — %s", idea.Rank, idea.Ticker, idea.Name)))
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("%s  %s · confidence %d%%  %s\n\n",
+	sb.WriteString(fmt.Sprintf("%s  %s · confidence %d%%  %s\n",
 		dir, subtitleStyle.Render(idea.Index), idea.Confidence, confidenceBar(idea.Confidence)))
+	// Confidence alone cannot distinguish a thin idea every domain agreed on
+	// from a well-covered one whose domains fought — both land in the same
+	// place. The second line says which this is.
+	if idea.BaseConfidence > 0 {
+		line := fmt.Sprintf("  computed base %d%%", idea.BaseConfidence)
+		if idea.Consensus > 0 {
+			line += fmt.Sprintf(" · %.0f%% domain agreement", idea.Consensus*100)
+		}
+		if len(idea.DomainScores) > 0 {
+			line += fmt.Sprintf(" · %d domain(s) scored it", len(idea.DomainScores))
+		}
+		sb.WriteString(mutedStyle.Render(line))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
 
 	// Levels table.
 	if idea.Entry > 0 {

@@ -113,6 +113,33 @@ func sameUTCDay(a, b time.Time) bool {
 	return au.Year() == bu.Year() && au.YearDay() == bu.YearDay()
 }
 
+// resetIfNewDayLocked rolls the daily count over when the calendar has. Callers
+// hold l.mu. It is shared with DailyBudget rather than inlined in tryAllow
+// because a reader that skips it reports yesterday's spend on the first call of
+// a new day — announcing an exhausted key at the top of a run whose whole budget
+// is in fact available.
+func (l *Limiter) resetIfNewDayLocked(now time.Time) {
+	if !sameUTCDay(now, l.lastReset) {
+		l.dailyCount = 0
+		l.lastReset = now
+		l.save()
+	}
+}
+
+// DailyBudget reports how much of today's allowance this key has spent, and the
+// allowance itself; remaining is limit-used. It is the seam the orchestrator
+// reads to log a nearly-spent free tier at run start and to report exhaustion
+// once, instead of as one identical data_error per ticker.
+//
+// It rolls the day over if the calendar has, but never consumes a request:
+// reading the budget is not spending it.
+func (l *Limiter) DailyBudget() (used, limit int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.resetIfNewDayLocked(time.Now())
+	return l.dailyCount, l.dailyLimit
+}
+
 // tryAllow attempts one admission. exhausted reports that the *daily* budget is
 // spent — the caller must not retry, unlike a merely empty token bucket.
 func (l *Limiter) tryAllow() (ok bool, exhausted bool) {
@@ -120,12 +147,7 @@ func (l *Limiter) tryAllow() (ok bool, exhausted bool) {
 	defer l.mu.Unlock()
 
 	now := time.Now()
-
-	if !sameUTCDay(now, l.lastReset) {
-		l.dailyCount = 0
-		l.lastReset = now
-		l.save()
-	}
+	l.resetIfNewDayLocked(now)
 
 	if l.dailyCount >= l.dailyLimit {
 		return false, true

@@ -45,6 +45,21 @@ receive have published empirical backing; your job is joint interpretation, not 
    VR + calm vol) justify high strength; conflicts (momentum up but reversal z very
    negative in a mean-reverting regime) cap strength at moderate.
 
+### `neutral` is a verdict, not a shrug
+Know what it costs before you use it. The app weights `sign × strength`, and `neutral` has
+sign 0 — so a neutral vote contributes **nothing** to the score while still consuming this
+domain's full 35% of the weight. That is the largest single weight in the pipeline, and
+spending it on a zero is the most expensive thing you can do; `missing` is cheaper, because
+the coverage arithmetic can at least account for a gap.
+
+The metrics you are given rarely say nothing at all. Contradiction between families is what
+the **0–2** and **3–4** bands are for: a signed vote at strength 2 says "the momentum and
+the reversal read disagree and I lean this way by a hair", which is information. `neutral`
+says the pack had no view, which is almost never true.
+
+Reserve it for a genuine standoff of comparable force, and say in the note which two
+families are opposed.
+
 ## Strength rubric (anchored)
 - **0–2** — signals contradict each other or history is insufficient.
 - **3–4** — weak/mixed; one supportive metric, others flat or opposing.

@@ -25,8 +25,8 @@ import (
 // single `quant 8` scored 36 against ORCL's five-domain 26. So scarceCap = 40
 // sits *above* what a scarce-coverage name reaches at the strengths the rubrics
 // actually use, and never binds. What bounds a lone domain outranking a consensus
-// is the funnel: universe.MeritCaps.QuantOnly stops the shortlist filling up with
-// names four of the five domains cannot see. The caps stay as a redundant floor:
+// is the funnel: universe.MeritCaps.ThinlyCovered stops the shortlist filling up
+// with names most of the five domains cannot see. The caps stay as a redundant floor:
 // they cost nothing and they keep working if the weights are reconfigured.
 const (
 	thinCoverage    = 0.6 // below this share of total domain weight → cap 55
@@ -83,6 +83,19 @@ type BaseScore struct {
 	// CoveredWeight is the share of total domain weight that actually scored
 	// this ticker (a domain that listed it as `missing` does not count).
 	CoveredWeight float64 `json:"covered_weight"`
+	// Consensus is how much of the evidence's magnitude survives the domains
+	// disagreeing: `|Σ w·sign·s| / Σ w·|s|`, ∈ [0, 1]. One means every domain
+	// that spoke pointed the same way; zero means they cancelled exactly.
+	//
+	// It reads no evidence Signed does not already read, and it changes nothing —
+	// ranking, capping and the Chief's band are all untouched. It exists because
+	// the base score is one number doing two jobs, *how much evidence* and *how
+	// much agreement*, and the two are not the same fact. On 2026-09-01 O39.SI
+	// scored 32 on one loud domain and MRK scored 31 on five that disagreed; the
+	// number said they were equally good ideas and every reader of it — the
+	// Chief, the confidence bar, the scoreboard's buckets — had no way to see
+	// which was which.
+	Consensus float64 `json:"consensus"`
 	// Domains maps each domain that scored the ticker to its signed strength
 	// (−10…+10). A neutral bias is 0 but still counts as coverage.
 	Domains map[string]int `json:"domains,omitempty"`
@@ -118,8 +131,12 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 
 	type accum struct {
 		weighted float64
-		covered  float64
-		domains  map[string]int
+		// gross is Σ w·strength/10 with the signs stripped — the magnitude the
+		// domains would have produced had they all agreed. It is the denominator
+		// of Consensus.
+		gross   float64
+		covered float64
+		domains map[string]int
 	}
 	byTicker := make(map[string]*accum)
 	order := make([]string, 0, len(shortlist))
@@ -171,6 +188,7 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 				sign = -1
 			}
 			a.weighted += weight * float64(sign) * float64(strength) / 10
+			a.gross += weight * float64(strength) / 10
 			a.covered += weight
 			a.domains[domain] = sign * strength
 		}
@@ -207,6 +225,9 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 					b.Scaled = -1
 				}
 			}
+		}
+		if a.gross > 0 {
+			b.Consensus = abs(a.weighted) / a.gross
 		}
 		if len(b.Domains) == 0 {
 			b.Domains = nil
@@ -271,12 +292,15 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 	sb.WriteString(fmt.Sprintf("**Start from `base` and adjust by at most ±%d**, naming each adjustment. ", band))
 	sb.WriteString("`covered` is the share of total domain weight behind the number; a low `covered` has already lowered `base`, ")
 	sb.WriteString("so do not discount thin coverage a second time. `cap` is the further ceiling coverage imposes. ")
+	sb.WriteString("`agree` is how much of the evidence's magnitude survived the domains disagreeing (100% = every domain that spoke pointed the same way). ")
+	sb.WriteString("It is *already inside* `base` and is shown only so you can tell a thin-but-unanimous name from a well-covered name whose domains fought: ")
+	sb.WriteString("both can land on the same `base`, and they are not the same idea. Do not adjust for it — it is not new evidence.\n\n")
 	sb.WriteString("Per-domain cells are signed strengths (−10…+10); `·` means that domain had no data for the name.\n\n")
-	sb.WriteString("| ticker | base dir | base | covered | cap |")
+	sb.WriteString("| ticker | base dir | base | covered | agree | cap |")
 	for _, d := range baseScoreDomains {
 		sb.WriteString(" " + d + " |")
 	}
-	sb.WriteString("\n|---|---|---|---|---|")
+	sb.WriteString("\n|---|---|---|---|---|---|")
 	for range baseScoreDomains {
 		sb.WriteString("---|")
 	}
@@ -291,8 +315,12 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 		if b.Cap > 0 {
 			cap = fmt.Sprintf("%d", b.Cap)
 		}
-		sb.WriteString(fmt.Sprintf("| %s | %s | %d | %.0f%% | %s |",
-			b.Ticker, dir, b.Confidence, b.CoveredWeight*100, cap))
+		agree := "—"
+		if b.CoveredWeight > 0 {
+			agree = fmt.Sprintf("%.0f%%", b.Consensus*100)
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s | %d | %.0f%% | %s | %s |",
+			b.Ticker, dir, b.Confidence, b.CoveredWeight*100, agree, cap))
 		for _, d := range baseScoreDomains {
 			if v, ok := b.Domains[d]; ok {
 				sb.WriteString(fmt.Sprintf(" %+d |", v))

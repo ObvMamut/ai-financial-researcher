@@ -2,6 +2,7 @@ package universe
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -282,7 +283,15 @@ func TestCapMeritBoundsTheNamesOnlyQuantCanGrade(t *testing.T) {
 		v, _ := strconv.ParseFloat(c.Reason, 64)
 		return v
 	}
-	reachable := func(c model.Candidate) bool { return !strings.Contains(c.Ticker, ".") }
+	// A foreign listing with no US line reaches quant and macro — the two
+	// computed from its own bars — but not fundamentals, sentiment or news:
+	// 0.45 of the weight where a US name reaches all of it.
+	coverage := func(c model.Candidate) float64 {
+		if strings.Contains(c.Ticker, ".") {
+			return 0.45
+		}
+		return 1.0
+	}
 
 	// The top six composites are all names four of the five domains cannot see.
 	input := []model.Candidate{
@@ -293,11 +302,12 @@ func TestCapMeritBoundsTheNamesOnlyQuantCanGrade(t *testing.T) {
 	}
 
 	out := CapMerit(input, MeritCaps{
-		Max: 6, PerIndex: 5, QuantOnly: 2, Score: score, Reachable: reachable,
+		Max: 6, PerIndex: 5, ThinlyCovered: 2, CoverageFloor: 0.8,
+		Score: score, Coverage: coverage,
 	})
 	got := tickers(out)
 	if want := []string{"8035.T", "O39.SI", "MU", "ORCL", "TTD"}; !equal(got, want) {
-		t.Errorf("got %v, want %v — two quant-only names, then every reachable one", got, want)
+		t.Errorf("got %v, want %v — two thinly covered names, then every fully covered one", got, want)
 	}
 	// The cap is hard in the backfill too. A soft one would be no cap at all:
 	// the second pass would refill exactly the slots the first just protected.
@@ -305,14 +315,31 @@ func TestCapMeritBoundsTheNamesOnlyQuantCanGrade(t *testing.T) {
 		t.Errorf("got %d names, want fewer than max — the backfill ignored the cap", len(out))
 	}
 
-	// A nil Reachable or a zero cap leaves the old behaviour untouched.
+	// A nil Coverage, a zero cap or a zero floor leaves the old behaviour
+	// untouched.
 	for _, caps := range []MeritCaps{
-		{Max: 6, PerIndex: 5, QuantOnly: 2, Score: score},
-		{Max: 6, PerIndex: 5, Score: score, Reachable: reachable},
+		{Max: 6, PerIndex: 5, ThinlyCovered: 2, CoverageFloor: 0.8, Score: score},
+		{Max: 6, PerIndex: 5, ThinlyCovered: 2, Score: score, Coverage: coverage},
+		{Max: 6, PerIndex: 5, CoverageFloor: 0.8, Score: score, Coverage: coverage},
 	} {
 		if got := len(CapMerit(input, caps)); got != 6 {
-			t.Errorf("an unconfigured quant-only cap trimmed the shortlist to %d", got)
+			t.Errorf("an unconfigured coverage cap trimmed the shortlist to %d", got)
 		}
+	}
+
+	// And a floor the sources clear is no cap: the same six names come back. This
+	// is what makes the cap loosen by itself as coverage widens — map these
+	// listings to US lines and they stop being capped — rather than needing to
+	// be retuned. It is also how the cap died in practice: while news counted as
+	// globally groundable, every listing in the universe expected 0.70, the
+	// production floor of 0.6 was under all of them, and `thinly_covered` was
+	// null on every run.
+	loose := CapMerit(input, MeritCaps{
+		Max: 6, PerIndex: 5, ThinlyCovered: 2, CoverageFloor: 0.4,
+		Score: score, Coverage: coverage,
+	})
+	if got := len(loose); got != 6 {
+		t.Errorf("got %d names under a floor every candidate clears, want 6", got)
 	}
 }
 
@@ -334,4 +361,55 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestDedupeCountsAgreementBetweenScouts(t *testing.T) {
+	// REGN and AMGN were each nominated by the sp500 and nq100 scouts on
+	// 2026-09-03 — the strongest cross-index agreement the screening stage can
+	// produce — and both were dropped by a merit sort that ranked on the
+	// pre-screen composite alone, because the merge left no trace of the second
+	// nomination.
+	got := Dedupe([]model.Candidate{
+		{Ticker: "REGN", Name: "Regeneron", Bias: model.BiasBullish, Index: "sp500"},
+		{Ticker: "MU", Name: "Micron", Bias: model.BiasBullish, Index: "sp500"},
+		{Ticker: "REGN", Name: "Regeneron", Bias: model.BiasBullish, Index: "nq100"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates, want REGN and MU merged to 2: %+v", len(got), got)
+	}
+	if got[0].Ticker != "REGN" || got[0].Nominations != 2 {
+		t.Errorf("REGN nominations = %d, want 2: %+v", got[0].Nominations, got[0])
+	}
+	if got[0].Index != "sp500" {
+		t.Errorf("the merged row moved index to %q — the first-seen row is authoritative", got[0].Index)
+	}
+	if got[1].Nominations != 1 {
+		t.Errorf("MU nominations = %d, want 1", got[1].Nominations)
+	}
+	if len(got[0].Contested) != 0 {
+		t.Errorf("two scouts agreeing were recorded as contested: %v", got[0].Contested)
+	}
+}
+
+func TestDedupeRecordsOppositeBiasesRatherThanPickingOne(t *testing.T) {
+	// QCOM, 2026-09-03: nq100 nominated it bullish and sp500 bearish. The merge
+	// kept whichever came first and said nothing, so the direction the pipeline
+	// traded was decided by the order the scouts were collected in.
+	got := Dedupe([]model.Candidate{
+		{Ticker: "QCOM", Name: "Qualcomm", Bias: model.BiasBearish, Index: "sp500"},
+		{Ticker: "QCOM", Name: "Qualcomm", Bias: model.BiasBullish, Index: "nq100"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want 1: %+v", len(got), got)
+	}
+	if got[0].Bias != model.BiasBearish {
+		t.Errorf("bias = %s, want the first-seen bearish reading", got[0].Bias)
+	}
+	if want := []string{"nq100"}; !reflect.DeepEqual(got[0].Contested, want) {
+		t.Errorf("contested = %v, want %v", got[0].Contested, want)
+	}
+	// A contradiction is not agreement, so it must not also pay the bonus.
+	if got[0].Nominations != 1 {
+		t.Errorf("nominations = %d — an opposite reading is not a second vote", got[0].Nominations)
+	}
 }

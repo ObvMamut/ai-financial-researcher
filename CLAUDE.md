@@ -59,7 +59,8 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
     (`throttleCLI`/`throttleSem` in `pool.go`), covering gemini and local.
   (HTTP to *market-data* sources remains fine and expected — `internal/marketdata` talks to
   the keyless Yahoo Finance chart and option-chain APIs and to SEC EDGAR, and optionally
-  FRED/AlphaVantage when keyed.)
+  FRED/AlphaVantage/Alpaca when keyed. Alpaca is a market-data source like the others and
+  sits *inside* this rule, not as an exception to it: the constraint is about model access.)
 - **Cost split:** the **cheap engine** (agy CLI, remote API, *or* a local model) does cheap,
   parallel research (screening + domain reports); **Claude** does the single heavy
   synthesis/scoring step (Chief Analyst). The split holds whichever cheap engine is selected,
@@ -72,7 +73,8 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
 ## Architecture map
 
 ```
-cmd/cfr/        entry point + subcommands: bare = TUI, `run` (headless), `scoreboard`
+cmd/cfr/        entry point + subcommands: bare = TUI, `run` (headless), `scoreboard`,
+                `postmortem`
 internal/
   tui/          Bubble Tea screens: app (router), home, run (status), results,
                 history, reports, scoreboard
@@ -82,17 +84,32 @@ internal/
   agents/       persona registry: load agents/*.md, assemble prompts
   universe/     index constituents (data/*.csv), dedupe/cap, benchmark symbols
   quant/        pure-stdlib statistical metrics (momentum, YZ vol, VR, …) — no TA
-  marketdata/   HTTP data providers: Yahoo chart API (keyless), EDGAR/FRED/AV (keyed);
+  marketdata/   HTTP data providers: Yahoo chart + search-news + option chain
+                (keyless), EDGAR (keyless), FRED/AV/Alpaca (keyed);
+                prices.go routes daily bars per symbol — alpaca.go for US
+                equities (batched, many symbols per request), yahoo.go for
+                foreign listings, index benchmarks and FX; alpacanews.go and
+                yahoonews.go both serve the news domain and share newsfilter.go;
                 exchange.go maps a ticker suffix to its currency and market close,
                 fx.go converts turnover/sizing to USD, yahoocrumb.go does the
-                cookie+crumb handshake the option chain now requires
+                cookie+crumb handshake the option chain now requires;
+                insidersignal.go computes the six-leg sentiment positioning
+                verdict from edgarform4/edgarform144/edgarstakes/edgar13f and
+                optionflow — the agent obeys it, it does not derive it;
+                adr.go resolves a foreign listing to its US line from
+                data/adr_map.csv, whose `venue` column gates the row (only
+                NYSE/NASDAQ resolve; OTC and DELISTED rows are audit records
+                the loader skips) and doubles as the foreign-private-issuer
+                registry the Form 4 exemption reads
   model/        shared types: Report, TradeIdea, RunState, AgentStatus
   store/        run artifacts under runs/<timestamp>/ (reports, prices/, quant.json,
                 prescreen.json)
   config/       settings: defaults → ~/.config/cfr/config.toml → ./cfr.toml → env
   scoreboard/   past-idea performance: each idea replayed through its own daily
                 bars (fill, then first barrier touched); `--legacy` keeps the old
-                mark-to-current-price math
+                mark-to-current-price math; attribution.go counts the record by
+                setup/coverage/consensus/sector/fill and postmortem.go enforces the
+                lessons an agent draws from it against those counts
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -106,8 +123,9 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 ## Pipeline (independent research)
 
 0. **Stage 0.5 — pre-screen (in-process, no model):** fetch 2y daily OHLCV for *every*
-   constituent of the selected indices, compute `internal/quant` metrics, and rank each
-   index on a composite (`z(mom12-1) + 0.5·z(ret63d)`, minus a short-term reversal penalty
+   constituent of the selected indices (US names batched through Alpaca in a handful of
+   multi-symbol requests when a key is configured, the rest one-at-a-time from Yahoo), compute `internal/quant` metrics, and rank each
+   index on a composite (`0.5·z(mom12-1) + z(ret63d)`, minus a short-term reversal penalty
    when the recent move runs with the trend; standardising within the index *is* the
    relative-strength adjustment, so there is no separate `rs63` term — it was arithmetically
    identical to `z(ret63d)`). Illiquid and short-history names are excluded, against turnover
@@ -117,14 +135,19 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    table* → ~5–10 nominations each. Nominations outside the index's constituent list are
    dropped. Orchestrator merges/dedupes (incl. cross-listings) and trims to
    `max_shortlist` by merit — the pre-screen composite aligned with the nominated
-   direction — capped at `max_per_index` per index.
+   direction, plus a bonus per agreeing scout and a penalty when another scout nominated
+   the same name the other way — capped at `max_per_index` per index. A name three of the
+   five domains cannot reach (an unmapped foreign listing: 0.45 of the weight) is capped
+   by `max_thinly_covered`.
 2. **Stage 1.5 (in-process, no model):** compute `internal/quant` metrics for the
    shortlist (mostly cache hits from Stage 0.5), persist `prices/` + `quant.json`.
 3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
    News additionally carries a bulk-fetched verified earnings calendar; sentiment reads
-   SEC Form 4 insider filings and the Yahoo option chain, not news tone. Whether that
+   positioning, not news tone — Form 4 insider trades, Form 144 planned sales, 13D/13G
+   ownership schedules, 23 tracked managers' 13F changes, and the Yahoo option chain's
+   open interest *and* traded volume as two separate legs. Whether that
    positioning is *directional* is decided in Go (`marketdata/insidersignal.go`), not by the
    agent: routine scheduled selling and a put/call ratio near 1.0 are the resting state of
    the market, and reading them as bearish gave the domain one bullish score in 34 across
@@ -143,15 +166,22 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    every name, so it rescales without reordering. The result is both shown to the Chief and
    enforced against its output; `internal/tui`'s confidence bar and `internal/scoreboard`'s
    buckets read the same scale, and all three must move together.
+3.75. **Post-mortem (cheap engine, one call):** once ≥10 past ideas have closed,
+   `internal/scoreboard/attribution.go` counts the record by setup shape, coverage,
+   consensus, sector and fill rate, and one cheap-engine call turns those cells into prose
+   lessons. Every lesson must name a cell that exists with ≥5 closed trades or it is
+   deleted, exactly as a specialist's ungrounded score is. Weight suggestions are advisory
+   and never applied. Never blocks a run; surfaced by `cfr postmortem`.
 4. **Chief Analyst (Claude):** reads the 5 reports + the computed base-score table +
    compact verified quant lines + — once ≥10 past ideas have closed — the pipeline's own
-   replayed track record, adjusts each base by at most `chief_adjust_band` points with a
-   named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived from
+   replayed track record and the lessons drawn from it, adjusts each base by at most
+   `chief_adjust_band` points with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived from
    vol-scaled distances) as a fenced ```json block that Go parses into
    `[]model.TradeIdea`. Confidence outside the band is clamped in Go.
 5. **Risk gate (in-process, no model):** `riskgate.go` sizes each idea from the account's
    risk budget and checks stop/target bands, reward:risk, liquidity and simulated
-   expectancy, plus book-level correlation, sector and beta. Violations buy one corrective
+   expectancy, plus book-level correlation, sector and beta-adjusted exposure measured
+   against the account rather than averaged over the idea count. Violations buy one corrective
    re-prompt; per-idea violations that survive it drop the idea. Shipping fewer than 5
    ideas is the intended outcome. At ≥30 closed ideas the expectancy simulation swaps its
    assumed edge for the measured one.
@@ -169,6 +199,7 @@ go test ./...         # unit tests
 go run ./cmd/cfr      # launch the TUI
 go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3 degraded)
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
+go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
 ```
 
 Configuration: `cfr.toml.example` documents every key. Precedence: defaults →

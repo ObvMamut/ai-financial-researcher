@@ -20,6 +20,7 @@ func clearEnv(t *testing.T) {
 		"CFR_CHEAP_ENGINE", "CFR_API_BASE_URL", "CFR_API_MODEL", "CFR_API_KEY", "DEEPSEEK_API_KEY",
 		"CFR_LOCAL_BASE_URL", "CFR_LOCAL_MODEL", "CFR_LOCAL_KEY", "CFR_LOCAL_CONCURRENCY",
 		"CFR_API_MAX_TOKENS", "CFR_LOCAL_MAX_TOKENS",
+		"APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "CFR_ALPACA_KEY_ID", "CFR_ALPACA_SECRET_KEY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -363,4 +364,197 @@ func TestLocalMaxTokensFromEnv(t *testing.T) {
 	if s.API.MaxTokens != 4096 {
 		t.Errorf("API.MaxTokens = %d, want 4096 — the two must not share a variable", s.API.MaxTokens)
 	}
+}
+
+// --- Phase 1.5: an explicit zero in the [risk] block must survive ---
+//
+// The risk block used zero as a sentinel twice over: the loader only assigned a
+// value when it was > 0, and riskgate.riskDefaults then replaced anything <= 0.
+// So `cost_bps = 0` — "price this book frictionless" — came back as 30, and an
+// operator had no way at all to say it. These tests pin the presence rule: a key
+// the operator wrote is honoured at whatever value they wrote, and a key they
+// omitted still takes the default.
+
+func TestExplicitZeroCostBpsSurvivesTheLoader(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[risk]\ncost_bps = 0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Risk.CostBps != 0 {
+		t.Errorf("CostBps = %v, want 0 (explicitly frictionless)", s.Risk.CostBps)
+	}
+	if !s.Risk.Set("cost_bps") {
+		t.Error("cost_bps was written in the file but is not marked explicit, so riskDefaults will overwrite it")
+	}
+}
+
+func TestOmittedRiskKeyIsNotMarkedExplicit(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[risk]\nrr_min = 2.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Risk.Set("cost_bps") {
+		t.Error("cost_bps is absent from the file but marked explicit")
+	}
+	if !s.Risk.Set("rr_min") || s.Risk.RRMin != 2.0 {
+		t.Errorf("rr_min = %v explicit=%v, want 2.0 explicit", s.Risk.RRMin, s.Risk.Set("rr_min"))
+	}
+}
+
+func TestExplicitZeroFloorFromEnvSurvivesTheLoader(t *testing.T) {
+	isolate(t)
+	t.Setenv("CFR_ADV_MIN_USD", "0")
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Risk.ADVMinUSD != 0 || !s.Risk.Set("adv_min_usd") {
+		t.Errorf("ADVMinUSD = %v explicit=%v, want 0 explicit (liquidity floor disabled)",
+			s.Risk.ADVMinUSD, s.Risk.Set("adv_min_usd"))
+	}
+}
+
+func TestAZeroCeilingIsAConfigError(t *testing.T) {
+	// Zero is the identity for a floor and the annihilator for a ceiling: a stop
+	// band whose maximum is 0 rejects every idea ever written. That is a typo,
+	// not a policy, so it is refused at load rather than honoured or silently
+	// replaced.
+	for _, key := range []string{"stop_sigma_max", "target_sigma_max", "max_pair_corr", "max_portfolio_beta", "account_equity", "risk_per_trade_pct"} {
+		t.Run(key, func(t *testing.T) {
+			_, cwd := isolate(t)
+			body := "[risk]\n" + key + " = 0.0\n"
+			if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(); err == nil {
+				t.Errorf("Load accepted %s = 0, which forbids every idea", key)
+			}
+		})
+	}
+}
+
+func TestANegativeFloorIsAConfigError(t *testing.T) {
+	for _, key := range []string{"cost_bps", "rr_min", "stop_sigma_min", "adv_min_usd"} {
+		t.Run(key, func(t *testing.T) {
+			_, cwd := isolate(t)
+			body := "[risk]\n" + key + " = -1.0\n"
+			if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(); err == nil {
+				t.Errorf("Load accepted %s = -1", key)
+			}
+		})
+	}
+}
+
+func TestANegativeMeasuredEdgeIsAcceptedAndMarked(t *testing.T) {
+	// edge_sigma_daily is a prior, not a limit: it is negative exactly when the
+	// system is losing money, and refusing to express that is refusing to model
+	// the case the gate exists for.
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[risk]\nedge_sigma_daily = -0.02\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Risk.EdgeSigmaDaily != -0.02 || !s.Risk.Set("edge_sigma_daily") {
+		t.Errorf("EdgeSigmaDaily = %v explicit=%v, want -0.02 explicit",
+			s.Risk.EdgeSigmaDaily, s.Risk.Set("edge_sigma_daily"))
+	}
+}
+
+func TestAHigherPrecedenceFileCanZeroAFloorTheGlobalSet(t *testing.T) {
+	home, cwd := isolate(t)
+	global := filepath.Join(home, ".config", "cfr")
+	if err := os.MkdirAll(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(global, "config.toml"), []byte("[risk]\ncost_bps = 45.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[risk]\ncost_bps = 0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Risk.CostBps != 0 {
+		t.Errorf("CostBps = %v, want 0 — the local file's explicit zero must beat the global 45", s.Risk.CostBps)
+	}
+}
+
+// Alpaca is the US price and news source added after Yahoo's chart endpoint
+// began answering 429. Both halves of the credential must arrive by the same
+// three routes every other key does, and the CFR_-prefixed alias must win over
+// Alpaca's own env convention when both are set.
+func TestLoadAlpacaCredentials(t *testing.T) {
+	t.Run("from file", func(t *testing.T) {
+		_, cwd := isolate(t)
+		toml := `
+[providers]
+alpaca_key_id     = "file-id"
+alpaca_secret_key = "file-secret"
+`
+		if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(toml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if s.Providers.AlpacaKeyID != "file-id" || s.Providers.AlpacaSecret != "file-secret" {
+			t.Errorf("file keys not loaded: %+v", s.Providers)
+		}
+	})
+
+	t.Run("alpaca's own env convention", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("APCA_API_KEY_ID", "apca-id")
+		t.Setenv("APCA_API_SECRET_KEY", "apca-secret")
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if s.Providers.AlpacaKeyID != "apca-id" || s.Providers.AlpacaSecret != "apca-secret" {
+			t.Errorf("APCA_* not read: %+v", s.Providers)
+		}
+	})
+
+	t.Run("CFR_ alias wins", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("APCA_API_KEY_ID", "apca-id")
+		t.Setenv("APCA_API_SECRET_KEY", "apca-secret")
+		t.Setenv("CFR_ALPACA_KEY_ID", "cfr-id")
+		t.Setenv("CFR_ALPACA_SECRET_KEY", "cfr-secret")
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if s.Providers.AlpacaKeyID != "cfr-id" || s.Providers.AlpacaSecret != "cfr-secret" {
+			t.Errorf("CFR_ALPACA_* did not take precedence: %+v", s.Providers)
+		}
+	})
+
+	t.Run("absent is not an error", func(t *testing.T) {
+		isolate(t)
+		s, err := Load()
+		if err != nil {
+			t.Fatalf("no Alpaca key must not fail the load: %v", err)
+		}
+		if s.Providers.AlpacaKeyID != "" || s.Providers.AlpacaSecret != "" {
+			t.Errorf("keys invented from nowhere: %+v", s.Providers)
+		}
+	})
 }

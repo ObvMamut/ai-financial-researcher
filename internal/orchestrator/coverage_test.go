@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,12 +11,31 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
 
+// regimePack builds a quant pack in which each ticker is measured against the
+// named benchmark, and every named benchmark has computed regime metrics. It is
+// what grounds the macro domain.
+func regimePack(byTicker map[string]string) *quant.Pack {
+	p := quant.NewPack()
+	for t, bench := range byTicker {
+		p.ByTicker[t] = quant.Metrics{Symbol: t, Benchmark: bench}
+		if bench != "" {
+			p.Benchmarks[bench] = quant.Metrics{Symbol: bench}
+		}
+	}
+	return p
+}
+
 func packWith(domain string, covered map[string]bool, macro []marketdata.Fact) *marketdata.DataPack {
 	p := marketdata.NewDataPack(domain)
 	for t, ok := range covered {
 		p.Coverage[t] = ok
 		if ok {
-			p.ByTicker[t] = marketdata.TickerData{Ticker: t}
+			// A covered ticker carries at least one fact of the domain's own
+			// evidence — coverage means evidence, not merely that a provider
+			// answered. See marketdata.HasDomainEvidence.
+			p.ByTicker[t] = marketdata.TickerData{Ticker: t, Facts: []marketdata.Fact{
+				{Label: "Headline 1", Value: "something happened"},
+			}}
 		}
 	}
 	p.MacroFacts = macro
@@ -32,8 +52,8 @@ func TestGroundedForIsPerDomain(t *testing.T) {
 	if groundedFor("sentiment", pack, nil) {
 		t.Error("a sentiment pack with no per-ticker rows is not grounded")
 	}
-	if !groundedFor("macro", pack, nil) {
-		t.Error("macro is grounded by the regime facts, not per-ticker rows")
+	if !groundedFor("macro", pack, regimePack(map[string]string{"AAPL": "^GSPC"})) {
+		t.Error("macro is grounded by the computed market regime, not per-ticker rows")
 	}
 
 	qp := &quant.Pack{ByTicker: map[string]quant.Metrics{"AAPL": {}}}
@@ -52,45 +72,64 @@ func TestUngroundedForListsTheGaps(t *testing.T) {
 		t.Errorf("ungroundedFor = %v, want %v", got, want)
 	}
 
-	// Macro grounds every name or none; it is never partially covered.
+	// Macro covers a name whose market this run computed a regime for.
 	macroPack := packWith("macro", map[string]bool{"AAPL": false}, []marketdata.Fact{{Label: "CPI"}})
-	if got := ungroundedFor("macro", macroPack, nil, []string{"AAPL", "MSFT"}); len(got) != 0 {
-		t.Errorf("macro facts cover the whole shortlist, got gaps %v", got)
+	qp := regimePack(map[string]string{"AAPL": "^GSPC", "MSFT": "^GSPC"})
+	if got := ungroundedFor("macro", macroPack, qp, []string{"AAPL", "MSFT"}); len(got) != 0 {
+		t.Errorf("the regime covers both names' market, got gaps %v", got)
 	}
 }
 
-// Macro's evidence is four US FRED series. Treating it as regime data that
-// grounds every name let a Taiwanese semiconductor score "strongest macro read"
-// off the US 10-year and CPI, at full 15% weight, with no gap ever recorded.
-func TestMacroCoverageIsRegional(t *testing.T) {
+// Macro grounds on the market regime, which is computed per exchange from the
+// benchmark's own daily bars — the same evidence agents/macro.md is handed and
+// calls its primary source.
+//
+// It used to ground on `IsUSListing && FRED facts`, a rule from when FRED was
+// the whole of its evidence. The regime block was added to the macro prompt
+// afterwards and this predicate stayed behind, so on 2026-09-01 the domain was
+// given evidence for twelve names, scored twelve, and had seven deleted for
+// having none — past the confabulation threshold, which marked the run degraded
+// on an enforcement error rather than an agent one.
+func TestMacroGroundsOnTheComputedRegime(t *testing.T) {
 	pack := packWith("macro", map[string]bool{"AAPL": false, "2330.TW": false},
 		[]marketdata.Fact{{Label: "CPI"}})
+	qp := regimePack(map[string]string{"AAPL": "^GSPC", "2330.TW": "^TWII"})
 
-	if !coveredBy("macro", pack, nil, "AAPL") {
-		t.Error("a US listing is covered by the US macro backdrop")
+	if !coveredBy("macro", pack, qp, "AAPL") {
+		t.Error("a US listing is covered by its own index regime")
 	}
-	if coveredBy("macro", pack, nil, "2330.TW") {
-		t.Error("a Taiwanese listing is not covered by four US FRED series")
+	if !coveredBy("macro", pack, qp, "2330.TW") {
+		t.Error("a Taiwanese listing is covered by ^TWII, which this run priced")
 	}
-
-	// No FRED facts at all: nothing is covered, not even the US names.
-	dry := packWith("macro", map[string]bool{"AAPL": false}, nil)
-	if coveredBy("macro", dry, nil, "AAPL") {
-		t.Error("macro with no facts covers nothing")
-	}
-	if groundedFor("macro", dry, nil) {
-		t.Error("macro with no facts is not grounded")
+	if got := ungroundedFor("macro", pack, qp, []string{"AAPL", "2330.TW"}); len(got) != 0 {
+		t.Errorf("ungroundedFor(macro) = %v, want none", got)
 	}
 
-	got := ungroundedFor("macro", pack, nil, []string{"AAPL", "2330.TW"})
-	if want := []string{"2330.TW"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("ungroundedFor(macro) = %v, want %v", got, want)
+	// A benchmark this run never priced is a real gap, and now registers as one
+	// instead of passing silently as it did while macro was US-only.
+	partial := regimePack(map[string]string{"AAPL": "^GSPC"})
+	partial.ByTicker["2330.TW"] = quant.Metrics{Symbol: "2330.TW", Benchmark: "^TWII"}
+	if coveredBy("macro", pack, partial, "2330.TW") {
+		t.Error("a name whose benchmark was never priced is not covered")
 	}
-	if groundableBy("macro", "2330.TW") {
-		t.Error("no configured source carries a Taiwan macro backdrop")
+	if want := []string{"2330.TW"}; !reflect.DeepEqual(
+		ungroundedFor("macro", pack, partial, []string{"AAPL", "2330.TW"}), want) {
+		t.Errorf("an unpriced benchmark should be the only gap")
 	}
-	if !groundableBy("macro", "AAPL") {
-		t.Error("FRED can ground a US listing")
+
+	// No regime at all: nothing is covered, FRED facts or not.
+	if coveredBy("macro", pack, nil, "AAPL") {
+		t.Error("macro with no computed regime covers nothing")
+	}
+	if groundedFor("macro", pack, quant.NewPack()) {
+		t.Error("macro with an empty quant pack is not grounded")
+	}
+
+	// And every listing is groundable, because the regime source is global.
+	for _, tk := range []string{"AAPL", "2330.TW", "BMW.DE"} {
+		if !groundableBy("macro", tk) {
+			t.Errorf("macro should be groundable for %s: its benchmark is priced from the same global source as quant", tk)
+		}
 	}
 }
 
@@ -104,8 +143,9 @@ func TestCoverageGapsIncludeMacro(t *testing.T) {
 	if len(gaps) != 1 || gaps[0].Domain != "macro" {
 		t.Fatalf("coverageGaps = %+v, want one macro gap", gaps)
 	}
-	// 2330.TW was never groundable, so only the US name it actually missed counts.
-	if want := []string{"AAPL"}; !reflect.DeepEqual(gaps[0].Missing, want) {
+	// Both are groundable now — the regime is computed per market from a global
+	// price source — so a macro miss on either is a real gap.
+	if want := []string{"2330.TW", "AAPL"}; !reflect.DeepEqual(gaps[0].Missing, want) {
 		t.Errorf("macro gap = %v, want %v", gaps[0].Missing, want)
 	}
 }
@@ -118,31 +158,53 @@ func TestCoverageGapsDegradeTheRun(t *testing.T) {
 		{Domain: "news", Grounded: true, Ungrounded: []string{"GE", "AIR.PA"}},
 		{Domain: "fundamentals", Grounded: false, Ungrounded: []string{"NVDA", "GE", "AIR.PA"}},
 		{Domain: "sentiment", Grounded: true, Ungrounded: []string{"AIR.PA", "000660.KS"}},
-		{Domain: "macro", Grounded: false, Ungrounded: []string{"NVDA", "GE"}},
+		{Domain: "macro", Grounded: false, Ungrounded: []string{"NVDA", "GE", "AIR.PA"}},
 	}
 	got := coverageGaps(statuses)
 	want := []domainGap{
 		{Domain: "fundamentals", Missing: []string{"GE", "NVDA"}},
-		{Domain: "macro", Missing: []string{"GE", "NVDA"}},
+		{Domain: "macro", Missing: []string{"AIR.PA", "GE", "NVDA"}},
 		{Domain: "news", Missing: []string{"GE"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("coverageGaps = %v, want %v", got, want)
 	}
-	// sentiment missed only names with no US line — it got everything it could get.
+	// sentiment and news missed only names with no US line — an option chain is
+	// a US instrument, and a headline search that answers a foreign symbol from
+	// a generic fallback set is not coverage of that company. Neither is a gap.
 	for _, g := range got {
 		if g.Domain == "sentiment" {
 			t.Errorf("%s should not be a gap: %v", g.Domain, g.Missing)
 		}
+		if g.Domain == "news" && contains(g.Missing, "AIR.PA") {
+			t.Errorf("news was charged with a foreign listing it has no feed for: %v", g.Missing)
+		}
+	}
+	// Macro is computed per market from the benchmark's own bars, so a foreign
+	// name it missed is a real gap rather than a structural excuse.
+	for _, g := range got {
+		if g.Domain == "macro" && !contains(g.Missing, "AIR.PA") {
+			t.Errorf("macro missed AIR.PA and its source is global — that is a gap: %v", g.Missing)
+		}
 	}
 }
 
-// 6/12 coverage is complete when the other 6 are non-US listings no provider
-// here can reach. The run that exposed this reported `complete` at 4/12 — 4 of
-// 6 groundable — because two US names were lost to AlphaVantage rate limiting.
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+// 6/12 coverage is complete when the other 6 are names the domain's sources
+// structurally cannot reach. The run that exposed this reported `complete` at
+// 4/12 — 4 of 6 groundable — because two US names were lost to AlphaVantage
+// rate limiting.
 func TestCoverageGapsMeasureTheAchievableSubset(t *testing.T) {
 	allAchievable := []model.DomainStatus{
-		{Domain: "news", Ungrounded: []string{"AIR.PA", "005930.KS", "000660.KS"}},
+		{Domain: "sentiment", Ungrounded: []string{"AIR.PA", "005930.KS", "000660.KS"}},
 		{Domain: "macro"},
 	}
 	if got := coverageGaps(allAchievable); len(got) != 0 {
@@ -262,20 +324,55 @@ func TestConfabulationSeparatesItsKinds(t *testing.T) {
 	}
 }
 
-func TestQuantOnlyNames(t *testing.T) {
+func TestExpectedCoverageCountsTheDomainsThatCanReachAName(t *testing.T) {
+	w := model.DefaultDomainWeights()
+
+	// A US listing reaches everything.
+	if got := expectedCoverage(w, "NVDA"); got != 1 {
+		t.Errorf("expectedCoverage(NVDA) = %.2f, want 1", got)
+	}
+	// A foreign listing with a US line reaches everything too: 2330.TW trades
+	// as TSM, so SEC filings and an option chain exist for it.
+	if got := expectedCoverage(w, "2330.TW"); got != 1 {
+		t.Errorf("expectedCoverage(2330.TW) = %.2f, want 1", got)
+	}
+	// One without a US line keeps quant (.35) and macro (.10), the two computed
+	// from its own bars, and loses fundamentals, sentiment and news. News used
+	// to be counted here on the strength of a keyless headline search that takes
+	// the local symbol — but on 2026-09-03 that search answered all five such
+	// names with the same eight untagged stories, the domain recorded every one
+	// as missing, and 0.70 had already put them above the thin-coverage floor.
+	if got := expectedCoverage(w, "AIR.PA"); math.Abs(got-0.45) > 1e-9 {
+		t.Errorf("expectedCoverage(AIR.PA) = %.2f, want 0.45", got)
+	}
+}
+
+// The run's own report of what it could not reach has to be in the same unit as
+// the score. `quant_only` asked whether *any* provider could see a name, which
+// became true of every listing once news and macro went global — the field would
+// have been empty on every run while two of five domains were still standing
+// down on some names.
+func TestThinlyCoveredNames(t *testing.T) {
 	shortlist := []model.Candidate{
 		{Ticker: "NVDA"}, {Ticker: "AIR.PA"}, {Ticker: "GE"},
 		{Ticker: "2330.TW"}, {Ticker: "hdfcbank.ns"}, {Ticker: "000660.KS"},
 	}
-	// 2330.TW and HDFCBANK.NS trade as TSM and HDB, so the US-only providers
-	// reach them; AIR.PA and 000660.KS have no US line and are quant-only.
-	got := quantOnlyNames(shortlist)
-	if want := []string{"000660.KS", "AIR.PA"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("quantOnlyNames = %v, want %v", got, want)
-	}
+	w := model.DefaultDomainWeights()
 
-	if got := quantOnlyNames([]model.Candidate{{Ticker: "NVDA"}}); len(got) != 0 {
-		t.Errorf("quantOnlyNames = %v on an all-US shortlist, want none", got)
+	// The floor has to bite on something, or MaxThinlyCovered is decoration.
+	// While news was counted for every listing, the least-covered name in the
+	// universe expected 0.70 and this returned empty on every run — which is
+	// exactly what metadata.json recorded on 2026-09-03: "thinly_covered": null,
+	// with three of five shipped ideas scored by one domain or two.
+	got := thinlyCoveredNames(shortlist, w, thinCoverage)
+	if want := []string{"000660.KS", "AIR.PA"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("thinlyCoveredNames = %v at the %.2f floor, want %v", got, thinCoverage, want)
+	}
+	// A listing with a US line is not thin: 2330.TW trades as TSM.
+	for _, name := range got {
+		if name == "2330.TW" || name == "NVDA" || name == "GE" {
+			t.Errorf("%s reaches every domain and was called thinly covered", name)
+		}
 	}
 }
 
@@ -322,9 +419,47 @@ func TestSentimentIsGroundedByItsVerdictNotByItsFetch(t *testing.T) {
 	// sentiment's alone.
 	newsPack := marketdata.NewDataPack("news")
 	newsPack.Coverage["AMGN"] = true
-	newsPack.ByTicker["AMGN"] = marketdata.TickerData{Ticker: "AMGN"}
+	newsPack.ByTicker["AMGN"] = marketdata.TickerData{Ticker: "AMGN", Facts: []marketdata.Fact{
+		{Label: "Headline 1", Value: "something happened"},
+	}}
 	if !coveredBy("news", newsPack, nil, "AMGN") {
 		t.Error("the positioning rule leaked into another domain")
+	}
+}
+
+// The news domain draws on two independent AlphaVantage calls, and the free
+// key's 25-a-day budget runs out. On 2026-09-01 2330.TW was recorded grounded
+// for news carrying one fact — an earnings date — with every headline lost to
+// rate limiting, so it never appeared in coverageGaps and the run's own verdict
+// could not see the starvation.
+func TestNewsIsNotGroundedByAnEarningsDateAlone(t *testing.T) {
+	pack := marketdata.NewDataPack("news")
+	for _, tk := range []string{"AAPL", "2330.TW"} {
+		pack.Coverage[tk] = true
+	}
+	pack.ByTicker["AAPL"] = marketdata.TickerData{Ticker: "AAPL", Facts: []marketdata.Fact{
+		{Label: marketdata.EarningsFactLabel, Value: "2026-09-08"},
+		{Label: "Headline 1", Value: "the flow itself"},
+	}}
+	// Everything the calendar and the ADR note can supply, and no headline.
+	pack.ByTicker["2330.TW"] = marketdata.TickerData{Ticker: "2330.TW", Facts: []marketdata.Fact{
+		{Label: marketdata.EarningsFactLabel, Value: "2026-10-15"},
+		{Label: marketdata.USLineFactLabel, Value: "TSM — news below is coverage of TSM"},
+	}}
+
+	if !coveredBy("news", pack, nil, "AAPL") {
+		t.Error("a name with headlines is covered for news")
+	}
+	if coveredBy("news", pack, nil, "2330.TW") {
+		t.Error("an earnings date is a fact about the calendar, not a read on the flow")
+	}
+	if want := []string{"2330.TW"}; !reflect.DeepEqual(
+		ungroundedFor("news", pack, nil, []string{"AAPL", "2330.TW"}), want) {
+		t.Errorf("the starved name must show as a gap the run can see")
+	}
+	// The date itself is not discarded — it still gates the trade.
+	if !marketdata.HasDomainEvidence("fundamentals", pack.ByTicker["2330.TW"]) {
+		t.Error("the exclusion is news-specific; other domains read their own facts")
 	}
 }
 

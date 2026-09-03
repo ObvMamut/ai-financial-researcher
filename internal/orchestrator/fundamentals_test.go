@@ -26,6 +26,17 @@ func factValue(t *testing.T, p *marketdata.DataPack, label string) string {
 	return ""
 }
 
+func factValueFor(t *testing.T, p *marketdata.DataPack, ticker, label string) string {
+	t.Helper()
+	for _, f := range p.ByTicker[ticker].Facts {
+		if f.Label == label {
+			return f.Value
+		}
+	}
+	t.Fatalf("no fact labelled %q on %s; have %+v", label, ticker, p.ByTicker[ticker].Facts)
+	return ""
+}
+
 func day(s string) time.Time {
 	d, _ := time.Parse("2006-01-02", s)
 	return d
@@ -109,5 +120,54 @@ func TestEnrichFundamentalsSkipsNamesWithNoPrice(t *testing.T) {
 	enrichFundamentals(pack, quant.NewPack())
 	if got := len(pack.ByTicker["AAPL"].Facts); got != before {
 		t.Errorf("added %d fact(s) for a ticker with no verified price", got-before)
+	}
+}
+
+func TestEnrichFundamentalsConvertsAForeignCloseToUSD(t *testing.T) {
+	// BBVA.MC, 2026-09-03: "Market cap (computed) = $143.24B (5708968700 shares
+	// × close 25.09)". The close is €25.09, so that figure is €143.24B — and the
+	// rate to fix it, 1.16036, was already on the metric. Every figure EDGAR
+	// files is USD, so an unconverted close also mixes units into P/E and P/S.
+	pack := marketdata.NewDataPack("fundamentals")
+	pack.ByTicker["BBVA.MC"] = marketdata.TickerData{Ticker: "BBVA.MC", Facts: []marketdata.Fact{
+		{Label: marketdata.FactShares, Value: "5708968700", AsOf: day("2025-12-31")},
+		{Label: marketdata.FactEPSDiluted, Value: "1.45", AsOf: day("2025-12-31")},
+	}}
+	qp := &quant.Pack{ByTicker: map[string]quant.Metrics{
+		"BBVA.MC": {Symbol: "BBVA.MC", LastClose: 25.09, AsOf: "2026-09-01",
+			Currency: "EUR", FXToUSD: 1.16036},
+	}}
+	enrichFundamentals(pack, qp)
+
+	got := factValueFor(t, pack, "BBVA.MC", "Market cap (computed)")
+	if !strings.Contains(got, "166.21B") {
+		t.Errorf("market cap = %q, want 5.709e9 × €25.09 × 1.16036 = $166.21B", got)
+	}
+	if !strings.Contains(got, "EUR→USD at 1.1604") {
+		t.Errorf("the line does not show the conversion it applied: %q", got)
+	}
+	// P/E divides a USD close into USD-filed EPS: 25.09 × 1.16036 ÷ 1.45 = 20.1.
+	if pe := factValueFor(t, pack, "BBVA.MC", "P/E (computed, trailing diluted)"); !strings.HasPrefix(pe, "20.1") {
+		t.Errorf("P/E = %q, want 20.1 on the converted close", pe)
+	}
+}
+
+func TestEnrichFundamentalsRefusesTheMultiplesWithNoRate(t *testing.T) {
+	pack := marketdata.NewDataPack("fundamentals")
+	pack.ByTicker["O39.SI"] = marketdata.TickerData{Ticker: "O39.SI", Facts: []marketdata.Fact{
+		{Label: marketdata.FactShares, Value: "4500000000", AsOf: day("2025-12-31")},
+	}}
+	qp := &quant.Pack{ByTicker: map[string]quant.Metrics{
+		"O39.SI": {Symbol: "O39.SI", LastClose: 31.88, AsOf: "2026-09-02", Currency: "SGD"},
+	}}
+	enrichFundamentals(pack, qp)
+
+	for _, f := range pack.ByTicker["O39.SI"].Facts {
+		if strings.HasPrefix(f.Label, "Market cap (computed)") {
+			t.Errorf("a market cap was printed with no rate to convert it: %s", f.Value)
+		}
+	}
+	if got := factValueFor(t, pack, "O39.SI", "Valuation multiples"); !strings.Contains(got, "SGD") {
+		t.Errorf("the refusal does not name the currency: %q", got)
 	}
 }

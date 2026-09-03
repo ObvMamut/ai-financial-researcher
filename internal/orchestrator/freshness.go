@@ -80,3 +80,21 @@ func staleTickers(asOf map[string]string, now time.Time) []string {
 	sort.Strings(out)
 	return out
 }
+
+// staleFor reports whether one ticker's price series trails its own market's
+// last completed session. It reads the same quant.Pack.Stale list the run's
+// warnings and the metric's own flag are built from, so the risk gate, the
+// Chief's prompt and metadata.json can never disagree about which names are
+// stale.
+func staleFor(v verified, ticker string) bool {
+	if v.Quant == nil {
+		return false
+	}
+	t := strings.ToUpper(strings.TrimSpace(ticker))
+	for _, s := range v.Quant.Stale {
+		if strings.ToUpper(s) == t {
+			return true
+		}
+	}
+	return false
+}

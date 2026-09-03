@@ -2,7 +2,6 @@ package marketdata
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -172,6 +171,11 @@ func TestForm4FetchesTheXMLNotTheRenderedHTML(t *testing.T) {
 // law rendered as a statement about insider behaviour — and the computed leg
 // reads it as "no signal", which is reassurance this source never offered.
 // ASML.AS reached the 2026-09-01 sentiment pack with exactly that.
+//
+// The exemption covers Form 4 and nothing else, so the whale legs still run: a
+// 13D can be filed against any Section 12 class and an ADR sits in tracked
+// managers' 13F tables like anything else. What the issuer must not get is an
+// insider verdict.
 func TestForm4IsInapplicableToAForeignPrivateIssuer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -191,30 +195,39 @@ func TestForm4IsInapplicableToAForeignPrivateIssuer(t *testing.T) {
 
 	td, err := NewEdgarProvider("test@example.com", nil).
 		Fetch(context.Background(), "sentiment", "ASML.AS")
-	if err == nil {
-		t.Fatalf("want the leg absent, got facts %+v", td.Facts)
-	}
-	if !errors.Is(err, ErrNotApplicable) {
-		t.Errorf("a Section 16 exemption is not a fetch failure, got %v", err)
+	if err != nil {
+		t.Fatalf("the whale legs are not Section 16 evidence and should still run: %v", err)
 	}
 	for _, f := range td.Facts {
 		if strings.Contains(f.Value, "no Form 4 filings") {
 			t.Errorf("the false reassurance survived: %q", f.Value)
 		}
+		if f.Label == InsiderSignalLabel || f.Label == InsiderActivityLabel {
+			t.Errorf("an exempt issuer got an insider leg: %q = %q", f.Label, f.Value)
+		}
 	}
+	// The exemption is reported as what it is: a fact about US filing law, kept
+	// out of the facts the agent scores from.
+	if len(td.Warnings) == 0 || !strings.Contains(td.Warnings[0], "foreign private issuer") {
+		t.Errorf("the exemption was not recorded: %v", td.Warnings)
+	}
+	// And every leg that did run abstained, so the name is an abstention rather
+	// than a coverage gap.
+	if HasPositioningSignal(td) {
+		t.Error("a name with nothing but empty filings claimed a directional verdict")
+	}
+	if !hasLabel(td, PlannedSalesSignalLabel) || !hasLabel(td, ActivistStakeSignalLabel) {
+		t.Errorf("the whale legs did not run for an exempt issuer: %+v", td.Facts)
+	}
+}
 
-	// A US issuer with no recent filings still says so: that is a real
-	// observation about a company that would have had to report a trade.
-	us, _ := serveSEC(t, []string{"10-Q"}, []string{time.Now().Format("2006-01-02")})
-	t.Setenv("CFR_SEC_BASE", us.URL)
-	td, err = NewEdgarProvider("test@example.com", nil).
-		Fetch(context.Background(), "sentiment", "NVDA")
-	if err != nil {
-		t.Fatalf("Fetch sentiment: %v", err)
+func hasLabel(td TickerData, label string) bool {
+	for _, f := range td.Facts {
+		if f.Label == label {
+			return true
+		}
 	}
-	if !strings.Contains(fmt.Sprintf("%+v", td.Facts), "no Form 4 filings") {
-		t.Errorf("a US issuer's quiet window stopped being reported:\n%+v", td.Facts)
-	}
+	return false
 }
 
 func TestForm4SkipsNamesWithNoSECFiler(t *testing.T) {
@@ -228,5 +241,50 @@ func TestForm4SkipsNamesWithNoSECFiler(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not covered by this provider") {
 		t.Errorf("a structurally uncoverable name is not a failure, got %v", err)
+	}
+}
+
+// The same exemption, reached the other way. ASML is in nq100 as the bare US
+// symbol and in eu50 as ASML.AS, so one company enters the pipeline under two
+// spellings — and the guard above only recognised the dotted one. An nq100 run
+// therefore handed ASML the "no Form 4 filings in the last 45 days" line and the
+// no-signal verdict derived from it, which is the precise false reassurance the
+// dotted spelling is protected from.
+//
+// It is the resolved symbol the provider queries, so it is the resolved symbol
+// the exemption has to be decided on.
+func TestForm4ExemptionFollowsTheIssuerNotTheSpelling(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/submissions/"):
+			fmt.Fprint(w, `{"cik":"937966","filings":{"recent":{
+				"accessionNumber":["0000937966-26-000001"],"filingDate":["2026-08-30"],
+				"form":["20-F"],"primaryDocument":["asml-20f.htm"]}}}`)
+		case strings.HasPrefix(r.URL.Path, "/files/"):
+			fmt.Fprint(w, `{"0":{"cik_str":937966,"ticker":"ASML","title":"ASML Holding NV"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	td, _ := NewEdgarProvider("test@example.com", nil).
+		Fetch(context.Background(), "sentiment", "ASML")
+	for _, f := range td.Facts {
+		if strings.Contains(f.Value, "no Form 4 filings") {
+			t.Errorf("ASML reached under its US symbol kept the false reassurance: %q", f.Value)
+		}
+		if f.Label == InsiderSignalLabel || f.Label == InsiderActivityLabel {
+			t.Errorf("an exempt issuer got an insider leg: %q = %q", f.Label, f.Value)
+		}
+	}
+	if len(td.Warnings) == 0 || !strings.Contains(td.Warnings[0], "foreign private issuer") {
+		t.Errorf("the exemption was not recorded: %v", td.Warnings)
+	}
+	// A US domestic issuer must be unaffected — it really does file Form 4s, so
+	// "none in 45 days" is a genuine observation about its insiders.
+	if isForeignPrivateIssuer("AAPL") {
+		t.Error("the widened test swept up a domestic issuer")
 	}
 }

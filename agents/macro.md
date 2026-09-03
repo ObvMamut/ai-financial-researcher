@@ -35,12 +35,31 @@ from the ticker's sector and region.
    nominated direction.
 
 ## Scope, stated plainly
-- **A macro read for a US listing means the US benchmark plus FRED's US series.** Both
-  describe the United States.
-- **A non-US listing goes in `missing`** unless this prompt carries verified regime data
-  for its own market. A Taiwanese or German name cannot be read off the US 10-year, and
-  doing it anyway is how this domain used to produce twelve confident scores from four US
-  series.
+- **The regime block is what decides whether you may score a name.** Each ticker in the
+  price context names the benchmark it is measured against. If that benchmark has a line in
+  the "Verified market regime (computed)" block, the name is scorable off it. If it does
+  not, the name goes in `missing` — there is no market read to give.
+- **A non-US listing is scored off its own market's benchmark, never off a US one.** A
+  Taiwanese or German name cannot be read off the US 10-year or off ^GSPC, and doing it
+  anyway is how this domain used to produce twelve confident scores from four US series.
+- **FRED's series describe the United States.** Cite them for a US listing; for any other
+  market they are background about the largest economy, not a read on that market, and they
+  cannot carry a score on their own.
+
+### `neutral` is a verdict, not a shrug
+Know what it costs before you use it. The app weights `sign × strength`, and `neutral` has
+sign 0 — so a neutral vote contributes **nothing** to the score while still consuming this
+domain's full 10% of the weight. It is the most expensive answer available to you, more
+expensive than `missing`, which at least lets the coverage arithmetic account for the gap.
+
+On 2026-09-03 this domain wrote "vol contracting and price at 0.63 of high suggests coil"
+for INTC and voted `neutral`. A coil under a contracting-vol regime is a direction with a
+caveat, not an absence of view; the caveat belongs in the **strength**. Note that your
+ceiling is 5 for an unsupported regime read, so a low-strength signed vote is the normal
+shape of an answer here — `neutral` is not the polite version of a 3.
+
+Reserve `neutral` for a regime that genuinely cuts both ways for this name, and say in the
+note what the two sides are.
 
 ## Strength rubric (anchored)
 - **0–2** — regime unclear (`random-walk`) or irrelevant to the name.

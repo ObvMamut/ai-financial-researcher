@@ -23,10 +23,18 @@ import (
 // coincidence and not analysis. Numbers the app enforces cannot be gamed by
 // wording.
 const (
-	// expectancyPaths is the Monte-Carlo sample size. Five thousand paths puts
-	// the standard error on a hit probability under one point, which is finer
-	// than any decision made from it.
-	expectancyPaths = 5000
+	// expectancyPaths is the Monte-Carlo sample size, counted in antithetic
+	// *pairs* — each draw is used as both z and -z, so the run is 2x this many
+	// paths and the sampling error in the drift cancels between the halves.
+	//
+	// Five thousand independent paths put the standard error on a hit
+	// probability under one point, which was the number the comment here
+	// justified. But the quantity actually compared to the floor is the mean
+	// P&L, whose standard error at that sample was +/-6 bps — comparable to the
+	// floor itself, so a near-floor verdict was decided by the hash of the
+	// ticker string rather than by the geometry. Ten thousand antithetic pairs
+	// put it under one basis point.
+	expectancyPaths = 10000
 	// riskGateMaxSectorShare is how many of the top ideas may share a sector
 	// before the book is one bet in several tickets.
 	riskGateMaxSectorShare = 2
@@ -42,18 +50,71 @@ const (
 	// from +10 to +64 bps and the ordering is informative. Phase 5 replaces the
 	// prior with this system's own realized hit rate.
 	defaultEdgeSigmaDaily = 0.02
-	// defaultMinExpectancyBps is the floor a geometry's simulated expectancy has
-	// to clear.
+	// defaultMinExpectancyR is the floor a geometry's simulated expectancy has
+	// to clear, as a multiple of the trade's own risk.
 	//
-	// The gate rejected only `ev <= 0`, which is a test for a geometry that is
-	// provably suicidal rather than one that is worth doing. The 2026-09-01 run
-	// shipped ideas at +3.0 bps (NESTE.HE) and +5.7 bps (O39.SI) on that test:
-	// against a 30 bps cost assumption and an *assumed* edge, three basis points
-	// is zero. The observed spread across that book ran 3.0–24.1, so ten sits
-	// inside it — it refuses the two that were noise without demanding an edge
-	// the top of the book did not show.
-	defaultMinExpectancyBps = 10
+	// A floor of 10 bps of *entry* was tried first and was not a test of the
+	// construction at all. Expectancy in bps is proportional to the stop
+	// distance, so the check collapsed to roughly 200*sigma_daily(%)*days - 33
+	// and graded volatility: on 2026-09-01 five ideas with near-identical
+	// normalised geometry (stop ~1.3 sigma, target ~2.6 sigma, R:R ~1.9,
+	// breakeven ~34.5%) scored +28.7, +21.4, +8.2, +4.6 and -3.1 bps in exact
+	// order of sigma_daily, and the three calmest were dropped — the calm trends
+	// the pre-screen exists to find. In R, and with costs scaled to liquidity,
+	// the same five run +0.032, +0.045, +0.039, +0.015 and +0.009 (see
+	// TestTheBookTheExpectancyGateRefused): still ordered, because a fixed cost
+	// really is a larger share of a tighter stop, but no longer a sign change.
+	//
+	// The floor is set where the number stops being distinguishable from zero,
+	// and nowhere above it. The antithetic sample puts the standard error under
+	// a basis point — about 0.001R — so 0.005R is several errors clear of zero
+	// while still refusing a geometry that only breaks even.
+	//
+	// It is deliberately not a quality bar. The *level* of this distribution is
+	// set by EdgeSigmaDaily, which is an assumed prior; a floor placed inside an
+	// assumed distribution measures the assumption. Only the ordering is earned,
+	// and only until the measured record replaces the level (blendRealized).
+	// Setting the previous floor at 10 bps — inside the observed 3.0-24.1 spread
+	// of one book — is exactly that mistake, and it cost the next run three of
+	// its five ideas.
+	defaultMinExpectancyR = 0.005
+	// realizedPriorPairs is the weight, in closed trades, given to the simulated
+	// expectancy once a measured record exists. At n_closed == this the record
+	// and the simulation count equally; the record's share grows from there.
+	realizedPriorPairs = 30
 )
+
+// costTiers scales the round-trip cost assumption by how liquid the name is.
+//
+// cfg.CostBps is the cost of trading a name at the liquidity floor — 30 bps of
+// spread, commission and slippage on a $20M-a-day listing is realistic. Charging
+// the same 30 bps to a mega-cap is not, and because the expectancy check is a
+// net-of-cost number, the flat assumption taxed exactly the largest and most
+// liquid names hardest relative to their (smaller) stop distances.
+var costTiers = []struct {
+	minADVUSD float64
+	scale     float64
+}{
+	{1e9, 0.35},
+	{2e8, 0.6},
+	{5e7, 0.85},
+}
+
+// effectiveCostBps is the round-trip cost charged to one idea. With no ADV
+// figure it is the configured cost unscaled: an unknown name is assumed to be
+// the expensive kind.
+func effectiveCostBps(cfg model.RiskConfig, m quant.Metrics) float64 {
+	adv := m.AvgDollarVol20USD
+	if adv <= 0 {
+		return cfg.CostBps
+	}
+	for _, t := range costTiers {
+		if adv >= t.minADVUSD {
+			return cfg.CostBps * t.scale
+		}
+	}
+	return cfg.CostBps
+}
 
 // riskFinding is one gate violation.
 type riskFinding struct {
@@ -138,45 +199,93 @@ func checkFabricatedNoteDates(res *model.IdeasResult, verifiedDates map[string]b
 		strings.Join(unknown, ", "), verb)}}
 }
 
+// validateRiskPolicy refuses a σ band no geometry can satisfy.
+//
+// config.validateRisk already refuses a ceiling of zero, but it cannot check
+// ordering: it runs inside config.Load, *before* riskDefaults fills the keys the
+// operator left unset, so it only ever sees one side of the band. The realistic
+// footgun is writing one side — `stop_sigma_min = 2.5` against the default
+// ceiling of 2.0 — and seeing it from config would mean duplicating riskgate's
+// constants there, which is the drift the presence-detection work removed. So
+// the check lives here, where both effective values exist, and runs on the
+// already-defaulted policy.
+//
+// It is an error rather than a warning because the alternative is what the
+// footgun does today: a clean load, then every idea dropped by gateIdea and
+// reported as an ordinary run of risk-gate findings, and a shipped empty book
+// that looks like the Chief simply wrote nothing sound.
+//
+// Only strictly unsatisfiable orderings are refused. A band whose floor equals
+// its ceiling is absurd but not meaningless — it says "exactly this far" — and
+// this function's job is the settings that cannot mean anything, not the ones
+// that are merely a bad idea.
+func validateRiskPolicy(c model.RiskConfig) error {
+	// crossed names the two keys in the operator's terms. A key they never wrote
+	// is called a default, because "you set stop_sigma_max = 2.0" is a confusing
+	// thing to read when you did not.
+	crossed := func(key string, set bool, v float64) string {
+		if set {
+			return fmt.Sprintf("%s = %g", key, v)
+		}
+		return fmt.Sprintf("%s = %g (the default, which you did not set)", key, v)
+	}
+
+	if c.StopSigmaMin > c.StopSigmaMax {
+		return fmt.Errorf("config risk: %s is above %s — no stop can be both at least %gσ and at most %gσ from entry, so every idea would be dropped by the risk gate and the run would ship an empty book",
+			crossed("stop_sigma_min", c.Set("stop_sigma_min"), c.StopSigmaMin),
+			crossed("stop_sigma_max", c.Set("stop_sigma_max"), c.StopSigmaMax),
+			c.StopSigmaMin, c.StopSigmaMax)
+	}
+	// A target ceiling below the stop floor bounds reward under risk, so the
+	// best geometry the band allows still has a reward:risk under 1.
+	if c.TargetSigmaMax < c.StopSigmaMin {
+		return fmt.Errorf("config risk: %s is below %s — the target may not reach as far as the stop must, so no idea can clear a reward:risk of 1, let alone rr_min",
+			crossed("target_sigma_max", c.Set("target_sigma_max"), c.TargetSigmaMax),
+			crossed("stop_sigma_min", c.Set("stop_sigma_min"), c.StopSigmaMin))
+	}
+	return nil
+}
+
 // riskDefaults fills a zero-valued policy so the gate is never silently
 // disabled by a missing config block.
+//
+// "Unfilled" is decided by model.RiskConfig.Set, not by the value: every field
+// here is a float64 whose zero is also a legal setting, and a floor of zero is
+// how an operator disables a floor. Testing `<= 0` instead made that
+// unsayable — `cost_bps = 0` came back as 30 — and it did so *after* the config
+// loader had already discarded the same value, so fixing one layer alone would
+// have changed nothing. A config the operator never wrote carries no explicit
+// keys, so a struct built in code (a test, a run with no [risk] block) defaults
+// exactly as it always did.
 func riskDefaults(c model.RiskConfig) model.RiskConfig {
-	if c.AccountEquity <= 0 {
-		c.AccountEquity = 100000
+	fill := func(dst *float64, key string, def float64) {
+		if !c.Set(key) && *dst <= 0 {
+			*dst = def
+		}
 	}
-	if c.RiskPerTradePct <= 0 {
-		c.RiskPerTradePct = 0.5
-	}
-	if c.CostBps <= 0 {
-		c.CostBps = 30
-	}
-	if c.RRMin <= 0 {
-		c.RRMin = 1.8
-	}
-	if c.StopSigmaMin <= 0 {
-		c.StopSigmaMin = 1.0
-	}
-	if c.StopSigmaMax <= 0 {
-		c.StopSigmaMax = 2.0
-	}
-	if c.TargetSigmaMax <= 0 {
-		c.TargetSigmaMax = 3.5
-	}
-	if c.ADVMinUSD <= 0 {
-		c.ADVMinUSD = defaultADVMinUSD
-	}
-	if c.MaxPairCorr <= 0 {
-		c.MaxPairCorr = 0.75
-	}
-	if c.MaxPortfolioBeta <= 0 {
-		c.MaxPortfolioBeta = 1.5
-	}
-	if c.EdgeSigmaDaily <= 0 {
+	fill(&c.AccountEquity, "account_equity", 100000)
+	fill(&c.RiskPerTradePct, "risk_per_trade_pct", 0.5)
+	fill(&c.CostBps, "cost_bps", 30)
+	fill(&c.RRMin, "rr_min", 1.8)
+	fill(&c.StopSigmaMin, "stop_sigma_min", 1.0)
+	fill(&c.StopSigmaMax, "stop_sigma_max", 2.0)
+	fill(&c.TargetSigmaMax, "target_sigma_max", 3.5)
+	fill(&c.ADVMinUSD, "adv_min_usd", defaultADVMinUSD)
+	fill(&c.MaxPairCorr, "max_pair_corr", 0.75)
+	fill(&c.MaxPortfolioBeta, "max_portfolio_beta", 1.5)
+	// EdgeSigmaDaily is a prior rather than a limit, so a negative value is a
+	// real setting — the system is losing money — and must not be read as
+	// "unfilled" the way a negative cost would be.
+	if !c.Set("edge_sigma_daily") && c.EdgeSigmaDaily == 0 {
 		c.EdgeSigmaDaily = defaultEdgeSigmaDaily
 	}
-	if c.MinExpectancyBps <= 0 {
-		c.MinExpectancyBps = defaultMinExpectancyBps
+	if !c.Set("min_expectancy_r") && c.MinExpectancyR == 0 {
+		c.MinExpectancyR = defaultMinExpectancyR
 	}
+	// MinExpectancyBps is left alone: its default *is* zero, so there is nothing
+	// to fill in. It is a secondary floor now, and "loses money outright" is the
+	// only verdict a figure denominated in basis points of entry can carry on
+	// its own.
 	return c
 }
 
@@ -205,6 +314,23 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 		hard("%s has no usable levels (entry %.2f / stop %.2f / target %.2f) — every idea needs all three",
 			idea.Ticker, idea.Entry, idea.Stop, idea.Target)
 		return out
+	}
+
+	// A stale bar is a corrigible construction fault, not just something to
+	// mention afterwards.
+	//
+	// The pipeline already refetches once and flags the metric, and the run
+	// warns when a stale name ships — all of which is correct and none of which
+	// reaches the Chief in a form it can act on. On 2026-09-03 NESTE.HE shipped
+	// at rank 4 with entry, stop and target computed to the cent off a session
+	// that had already been superseded. This is a soft finding on purpose: the
+	// levels can be moved to the newer close and the thesis kept, or the idea
+	// dropped, and both are answers the Chief is better placed to choose between
+	// than a blanket rule is.
+	if staleFor(v, idea.Ticker) {
+		out = append(out, riskFinding{Ticker: idea.Ticker, Message: fmt.Sprintf(
+			"%s is priced off a bar that trails its own market's last completed session, so its entry, stop and target are computed from a close that has been superseded — re-price it against the newest bar in the quant block, or drop it",
+			idea.Ticker)})
 	}
 
 	risk := math.Abs(idea.Entry - idea.Stop)
@@ -277,55 +403,50 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	// Expectancy. A geometry can satisfy every band above and still lose money,
 	// because the probability of touching a near stop before a far target is
 	// exactly what the bands do not measure.
-	ec := cfg
+	cost := effectiveCostBps(cfg, m)
+	evBps, evR := simulateExpectancy(idea, m, cfg, cost, int(h))
 	if v.RealizedR != nil {
-		if e, ok := realizedEdgeSigma(idea, m, *v.RealizedR, h); ok {
-			ec.EdgeSigmaDaily = e
-		}
+		evR = blendRealized(evR, *v.RealizedR, v.RealizedN)
 	}
-	ev := simulateExpectancy(idea, m, ec, int(h))
-	idea.ExpectancyBps = math.Round(ev*10) / 10
-	if ev < cfg.MinExpectancyBps {
+	idea.ExpectancyBps = math.Round(evBps*10) / 10
+	idea.ExpectancyR = math.Round(evR*1000) / 1000
+	if evR < cfg.MinExpectancyR {
 		verdict := "the geometry loses money at the assumed edge"
-		if ev > 0 {
-			verdict = "which is indistinguishable from zero at this cost assumption"
+		if evR > 0 {
+			verdict = "which is indistinguishable from zero once costs are paid"
 		}
-		hard("%s: simulated expectancy is %+.1f bps net of %.0f bps costs, under the %.0f bps floor — %s (breakeven win rate %.0f%%)",
-			idea.Ticker, ev, cfg.CostBps, cfg.MinExpectancyBps, verdict, idea.BreakevenWinRate*100)
+		hard("%s: simulated expectancy is %+.3fR (%+.1f bps net of %.0f bps costs), under the %.3fR floor — %s (breakeven win rate %.0f%%). The lever is the holding period, not the reward:risk ratio: a tighter stop is touched more often and lowers this number",
+			idea.Ticker, evR, evBps, cost, cfg.MinExpectancyR, verdict, idea.BreakevenWinRate*100)
+	} else if cfg.MinExpectancyBps > 0 && evBps < cfg.MinExpectancyBps {
+		hard("%s: simulated expectancy is %+.1f bps net of %.0f bps costs, under the configured %.0f bps floor (breakeven win rate %.0f%%)",
+			idea.Ticker, evBps, cost, cfg.MinExpectancyBps, idea.BreakevenWinRate*100)
 	}
 	return out
 }
 
-// edgeSigmaCap bounds the edge imported from the measured record. Beyond about
-// 0.05 the expectancy check stops discriminating between geometries at all
-// (measured across the range the σ-bands permit), so a lucky sample must not be
-// allowed to switch the check off; the same bound applies to a losing sample so
-// one bad quarter cannot reject everything on arithmetic alone.
-const edgeSigmaCap = 0.05
-
-// realizedEdgeSigma converts the pipeline's measured average R per closed trade
-// into the per-day drift, in σ units, that *this* idea's geometry implies.
+// blendRealized moves the simulated expectancy toward the pipeline's own
+// measured average R, weighted by how many closed trades stand behind it.
 //
-// The simulation's drift is edge·σ per day, so over the holding period it
-// accumulates edge·σ·days of return. The record says a trade of this kind
-// returns avgR multiples of its own risk, which for this idea is
-// avgR·|entry−stop|/entry. Setting the two equal gives the edge. It is a
-// derivation, not another prior: every term in it is measured.
-func realizedEdgeSigma(idea *model.TradeIdea, m quant.Metrics, avgR, days float64) (float64, bool) {
-	if idea.Entry <= 0 || m.SigmaDaily <= 0 || days <= 0 {
-		return 0, false
+// The record used to be imported as a *drift*: avgR·riskFrac/(σ·days), clamped
+// at 0.05σ/day. Every term was measured, but the arithmetic had a cliff in it.
+// For any realistic avgR that expression lands far above the clamp — with the
+// 2026-09-01 book and avgR 0.49 it gave 0.157 to 0.206 on every idea — so the
+// 30th closed trade would have flipped the check from rejecting most of the book
+// to never firing at all, with no regime in between.
+//
+// Blending instead is a measurement doing what a measurement can do. The
+// simulation supplies the per-idea discrimination the record cannot (it is one
+// book-wide number); the record supplies the level the simulation can only
+// assume. At n == realizedPriorPairs they count equally and the record's share
+// grows from there, so a negative record does pull the gate toward refusing —
+// which is the correct response to a system that is losing money — without one
+// sample being able to switch the check off in either direction.
+func blendRealized(simR, avgR float64, n int) float64 {
+	if n <= 0 {
+		return simR
 	}
-	riskFrac := math.Abs(idea.Entry-idea.Stop) / idea.Entry
-	if riskFrac <= 0 {
-		return 0, false
-	}
-	e := avgR * riskFrac / (m.SigmaDaily * days)
-	if e > edgeSigmaCap {
-		e = edgeSigmaCap
-	} else if e < -edgeSigmaCap {
-		e = -edgeSigmaCap
-	}
-	return e, true
+	w := float64(n) / float64(n+realizedPriorPairs)
+	return w*avgR + (1-w)*simR
 }
 
 // sizeIdea converts the account's risk budget and the idea's own stop distance
@@ -390,8 +511,13 @@ func sizeIdea(idea *model.TradeIdea, m quant.Metrics, cfg model.RiskConfig) stri
 	return ""
 }
 
-// simulateExpectancy estimates the trade's expected value in basis points of
-// entry, by simulating the price path to the first barrier it touches.
+// simulateExpectancy estimates the trade's expected value by simulating the
+// price path to the first barrier it touches. It returns the figure twice: in
+// basis points of entry, and as a multiple of the trade's own risk.
+//
+// The second is the one the gate judges. The first is proportional to the stop
+// distance and so measures the name's volatility as much as the construction;
+// it is kept because it is what an operator reads and what past runs recorded.
 //
 // A driftless simulation would be vacuous — with no edge, gambler's ruin makes
 // expectancy about −cost for every geometry, so the check would reject
@@ -400,9 +526,15 @@ func sizeIdea(idea *model.TradeIdea, m quant.Metrics, cfg model.RiskConfig) stri
 //
 // The seed is derived from the idea itself, so the same idea always scores the
 // same number: a risk check that answers differently on a re-run is not a check.
-func simulateExpectancy(idea *model.TradeIdea, m quant.Metrics, cfg model.RiskConfig, days int) float64 {
+// Draws are antithetic — every z is walked as both +z and −z — which cancels the
+// sampling error in the drift between the two halves of each pair.
+func simulateExpectancy(idea *model.TradeIdea, m quant.Metrics, cfg model.RiskConfig, costBps float64, days int) (bps, r float64) {
 	if m.SigmaDaily <= 0 || idea.Entry <= 0 || days <= 0 {
-		return 0
+		return 0, 0
+	}
+	riskFrac := math.Abs(idea.Entry-idea.Stop) / idea.Entry
+	if riskFrac <= 0 {
+		return 0, 0
 	}
 	dir := 1.0
 	if idea.Direction == model.DirectionSell {
@@ -417,39 +549,46 @@ func simulateExpectancy(idea *model.TradeIdea, m quant.Metrics, cfg model.RiskCo
 	drift := cfg.EdgeSigmaDaily*sigma*dir - sigma*sigma/2
 
 	rng := rand.New(rand.NewSource(ideaSeed(idea)))
+	draws := make([]float64, days)
 	var total float64
 	for p := 0; p < expectancyPaths; p++ {
-		price := idea.Entry
-		outcome := 0.0
-		hit := false
-		for d := 0; d < days; d++ {
-			price *= math.Exp(drift + sigma*rng.NormFloat64())
-			// Stop first when a single daily step spans both barriers: within
-			// the day we cannot know the order, and assuming the good one is
-			// how a backtest flatters itself.
-			//
-			// A breached stop fills at the price that breached it, not at the
-			// stop level: a daily step that jumps from 92 to 85 through a stop
-			// at 90 loses 15%, not 10%. Booking the barrier instead was worth a
-			// spurious +41 bps here — the simulation was paying itself the gap
-			// risk it exists to measure. A target is the other way round: a
-			// limit order at that price fills at that price or better, so the
-			// target is booked exactly.
-			if (dir > 0 && price <= idea.Stop) || (dir < 0 && price >= idea.Stop) {
-				outcome, hit = dir*(price-idea.Entry)/idea.Entry, true
-				break
-			}
-			if (dir > 0 && price >= idea.Target) || (dir < 0 && price <= idea.Target) {
-				outcome, hit = dir*(idea.Target-idea.Entry)/idea.Entry, true
-				break
-			}
+		for d := range draws {
+			draws[d] = rng.NormFloat64()
 		}
-		if !hit {
-			outcome = dir * (price - idea.Entry) / idea.Entry // marked out at the horizon
-		}
-		total += outcome
+		total += walkPath(idea, drift, sigma, dir, draws, 1)
+		total += walkPath(idea, drift, sigma, dir, draws, -1)
 	}
-	return (total/expectancyPaths)*10000 - cfg.CostBps
+	mean := total / float64(2*expectancyPaths)
+	bps = mean*10000 - costBps
+	return bps, bps / (riskFrac * 10000)
+}
+
+// walkPath runs one path and returns its direction-aware return as a fraction of
+// entry. sign flips the whole draw sequence, which is what makes the pair
+// antithetic.
+func walkPath(idea *model.TradeIdea, drift, sigma, dir float64, draws []float64, sign float64) float64 {
+	price := idea.Entry
+	for _, z := range draws {
+		price *= math.Exp(drift + sigma*sign*z)
+		// Stop first when a single daily step spans both barriers: within
+		// the day we cannot know the order, and assuming the good one is
+		// how a backtest flatters itself.
+		//
+		// A breached stop fills at the price that breached it, not at the
+		// stop level: a daily step that jumps from 92 to 85 through a stop
+		// at 90 loses 15%, not 10%. Booking the barrier instead was worth a
+		// spurious +41 bps here — the simulation was paying itself the gap
+		// risk it exists to measure. A target is the other way round: a
+		// limit order at that price fills at that price or better, so the
+		// target is booked exactly.
+		if (dir > 0 && price <= idea.Stop) || (dir < 0 && price >= idea.Stop) {
+			return dir * (price - idea.Entry) / idea.Entry
+		}
+		if (dir > 0 && price >= idea.Target) || (dir < 0 && price <= idea.Target) {
+			return dir * (idea.Target - idea.Entry) / idea.Entry
+		}
+	}
+	return dir * (price - idea.Entry) / idea.Entry // marked out at the horizon
 }
 
 func ideaSeed(idea *model.TradeIdea) int64 {
@@ -665,32 +804,61 @@ func gateBook(res *model.IdeasResult, v verified, cfg model.RiskConfig) []riskFi
 		}
 	}
 
-	// Portfolio beta: gross exposure to the market, and net directional exposure.
-	var grossBeta, netBeta float64
-	counted := 0
+	// Portfolio beta: gross market exposure, and net directional exposure, both
+	// beta-adjusted and measured against the account rather than against the
+	// number of ideas.
+	//
+	// This used to divide by the idea count — an average — which made the
+	// ceiling dilutable: adding *any* low-beta name lowered it, whatever it did
+	// to the book's actual exposure. On 2026-09-03 the first pass failed at 1.62
+	// and the Chief's corrective was to drop ORCL (base 38, five domains) and add
+	// 035720.KS (base 27, quant only), saying so plainly — "the slot had to be
+	// filled by something low-beta rather than left empty." The gate rewarded
+	// padding, which is the opposite of a risk limit.
+	//
+	// Beta-adjusted notional over equity cannot be gamed that way: every idea
+	// adds to the numerator and the denominator is the account. Dropping the
+	// high-beta name is the only thing that helps, which is the remedy the
+	// finding now names. The unit changed with it — the ceiling reads as a
+	// multiple of equity, not as a per-idea average — and at five ideas near the
+	// 25%-of-account position cap the two scales are close enough that
+	// max_portfolio_beta keeps its 1.5 default.
+	var grossBeta, netBeta, sized float64
+	unsized := 0
 	for _, idea := range res.Ideas {
 		m, ok := quantFor(v, idea.Ticker)
 		if !ok || m.Benchmark == "" {
+			continue
+		}
+		if idea.Notional <= 0 {
+			// Sizing could not produce a whole share. The run already warns
+			// about that separately; here it only means this idea's exposure is
+			// unknown, and counting it as zero would understate the book.
+			unsized++
 			continue
 		}
 		dir := 1.0
 		if idea.Direction == model.DirectionSell {
 			dir = -1
 		}
-		grossBeta += math.Abs(m.Beta)
-		netBeta += dir * m.Beta
-		counted++
+		grossBeta += math.Abs(m.Beta) * idea.Notional
+		netBeta += dir * m.Beta * idea.Notional
+		sized += idea.Notional
 	}
-	if counted > 0 {
-		if avg := grossBeta / float64(counted); avg > cfg.MaxPortfolioBeta {
-			out = append(out, riskFinding{Message: fmt.Sprintf(
-				"the book's average absolute beta is %.2f, above the %.1f ceiling — these are all high-beta names and they will move together",
-				avg, cfg.MaxPortfolioBeta)})
+	if equity := cfg.AccountEquity; equity > 0 && sized > 0 {
+		caveat := ""
+		if unsized > 0 {
+			caveat = fmt.Sprintf(" (%d further idea(s) could not be sized and are not counted)", unsized)
 		}
-		if math.Abs(netBeta/float64(counted)) > cfg.MaxPortfolioBeta {
+		if gross := grossBeta / equity; gross > cfg.MaxPortfolioBeta {
 			out = append(out, riskFinding{Message: fmt.Sprintf(
-				"the book's net signed beta is %+.2f per idea, beyond ±%.1f — it is a directional market call, not five trades",
-				netBeta/float64(counted), cfg.MaxPortfolioBeta)})
+				"the book's beta-adjusted gross exposure is %.2f× the account, above the %.1f ceiling%s — these names will move together, and the fix is to drop the highest-beta idea, not to add a low-beta one: every position adds to this number",
+				gross, cfg.MaxPortfolioBeta, caveat)})
+		}
+		if net := netBeta / equity; math.Abs(net) > cfg.MaxPortfolioBeta {
+			out = append(out, riskFinding{Message: fmt.Sprintf(
+				"the book's net beta-adjusted exposure is %+.2f× the account, beyond ±%.1f%s — it is a directional market call, not five trades; drop or shrink the largest same-side position, or add the other side",
+				net, cfg.MaxPortfolioBeta, caveat)})
 		}
 	}
 

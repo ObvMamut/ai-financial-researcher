@@ -56,12 +56,33 @@ func enrichFundamentals(pack *marketdata.DataPack, qp *quant.Pack) {
 			return !asOf.IsZero() && priceDate.Sub(asOf) <= multipleStaleLimit
 		}
 
+		// The close is in the listing's own currency; every figure EDGAR files is
+		// in USD. Dividing one into the other without converting produced
+		// "Market cap (computed) = $143.24B" for BBVA.MC on 2026-09-03, off a
+		// €25.09 close — €143.24B, which is $166.2B. The rate is already on the
+		// metric in hand (quant.Metrics.ApplyFX), so the only question is what to
+		// do when there isn't one: say so, rather than print a dollar sign over
+		// a number that is not dollars.
+		closeUSD, haveUSD := usdClose(m)
+		if !haveUSD {
+			note("Valuation multiples", fmt.Sprintf(
+				"not computable: the close is in %s and no %s/USD rate was available this run, while every figure filed with the SEC is in USD — a ratio across the two would be a currency error, not a valuation",
+				m.Currency, m.Currency), priceDate)
+			td.Facts = append(td.Facts, added...)
+			pack.ByTicker[ticker] = td
+			continue
+		}
+		fxNote := ""
+		if m.Currency != "" && m.Currency != "USD" {
+			fxNote = fmt.Sprintf(", %s→USD at %.4f", m.Currency, m.FXToUSD)
+		}
+
 		var marketCap float64
 		if haveShares && shares > 0 {
-			marketCap = shares * m.LastClose
+			marketCap = shares * closeUSD
 			if fresh(sharesAsOf) {
-				note("Market cap (computed)", fmt.Sprintf("$%s (%.0f shares × close %.2f on %s)",
-					usdCompact(marketCap), shares, m.LastClose, m.AsOf), priceDate)
+				note("Market cap (computed)", fmt.Sprintf("$%s (%.0f shares × close %.2f on %s%s)",
+					usdCompact(marketCap), shares, m.LastClose, m.AsOf, fxNote), priceDate)
 			} else {
 				note("Market cap", fmt.Sprintf("not computable: share count is from %s, %s before the price",
 					sharesAsOf.Format("2006-01-02"), humanDays(priceDate.Sub(sharesAsOf))), priceDate)
@@ -73,8 +94,8 @@ func enrichFundamentals(pack *marketdata.DataPack, qp *quant.Pack) {
 
 		switch {
 		case haveEPS && eps > 0 && fresh(epsAsOf):
-			note("P/E (computed, trailing diluted)", fmt.Sprintf("%.1f (close %.2f ÷ EPS %.2f as of %s)",
-				m.LastClose/eps, m.LastClose, eps, epsAsOf.Format("2006-01-02")), priceDate)
+			note("P/E (computed, trailing diluted)", fmt.Sprintf("%.1f (close %.2f ÷ EPS %.2f as of %s%s)",
+				closeUSD/eps, m.LastClose, eps, epsAsOf.Format("2006-01-02"), fxNote), priceDate)
 		case haveEPS && eps <= 0:
 			note("P/E", fmt.Sprintf("not meaningful: diluted EPS is %.2f", eps), priceDate)
 		case haveEPS:
@@ -92,6 +113,20 @@ func enrichFundamentals(pack *marketdata.DataPack, qp *quant.Pack) {
 		td.Facts = append(td.Facts, added...)
 		pack.ByTicker[ticker] = td
 	}
+}
+
+// usdClose is the last close in USD, and false when the listing's currency is
+// known but its rate is not. A listing with no currency recorded at all is a US
+// one — quantstage only calls ApplyFX where a suffix names a market — so its
+// close is already dollars.
+func usdClose(m quant.Metrics) (float64, bool) {
+	if m.Currency == "" || m.Currency == "USD" {
+		return m.LastClose, true
+	}
+	if m.FXToUSD <= 0 {
+		return 0, false
+	}
+	return m.LastClose * m.FXToUSD, true
 }
 
 // numericFact finds a fact by label, tolerating the "(quarterly)" suffix the

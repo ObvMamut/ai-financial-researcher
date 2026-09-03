@@ -21,7 +21,19 @@ import (
 // guardrail — which failed open on an absent verdict — scored exactly the three
 // tickers it exists to silence and abstained on the two it should have scored.
 // Bump this whenever a cached payload gains, loses or changes a field.
-const factSchemaVersion = 2
+//
+// 3: the options provider stopped writing its own computed verdict. That leg is
+// judged against the run's own cross-section of put/call ratios now, so a stored
+// verdict is an answer to a different question, and a cached entry carrying one
+// would have had it rendered into the prompt beside the recomputed one.
+//
+// 4: the whale legs. A sentiment TickerData now carries traded option volume,
+// Form 144 notices, 13D/G ownership schedules and tracked-manager 13F positions,
+// each with its own computed verdict. A cached entry written before them has
+// none, and addPositioningSignal has no reconstruction path for the new labels
+// by design — the raw fact and its verdict are always written together by one
+// provider, which is only true as long as this bump happens.
+const factSchemaVersion = 4
 
 type Cache struct {
 	baseDir string

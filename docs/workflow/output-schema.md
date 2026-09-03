@@ -30,7 +30,9 @@ by pre-screen merit — see `independent-research.md`, Stage 1.
 
 `shortlist.json` therefore carries more than the scout wrote: `sector` and `index` come
 from the universe, while `bias` and `reason` are the scout's and travel on into every
-specialist and Chief Analyst prompt.
+specialist and Chief Analyst prompt. Two more fields record what the merge found:
+`nominations` (how many scouts wanted this name in this direction, omitted when 1) and
+`contested` (the indices that nominated it the *other* way). Both feed the merit sort.
 
 ## Pre-screen (`runs/<ts>/prescreen.json`)
 
@@ -45,7 +47,7 @@ indices, ranked best-composite-first with excluded rows last:
   "params": {
     "top_per_index": 15, "bottom_per_index": 5,
     "adv_min_usd": 20000000, "min_bars": 60, "vol_trend_flag": 1.5,
-    "formula": "z(mom12-1) + 0.5·z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
+    "formula": "0.5·z(mom12-1) + z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
   },
   "rows": [
     { "ticker": "NVDA", "name": "NVIDIA Corporation", "sector": "Information Technology",
@@ -111,6 +113,14 @@ compares `scores` against the coverage it actually assembled and rewrites the ta
 - a score for a shortlisted ticker the domain had no verified data for is
   **deleted**, and the ticker is unioned into `missing` (recorded in the run's
   `domains[].corrected_scores`);
+- a score whose ticker is really the shortlisted **company's name** — `OCBC` for
+  `O39.SI`, `KAKAO` for `035720.KS` — is **resolved** to the symbol and kept, with the
+  tail rewritten so the rest of the pipeline can key on it. The shortlist block every
+  specialist reads carries `name` beside `ticker`, and macro answered in the former on
+  2026-09-03; all three scores were struck as off-shortlist, and those names then shipped
+  as ideas 3 and 5 on one domain each. Three alias forms are recognised — the full name,
+  its first word, and its initials — and only where they collide with nothing else on the
+  shortlist and shadow no real ticker;
 - a score for a ticker that was never on the shortlist is **deleted** and nothing
   is added to `missing` — the run never asked about it (recorded in
   `domains[].off_shortlist_scores`);
@@ -126,9 +136,27 @@ compares `scores` against the coverage it actually assembled and rewrites the ta
 - a report with no parseable JSON tail is not a report. The domain is marked
   `failed`, whatever the process exit code said.
 
-Coverage is computed per domain: EDGAR, AlphaVantage and the option chain reach US
-listings only (or a foreign listing's US line), FRED's series are US macro, and Yahoo's
-chart API — which feeds quant — is global.
+Nothing is deleted for a fourth case, but it is **recorded**: a `neutral` score on a
+ticker the domain did have evidence for lands in `domains[].neutral_scores`. A genuine
+standoff is a legitimate verdict, so the number stands — but sign 0 contributes nothing
+to the weighted sum while consuming the domain's full weight, which makes it *costlier
+than a gap* and earns none of the coverage relief a gap would. Before it was recorded it
+was indistinguishable from a name the domain had nothing on: news scored AMGN neutral 0
+while its own report carried a triple-sourced regulatory suspension, and the run had no
+way to see the difference.
+
+Coverage is computed per domain, and it is per *evidence kind*, not per fact — a domain
+counts a ticker covered only when it holds a fact of its own kind for it
+(`marketdata.HasDomainEvidence`). News used to count itself grounded on the shared
+earnings-calendar entry alone, so 2330.TW read as covered with every headline rate-limited
+away. Two domains ground on something other than a provider fact: **macro** on the
+computed regime block for the benchmark of the name's own exchange — which is global, and
+is what its persona calls its primary evidence — with FRED's US series as context on top
+rather than as the gate; and **sentiment** on the *computed* positioning verdict
+(`marketdata.HasPositioningSignal`), not on whether the fetch returned rows, because
+scheduled insider selling and a put/call near 1.0 are the resting state of the market.
+EDGAR and the option chain reach US listings only (or a foreign listing's US line); Yahoo's
+chart and headline feeds, which ground quant and news, are global and keyless.
 
 ## Final trade ideas (Chief Analyst → Go → TUI)
 
@@ -157,11 +185,13 @@ The deliverable: direction, confidence, trade mechanics, quick why.
       "price_at_generation": 211.4,
       "base_confidence": 72,
       "domain_scores": {"quant": 8, "news": 6, "fundamentals": 4, "sentiment": 0, "macro": -2},
+      "consensus": 0.72,
       "currency": "USD",
       "shares": 47,
       "notional": 9964.0,
       "risk_amount": 493.5,
       "expectancy_bps": 34.2,
+      "expectancy_r": 0.041,
       "breakeven_win_rate": 0.333
     }
   ],
@@ -193,6 +223,14 @@ overwritten):
   `scoring.md`.
 - `domain_scores`: the per-domain signed strengths (−10…+10) behind that base, recorded so
   the scoreboard can attribute a result to the domains that called it.
+- `consensus`: `|Σ w·sign·strength| / Σ w·strength` ∈ [0, 1], rounded to two places — how much
+  of the evidence's magnitude survived the domains disagreeing. 1 means every domain that
+  spoke pointed the same way; 0 means they cancelled exactly. It reads no evidence
+  `base_confidence` does not already read and **changes no ranking, cap or band**; it is a
+  second axis, because `base` is one number doing two jobs (*how much evidence* and *how
+  much agreement*) and a thin unanimous name and a thick split one land in the same place.
+  Shown as `agree` in the Chief's base-score table and under the TUI confidence bar, and
+  bucketed by the scoreboard's `by_consensus` attribution. See `scoring.md`.
 - `currency`: the ISO code `entry`, `stop` and `target` are quoted in — what an order is
   actually placed in.
 - `shares` / `notional` / `risk_amount`: the computed position — the account's risk budget
@@ -204,14 +242,75 @@ overwritten):
   2026-09-01 run shipped its first and third ideas — both Tokyo listings — with no position
   at all.)
 - `expectancy_bps`: the simulated expected value in basis points of entry, net of costs.
+  Kept because it is what an operator reads and what past runs recorded — it is **not**
+  what the gate judges.
+- `expectancy_r`: the same expectancy divided by the trade's own risk (`|entry−stop|/entry`),
+  rounded to three places. This is the figure the risk gate tests against `min_expectancy_r`.
+  In basis points expectancy is proportional to the stop distance, so a floor denominated
+  in bps grades the name's volatility rather than its construction: on 2026-09-01 five ideas
+  with near-identical normalised geometry scored +28.7 down to −3.1 bps in exact order of
+  `σ_daily`, and a 10bps floor dropped the three calmest. Once `n_closed ≥ 30` this figure
+  is the simulation blended with the measured record. See `scoring.md`.
 - `breakeven_win_rate`: `risk / (risk + reward)`, the hit rate the geometry alone demands.
 
 An idea that violates a hard risk limit (stop band, target ceiling, reward:risk floor,
-liquidity, or negative expectancy) is **dropped** after one corrective re-prompt, with the
-reason appended to `notes`. Fewer than 5 ideas is the intended outcome in that case. See
+liquidity, or an expectancy below `min_expectancy_r`) is **dropped** after one corrective
+re-prompt, with the reason appended to `notes`. Fewer than 5 ideas is the intended outcome in that case. See
 `scoring.md` for the limits.
 
 All mechanics fields are optional (`omitempty`) so ideas.json from older runs still loads.
+
+## Run metadata (`runs/<ts>/metadata.json`)
+
+`model.RunMeta` — the run's account of itself. `orchestration.md` tables the provenance
+fields (`engine`, `synthesis_model`, `stages`, `data_errors`, `persona_sha`) and the
+shape-change warnings `data_errors` carries; the two the scoring path reads are:
+
+- `thinly_covered`: the shortlisted tickers the run's sources could ground **less than 0.6
+  of the total domain weight** for (`thinCoverage`, `basescore.go`) — the same threshold
+  that caps their confidence at 55. It is deliberately **not** in `warnings`: a known
+  structural limit is not a warning, and SEC filings and listed option chains are US
+  instruments, so a foreign listing with no US line cannot be reached by fundamentals or
+  sentiment however well the run went. `max_thinly_covered` caps how many of these may take
+  shortlist slots.
+
+  It was `quant_only` until news and macro became globally groundable. After that, "no
+  provider reaches this at all" was true of nothing — the field would have read empty on
+  every run while three of five domains were still missing on some names — so the field now
+  measures the outcome (weight actually reachable) rather than the capability (reachable at
+  all), in the same units as the base score.
+
+  It stayed empty on every run anyway until 2026-09-03, because news was still counted as
+  globally groundable: `quant .35 + news .25 + macro .10 = 0.70` put every listing in the
+  universe above the 0.6 floor. It is not — the keyless headline search takes the local
+  symbol and answers, but on that run it answered all five unmapped foreign names with the
+  same eight stories, none tagged to any of them, and the news domain recorded every one as
+  `missing`. News now follows the same reachability rule as fundamentals and sentiment, an
+  unmapped foreign listing expects **0.45**, and the field has something to report.
+
+- `warnings`: everything about the *output* a reader must not have to infer — clamped
+  confidences, coverage gaps, risk-gate drops, stale prices — plus one entry when a
+  provider's daily budget is spent. A spent AlphaVantage key is one fact about one key,
+  and it reached the 2026-09-01 run only as an identical `data_error` per ticker, so a key
+  with nothing left read like a handful of unlucky names. The per-ticker detail stays in
+  `data_errors`; `warnings` carries the single line that says they are all the same fact.
+
+- `domains[].corrective`: what became of the one corrective re-prompt, when one was spent —
+  `applied`, `unparseable` or `failed`. Empty means none was attempted.
+
+  There used to be no branch at all for a second call that returned unparseable JSON: no
+  log, no warning, and the row still read `status: done, attempts: 2`. On 2026-09-01 that
+  spent a five-minute synthesis call for nothing while `ideas.json` announced "after one
+  corrective re-prompt" beside a book that was in fact the uncorrected first pass. The
+  book's note now says what actually happened, and an `unparseable` or `failed` corrective
+  raises a warning.
+
+Each `domains[]` row is a `model.DomainStatus`: `status`, `grounded`, `attempts`,
+`duration_ms`, `tokens`, the three enforcement lists above (`corrected_scores`,
+`off_shortlist_scores`, `self_contradicted_scores`) plus `neutral_scores`, which records
+rather than deletes; `ungrounded` and its subset `abstained`, `fabricated_citations`, and
+`scored_names` — the denominator the enforcement lists are only meaningful against. Six deletions out of six is a domain that
+invented its entire output; six out of forty is one that overreached.
 
 ## Go types
 
@@ -237,12 +336,14 @@ type TradeIdea struct {
     PriceAtGeneration float64        `json:"price_at_generation,omitempty"`
     BaseConfidence    int            `json:"base_confidence,omitempty"`
     DomainScores      map[string]int `json:"domain_scores,omitempty"`
+    Consensus         float64        `json:"consensus,omitempty"` // 0-1
 
     Currency         string  `json:"currency,omitempty"`
     Shares           int     `json:"shares,omitempty"`
     Notional         float64 `json:"notional,omitempty"`  // USD
     RiskAmount       float64 `json:"risk_amount,omitempty"` // USD
     ExpectancyBps    float64 `json:"expectancy_bps,omitempty"`
+    ExpectancyR      float64 `json:"expectancy_r,omitempty"`
     BreakevenWinRate float64 `json:"breakeven_win_rate,omitempty"`
 }
 
