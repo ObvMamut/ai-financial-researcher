@@ -60,9 +60,61 @@
 # and sit at the far end of a best-first walk. Before the split, 32 bearish
 # pullbacks existed across four indices and 8 were shown; sp500 showed 0 of its
 # 11 and its scout nominated six longs and no shorts.
+# The eighth and ninth sections are the earnings-drift halves, and they are the
+# only ones not built from trailing returns. A name that filed a 10-Q or 10-K
+# inside the last trading month and repriced on it is shown with the abnormal
+# two-session reaction (`gapZ`, in units of its own daily vol) and that reaction
+# decayed toward the end of the window (`drift`).
+#
+# They exist because every other term on this page is a return over three or
+# twelve months. Those are real cross-sectional factors and they are right about
+# the next quarter or the next year; this system holds for two or three weeks.
+# Post-earnings drift is the one well-documented effect on that clock, so it is
+# the only input in the funnel whose horizon matches the question being asked.
+#
+# The split is by the sign of the *reaction*, not of the composite, because the
+# two often disagree — a name that rallied all year and then missed is a short
+# sitting at the top of the ranking, which no trailing-return table can surface.
+# The merge follows suit: a drift candidate is ranked on its drift rather than on
+# the composite (internal/orchestrator/prescreen.go, meritComposite), since
+# aligning it to the composite would give the best short a large negative merit
+# and delete it — exactly what happened to the pullback archetype before
+# shortlist_reserve was added.
+#
+# Only US filers appear: the report date comes from SEC's daily index, so a
+# foreign listing with no US line has no drift signal rather than a wrong one.
+# The leg is additive and needs [providers] contact_email — without it, or if SEC
+# is unreachable, the ranking is exactly what it was before.
+# Two further sections are the earnings-drift halves, and they are the only ones
+# not built from trailing returns. A name that filed a 10-Q or 10-K inside the
+# last trading month and repriced on it is shown with the abnormal two-session
+# reaction (`gapZ`, in units of its own daily vol) and that reaction decayed
+# toward the end of the window (`drift`).
+#
+# They exist because every other term on this page is a return over three or
+# twelve months. Those are real cross-sectional factors and they are right about
+# the next quarter or the next year; this system holds for two or three weeks.
+# Post-earnings drift is the one well-documented effect on that clock, so it is
+# the only input in the funnel whose horizon matches the question being asked.
+#
+# The split is by the sign of the *reaction*, not of the composite, because the
+# two often disagree — a name that rallied all year and then missed is a short
+# sitting at the top of the ranking, which no trailing-return table can surface.
+# The merge follows suit: a drift candidate is ranked on its drift rather than on
+# the composite (meritComposite in internal/orchestrator/prescreen.go), since
+# aligning it to the composite would give the best short a large negative merit
+# and delete it — exactly what happened to the pullback archetype before
+# shortlist_reserve was added.
+#
+# Only US filers appear: the report date comes from SEC's daily index, so a
+# foreign listing with no US line carries no drift signal rather than a wrong
+# one. The leg is additive and needs [providers] contact_email — without it, or
+# if SEC is unreachable, the ranking is exactly what it was before.
 #prescreen_top_per_index = 15
 #prescreen_pullback_per_index = 5
 #prescreen_base_per_index = 3
+#prescreen_drift_per_index = 5
+#prescreen_drift_per_index = 5
 
 # Cap on the merged shortlist that reaches the specialists, and on how many of
 # those names one index may contribute before the merit backfill.

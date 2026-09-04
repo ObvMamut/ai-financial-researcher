@@ -92,6 +92,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		PrescreenTopPerIndex:      s.PrescreenTopPerIndex,
 		PrescreenPullbackPerIndex: s.PrescreenPullbackPerIndex,
 		PrescreenBasePerIndex:     s.PrescreenBasePerIndex,
+		PrescreenDriftPerIndex:    s.PrescreenDriftPerIndex,
 		MaxShortlist:              s.MaxShortlist,
 		MaxPerIndex:               s.MaxPerIndex,
 		MaxThinlyCovered:          s.MaxThinlyCovered,

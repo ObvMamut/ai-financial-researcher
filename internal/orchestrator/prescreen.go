@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -35,13 +36,15 @@ type PrescreenParams struct {
 	// so a value of 5 yields up to ten rows. They are separate knobs because
 	// the sections answer different questions and a run may want more of one
 	// than the other.
-	PullbackPerIndex int     `json:"pullback_per_index"`
-	BasePerIndex     int     `json:"base_per_index"`
-	BottomPerIndex   int     `json:"bottom_per_index"`
-	ADVMinUSD        float64 `json:"adv_min_usd"`
-	MinBars          int     `json:"min_bars"`
-	VolTrendFlag     float64 `json:"vol_trend_flag"`
-	Formula          string  `json:"formula"`
+	PullbackPerIndex int `json:"pullback_per_index"`
+	BasePerIndex     int `json:"base_per_index"`
+	// DriftPerIndex sizes the earnings-drift section, also per direction.
+	DriftPerIndex  int     `json:"drift_per_index"`
+	BottomPerIndex int     `json:"bottom_per_index"`
+	ADVMinUSD      float64 `json:"adv_min_usd"`
+	MinBars        int     `json:"min_bars"`
+	VolTrendFlag   float64 `json:"vol_trend_flag"`
+	Formula        string  `json:"formula"`
 }
 
 const (
@@ -58,6 +61,11 @@ const (
 	// rows that only just clear the filter would undo the point of having one.
 	prescreenPullbackPerIndex = 5
 	prescreenBasePerIndex     = 3
+	// prescreenDriftPerIndex sizes the earnings-drift section, per direction.
+	// Larger than the base section because reporting is seasonal: outside a
+	// reporting month the section is empty whatever this says, and inside one
+	// there is genuinely more of it than of any other archetype.
+	prescreenDriftPerIndex = 5
 	// prescreenMinBars is the shortest history that still supports the 12-1
 	// momentum term at all. Below it the composite is noise.
 	prescreenMinBars = 60
@@ -97,6 +105,19 @@ const (
 	SetupContinuation = "continuation"
 	SetupPullback     = "pullback"
 	SetupBase         = "base"
+	// SetupDrift is the one archetype that is not a shape read off the trailing
+	// returns. It is an *event*: this name filed a 10-Q or a 10-K inside the
+	// last trading month and repriced on it, and the repricing has not been
+	// given back.
+	//
+	// It exists because every other term in this file is a trailing return over
+	// three or twelve months, and this system holds a position for two or three
+	// weeks. Those factors are real and they are right about a horizon this
+	// pipeline does not trade. Drift after an earnings surprise is the one
+	// well-documented effect whose clock matches the question, so it is the one
+	// input in the funnel that is about the next fortnight rather than the last
+	// year.
+	SetupDrift = "drift"
 )
 
 const (
@@ -128,6 +149,33 @@ const (
 	baseVolTrendMax = 0.9
 	baseStretchMax  = 0.5
 	baseHighMin     = 0.75
+
+	// driftWindowSessions is how long a periodic report stays the dominant fact
+	// about a name. Post-earnings drift is documented over weeks rather than
+	// days, and 25 sessions is a trading month — past it the reaction has been
+	// absorbed and the trailing-return terms describe the name better.
+	driftWindowSessions = 25
+	// driftMinSigma is how large the reaction has to be, in units of the name's
+	// own daily volatility over the two-session event window, before it counts
+	// as a repricing rather than as an ordinary week. Below it the "event" is
+	// indistinguishable from the noise the stop distances are already scaled to.
+	driftMinSigma = 1.5
+	// driftMinScore is the same test applied to the reaction *after* decay, and
+	// it is what stops the archetype outliving its own signal.
+	//
+	// Without it the gate is on the raw gap alone, so a name stays classified as
+	// drift for the full window however stale the event is — and because the
+	// archetypes are disjoint and first-match-wins, that pulls it out of the
+	// pullback and continuation tables while leaving it at the bottom of the
+	// drift one. On the sp500 ranking of 2026-09-04, eight of the twelve drift
+	// names were 22-24 sessions old and scored between -0.23 and +0.37: AAPL had
+	// a real -5.38σ reaction to a report from 24 sessions ago, which is history,
+	// and it was invisible in every table as a result.
+	//
+	// Half the entry threshold, so a large event stays relevant longer than a
+	// marginal one — a 9σ gap clears this until session 21, a 1.5σ gap does not
+	// clear it at all past session 12.
+	driftMinScore = driftMinSigma / 2
 )
 
 func defaultPrescreenParams() PrescreenParams {
@@ -135,6 +183,7 @@ func defaultPrescreenParams() PrescreenParams {
 		TopPerIndex:      15,
 		PullbackPerIndex: prescreenPullbackPerIndex,
 		BasePerIndex:     prescreenBasePerIndex,
+		DriftPerIndex:    prescreenDriftPerIndex,
 		BottomPerIndex:   prescreenBottomPerIndex,
 		ADVMinUSD:        defaultADVMinUSD,
 		MinBars:          prescreenMinBars,
@@ -186,8 +235,26 @@ type PrescreenRow struct {
 	// wrote "extension risk is absent". Over 21 days the same name reads +1.2.
 	Stretch21 float64 `json:"stretch_21"`
 
+	// The earnings-drift leg (drift.go). ReportDate is the last 10-Q or 10-K
+	// filing date EDGAR's daily index carries for this filer, empty for a name
+	// that has not reported inside the window and for every listing with no US
+	// filer at all. GapZ is the abnormal two-session reaction to it in units of
+	// the name's own daily volatility, PostZ the move since, and Drift the
+	// reaction decayed toward the end of the window — zero once it has been
+	// retraced.
+	//
+	// Drift is in the composite's own σ units but is deliberately *not* a term
+	// in it. As its own column and its own table it is visible and attributable:
+	// the control arm can score a ranking with it against the same ranking
+	// without it. Folded into the composite it would be neither.
+	ReportDate    string  `json:"report_date,omitempty"`
+	GapZ          float64 `json:"gap_z,omitempty"`
+	PostZ         float64 `json:"post_z,omitempty"`
+	DriftSessions int     `json:"drift_sessions,omitempty"`
+	Drift         float64 `json:"drift,omitempty"`
+
 	// Setup is the trade shape this row qualifies as, assigned first-match-wins
-	// by classifySetups so the scout's three tables are disjoint: "pullback",
+	// by classifySetups so the scout's tables are disjoint: "drift", "pullback",
 	// "base", or "continuation". Excluded rows carry none.
 	Setup string `json:"setup,omitempty"`
 
@@ -312,6 +379,32 @@ func (p *Prescreen) Table(index string, params PrescreenParams) string {
 		return out
 	}
 
+	// The drift section is picked and ordered differently, because a drift
+	// candidate's direction is the sign of *its own earnings reaction* and not
+	// the sign of the composite. The two frequently disagree — a name that has
+	// run all year and then missed is a short sitting at the top of the ranking
+	// — so reading the ranking from one end, which is exactly right for every
+	// other archetype, would return the wrong side of this one.
+	pickDrift := func(n int, bullish bool) []PrescreenRow {
+		var out []PrescreenRow
+		for _, r := range ranked {
+			if r.Setup != SetupDrift || shown[r.Ticker] || bullish != (r.Drift > 0) {
+				continue
+			}
+			out = append(out, r)
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			return math.Abs(out[i].Drift) > math.Abs(out[j].Drift)
+		})
+		if len(out) > n {
+			out = out[:n]
+		}
+		for _, r := range out {
+			shown[r.Ticker] = true
+		}
+		return out
+	}
+
 	var sb strings.Builder
 	section := func(heading, blurb string, rows []PrescreenRow) {
 		if len(rows) == 0 {
@@ -324,15 +417,25 @@ func (p *Prescreen) Table(index string, params PrescreenParams) string {
 		// `close` is in the listing's own currency (the ccy column) because that
 		// is what an order is placed in; ADV is converted, because a floor
 		// stated in dollars has to be met in dollars.
-		sb.WriteString("| ticker | name | sector | close (as of) | ccy | score | trend | mom12-1 | 63d | 21d | 5d | str21 | RS63 | vol20 | volTrend | regime | ADV$M (USD) | p/52wH |\n")
-		sb.WriteString("|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n")
+		sb.WriteString("| ticker | name | sector | close (as of) | ccy | score | trend | drift | gapZ | reported | mom12-1 | 63d | 21d | 5d | str21 | RS63 | vol20 | volTrend | regime | ADV$M (USD) | p/52wH |\n")
+		sb.WriteString("|---|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n")
 		for _, r := range rows {
-			fmt.Fprintf(&sb, "| %s | %s | %s | %.2f (%s) | %s | %+.2f | %+.2f | %s | %s | %s | %s | %+.2f | %s | %.0f%% | %.2f | %s | %.0f | %.2f |\n",
+			fmt.Fprintf(&sb, "| %s | %s | %s | %.2f (%s) | %s | %+.2f | %+.2f | %s | %s | %s | %s | %s | %s | %s | %+.2f | %s | %.0f%% | %.2f | %s | %.0f | %.2f |\n",
 				r.Ticker, r.Name, r.Sector, r.Close, r.AsOf, r.Currency, r.Score, r.Trend,
+				driftStr(r.Drift), driftStr(r.GapZ), orDash(r.ReportDate),
 				pctStr(r.Mom12_1), pctStr(r.Ret63d), pctStr(r.Ret21d), pctStr(r.Ret5d), r.Stretch21,
 				pctStr(r.RS63), r.VolYZ20*100, r.VolTrend, r.Regime, r.ADV/1e6, r.PriceTo52wHigh)
 		}
 	}
+
+	// Drift leads because it is the only section built on a dated event rather
+	// than on a trailing return, and the only one whose evidence is about the
+	// next few weeks rather than the last few months. A scout with limited
+	// attention should spend it here first.
+	section("Drift (long)", "reported a 10-Q or 10-K inside the last trading month and *jumped* on it, and has kept the move. `gapZ` is the abnormal two-session reaction in units of the name's own daily vol; `drift` is that reaction decayed toward the end of the window. Prices continue in the direction of an earnings surprise for weeks — this is the one shape here whose horizon matches the trade",
+		pickDrift(params.DriftPerIndex, true))
+	section("Drift (short)", "the same event in the other direction: reported inside the last trading month and *fell* on it, without recovering. Note that a drift short can carry a strongly positive composite — a name that ran all year and then missed is exactly that, and it is the case a trailing-return ranking can never surface",
+		pickDrift(params.DriftPerIndex, false))
 
 	section("Continuation", "strongest composites in the index — trends that are still running. `str21` is how many 21-day sigmas of that run are already behind it; a high `p/52wH` with a high `str21` is where trend-followers get filled last",
 		pick(SetupContinuation, positiveOr(params.TopPerIndex, 1), true))
@@ -386,6 +489,23 @@ func positiveOr(n, min int) int {
 }
 
 func pctStr(x float64) string { return fmt.Sprintf("%+.1f%%", x*100) }
+
+// driftStr renders a drift figure, or a dash where there is none. A zero would
+// read as "this name reported and the market shrugged", which is a finding; the
+// common case is that it did not report at all, which is not.
+func driftStr(x float64) string {
+	if x == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%+.2f", x)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
 
 // newPrescreenRow projects one constituent's computed metrics onto the columns
 // the ranking and the scout table use. benchRet63 is the index benchmark's own
@@ -593,12 +713,12 @@ func scorePrescreen(rows []PrescreenRow) {
 // as. It is the tail of scorePrescreen rather than a step of its own, because
 // the tests read Trend and every caller that has a score needs a label.
 //
-// First match wins, pullback before base before continuation, so the three
-// tables the scout reads are disjoint and their counts mean something. The
-// order is by how specific the shape is: a pullback is a named entry, a base is
-// a named condition, and continuation is what is left — which is also today's
-// behaviour, so a row that matches nothing new keeps exactly the label the old
-// single table would have given it.
+// First match wins, drift before pullback before base before continuation, so
+// the tables the scout reads are disjoint and their counts mean something. The
+// order is by how specific the shape is: drift is a dated event, a pullback is a
+// named entry, a base is a named condition, and continuation is what is left —
+// which is also the oldest behaviour, so a row that matches nothing keeps
+// exactly the label the original single table would have given it.
 func classifySetups(rows []PrescreenRow) {
 	for i := range rows {
 		if rows[i].Excluded != "" {
@@ -606,6 +726,13 @@ func classifySetups(rows []PrescreenRow) {
 			continue
 		}
 		switch {
+		case isDrift(rows[i]):
+			// First, and ahead of the shapes read off trailing returns. A name
+			// that repriced on its own report last week is a name whose
+			// dominant fact is the report; classifying it by the disagreement
+			// between its last month and its last year names a mechanism that is
+			// not the one driving it.
+			rows[i].Setup = SetupDrift
 		case isPullback(rows[i]):
 			rows[i].Setup = SetupPullback
 		case isBase(rows[i]):
@@ -770,25 +897,37 @@ func sameSign(a, b float64) bool {
 // few hundred JSON files per run for names that never reach the shortlist. They
 // land in the shared data cache, where Stage 1.5 reads the dozen it needs back
 // for free.
-func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSource, fx *marketdata.FXRates, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
+func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSource, fx *marketdata.FXRates, reports marketdata.ReportDateSource, uni *universe.Universe, indices []string, params PrescreenParams) *Prescreen {
 	ps := &Prescreen{Indices: indices, Params: params}
 
 	// One benchmark fetch per distinct symbol; several indices, and several
 	// exchanges within asia100, may share one.
+	//
+	// The series is kept rather than only its 63-day return, because the drift
+	// leg needs the index's move over two specific sessions to take a report's
+	// reaction net of the market. Fetching it twice for that would be a second
+	// request for bytes already in hand.
+	benchSeries := map[string]*quant.Series{}
 	benchRet63 := map[string]float64{}
-	benchFor := func(indexKey, ticker string) float64 {
+	benchmark := func(indexKey, ticker string) *quant.Series {
 		sym := universe.BenchmarkFor(indexKey, ticker)
-		if v, ok := benchRet63[sym]; ok {
-			return v
+		if b, ok := benchSeries[sym]; ok {
+			return b
 		}
-		v := 0.0
-		if s, err := yc.History(ctx, sym); err != nil {
+		b, err := yc.History(ctx, sym)
+		if err != nil {
 			ps.Errors = append(ps.Errors, fmt.Sprintf("benchmark %s: %v", sym, err))
-		} else {
-			v = quant.Compute(s, nil).Ret63d
+			b = nil
 		}
-		benchRet63[sym] = v
-		return v
+		benchSeries[sym] = b
+		if b != nil {
+			benchRet63[sym] = quant.Compute(b, nil).Ret63d
+		}
+		return b
+	}
+	benchFor := func(indexKey, ticker string) float64 {
+		benchmark(indexKey, ticker)
+		return benchRet63[universe.BenchmarkFor(indexKey, ticker)]
 	}
 
 	// One batched warm-up before the per-ticker loop below.
@@ -808,6 +947,21 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSourc
 	}
 	if n := yc.Prefetch(ctx, warm); n > 0 {
 		log(ch, fmt.Sprintf("pre-screen: %d of %d symbols pre-fetched in batch", n, len(warm)))
+	}
+
+	// The last periodic report per US filer, from EDGAR's daily index. One walk
+	// for the whole universe, and additive: a nil source, an unconfigured SEC
+	// contact or a failed fetch leaves every row without a drift signal and
+	// changes nothing else. Fetched with calendar-day slack over the session
+	// window, since the window is counted in sessions and this walk is not.
+	var reportDates map[string]time.Time
+	if reports != nil {
+		since := time.Now().UTC().AddDate(0, 0, -driftWindowSessions*7/5-7)
+		reportDates = reports.ReportDates(ctx, warm, since)
+		if len(reportDates) > 0 {
+			log(ch, fmt.Sprintf("pre-screen: %d of %d names filed a 10-Q/10-K in the last %d sessions",
+				len(reportDates), len(warm), driftWindowSessions))
+		}
 	}
 
 	var rows []PrescreenRow
@@ -839,6 +993,12 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSourc
 			// scorePrescreen), so measuring each name against its own market
 			// changes what the scout reads without moving the ranking.
 			r := newPrescreenRow(c, m, benchFor(idx, c.Ticker), params)
+			if when, ok := reportDates[strings.ToUpper(c.Ticker)]; ok {
+				if d, ok := computeDrift(s, benchmark(idx, c.Ticker), when, m.SigmaDaily); ok {
+					r.ReportDate, r.GapZ, r.PostZ = d.Date, d.GapZ, d.PostZ
+					r.DriftSessions, r.Drift = d.Sessions, d.Score()
+				}
+			}
 			if r.AsOf > ps.AsOf {
 				ps.AsOf = r.AsOf
 			}
@@ -931,6 +1091,31 @@ func meritComposite(ps *Prescreen, c model.Candidate) float64 {
 	r, ok := ps.Row(c.Index, c.Ticker)
 	if !ok || r.Excluded != "" {
 		return 0
+	}
+	// A drift candidate is merged on its drift, not on the composite.
+	//
+	// Without this the drift table is computed, rendered to the scout, and then
+	// deleted by the merge — which is precisely what happened to the pullback
+	// and base archetypes and why shortlist_reserve had to be invented. Merit
+	// *is* the composite, and the composite rewards having already run.
+	//
+	// For drift the mismatch is worse than a bias, it is a sign error. A name
+	// that rallied all year and then missed its quarter is a short with a
+	// strongly *positive* composite: aligned to a bearish nomination its merit
+	// would be a large negative number, so the single best short the event leg
+	// can find would rank last in the merge. Both figures are in the same σ
+	// units, so substituting one for the other keeps every candidate on one
+	// comparable scale, which is what lets the merge rank across archetypes at
+	// all.
+	if r.Setup == SetupDrift && r.Drift != 0 {
+		switch c.Bias {
+		case model.BiasBullish:
+			return r.Drift
+		case model.BiasBearish:
+			return -r.Drift
+		default:
+			return 0
+		}
 	}
 	switch c.Bias {
 	case model.BiasBullish:

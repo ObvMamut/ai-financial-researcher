@@ -1,6 +1,9 @@
-# Run artifacts and market-data cache
-/runs/
-/.data/
+# Run artifacts and market-data cache. Unanchored, because a `go test` run
+# writes its cache relative to the package directory rather than to the repo
+# root, and a probe run from inside internal/orchestrator once committed 130
+# cached Yahoo responses.
+runs/
+.data/
 
 # Local configuration (copy cfr.toml.example instead)
 /cfr.toml

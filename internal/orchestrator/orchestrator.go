@@ -102,6 +102,9 @@ type Config struct {
 	// means 5 and 3, so ten and six rows.
 	PrescreenPullbackPerIndex int
 	PrescreenBasePerIndex     int
+	// PrescreenDriftPerIndex sizes the earnings-drift section, also per
+	// direction. Zero means 5, so up to ten rows.
+	PrescreenDriftPerIndex int
 	// MaxShortlist caps the merged shortlist that reaches the specialists. Zero
 	// means 12.
 	MaxShortlist int
@@ -557,6 +560,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if cfg.PrescreenBasePerIndex > 0 {
 		prescreenParams.BasePerIndex = cfg.PrescreenBasePerIndex
 	}
+	if cfg.PrescreenDriftPerIndex > 0 {
+		prescreenParams.DriftPerIndex = cfg.PrescreenDriftPerIndex
+	}
 	prescreenParams.ADVMinUSD = cfg.Risk.ADVMinUSD
 	var prescreen *Prescreen
 	if cfg.Mode == model.ModeIndependent {
@@ -567,7 +573,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		log(ch, fmt.Sprintf("Stage 0.5: pre-screening %d names across %s (cold fetch, cached ~0s)…",
 			total, strings.Join(indices, ", ")))
-		prescreen = runPrescreen(ctx, ch, prices, fx, uni, indices, prescreenParams)
+		// EDGAR's report-date index feeds the drift leg. It shares the SEC
+		// contact and disk cache with every other EDGAR provider, and is
+		// additive: without a contact email it returns nothing and the
+		// pre-screen ranks exactly as it did before.
+		reportDates := marketdata.NewEdgarReportDates(cfg.Providers.ContactEmail, cache)
+		prescreen = runPrescreen(ctx, ch, prices, fx, reportDates, uni, indices, prescreenParams)
 		logPackErrors(ch, "prescreen", prescreen.Errors)
 		dataErrors = append(dataErrors, prefixed("prescreen", prescreen.Errors)...)
 		if err := run.WritePrescreen(prescreen); err != nil {

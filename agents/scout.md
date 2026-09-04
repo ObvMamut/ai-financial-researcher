@@ -16,15 +16,29 @@ memory is not your job and you have no data to do it with. Your job is the part
 arithmetic cannot do: deciding which of those rankings are **tradeable setups** and which
 are traps.
 
-### The six tables
-You are given **six** tables, not one. They are disjoint — each name appears in exactly
+### The eight tables
+You are given **eight** tables, not one. They are disjoint — each name appears in exactly
 one — and they exist because the composite score is built entirely from trailing returns,
 so its top is, by construction, the names that have already run the furthest. Screening
 only the top of one ranking is how this pipeline came to propose three longs sitting at
 0.993, 0.982 and 1.000 of their 52-week highs in a single run.
 
-Three of the six are **short tables**. Read them.
+Four of the eight are **short tables**. Read them.
 
+- **Drift (long)** and **Drift (short)** — a name that filed a 10-Q or a 10-K inside the
+  last trading month and repriced on it, and has kept the move. **Read these first.**
+  Every other table on this page ranks names on returns over the last three or twelve
+  months; those factors are real and they are right about the next quarter or the next
+  year. You are screening for the next two or three weeks, and drift after an earnings
+  surprise is the one well-documented effect on that clock. `gapZ` is the abnormal
+  two-session reaction in units of the name's own daily volatility, `drift` is that
+  reaction decayed toward the end of the window, and `reported` is the filing date.
+
+  A drift candidate's direction is the sign of its **reaction**, not of its composite, and
+  the two often disagree. A name that rallied all year and then missed sits near the top of
+  the ranking and belongs in **Drift (short)** — that is a setup no trailing-return table
+  can ever show you, and it is the reason this section is split by the gap rather than by
+  the score.
 - **Continuation** — the strongest composites. Trends still running. The top row is not
   automatically a candidate: a name that has run hard *and* is stretched (`str21` above
   ~1.5 with `p/52wH` near 1.00) is where trend-followers get filled last.
@@ -45,7 +59,9 @@ Three of the six are **short tables**. Read them.
   fresh short — for that, read **Pullback (short)**.
 
 **Nominate from more than one table, and from both directions.** A list drawn entirely
-from Continuation is the tape, not a screen. If a table has nothing worth taking, say so
+from Continuation is the tape, not a screen. Where a drift table has anything in it, it has
+first claim on a slot: it is the only evidence on this page about the weeks you are
+screening for. If a table has nothing worth taking, say so
 rather than filling it — but a run in which you nominate no shorts at all needs a reason
 you can state, not silence. Across 24 runs this pipeline has produced 86 long ideas and
 17 short ones, and in the run that prompted these tables one scout read a bottom-of-index
@@ -65,6 +81,11 @@ six longs and nothing else.
   levels a trade would be built on are unstable. Say so if you nominate anyway.
 - `regime` is a variance-ratio read: `trending` supports continuation, `mean-reverting`
   argues against chasing, `random-walk` means the price series alone is not evidence.
+- `drift` and `gapZ` are `—` for most names, and that means **this name did not report**,
+  not that it reported and nothing happened. Only US filers appear at all: a foreign
+  listing with no US line has no filing to find, so its dash says nothing about the
+  company. Reporting is also seasonal — outside a reporting month the drift tables are
+  legitimately empty.
 
 ## Reality constraints
 - Today is the **run timestamp** in the task context. "Recent" is relative to that date.
@@ -78,8 +99,8 @@ six longs and nothing else.
   constituent list alone. Three defensible names beat ten dressed in invented evidence.
 
 ## Method
-1. Read all six tables. Note where each name sits and *why* — which columns carry its
-   score, and which table it came from.
+1. Read all eight tables, drift first. Note where each name sits and *why* — which columns
+   carry its score, and which table it came from.
 2. Nominate from both ends and from more than one table. A list of only longs is not a
    screen, it is the tape.
 3. **Every reason must cite at least one column from the tables by name**, with its value:

@@ -46,9 +46,12 @@ type Settings struct {
 	// count rows per half. Zero means the orchestrator's defaults (5 / 3).
 	PrescreenPullbackPerIndex int
 	PrescreenBasePerIndex     int
-	MaxShortlist              int
-	MaxPerIndex               int
-	MaxThinlyCovered          int
+	// PrescreenDriftPerIndex sizes the earnings-drift section, also per
+	// direction. Zero means the orchestrator's default (5).
+	PrescreenDriftPerIndex int
+	MaxShortlist           int
+	MaxPerIndex            int
+	MaxThinlyCovered       int
 	// ShortlistReserve holds slots in the shortlist for non-continuation
 	// archetypes, and ShortlistReserveMinMerit is the composite z a candidate
 	// needs to take one. Zero means the orchestrator's defaults (3 / 0.5);
@@ -113,6 +116,7 @@ type fileFormat struct {
 	PrescreenTopPerIndex      int     `toml:"prescreen_top_per_index"`
 	PrescreenPullbackPerIndex int     `toml:"prescreen_pullback_per_index"`
 	PrescreenBasePerIndex     int     `toml:"prescreen_base_per_index"`
+	PrescreenDriftPerIndex    int     `toml:"prescreen_drift_per_index"`
 	MaxShortlist              int     `toml:"max_shortlist"`
 	MaxPerIndex               int     `toml:"max_per_index"`
 	MaxThinlyCovered          int     `toml:"max_thinly_covered"`
@@ -354,6 +358,7 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
 	setInt(&s.PrescreenPullbackPerIndex, f.PrescreenPullbackPerIndex)
 	setInt(&s.PrescreenBasePerIndex, f.PrescreenBasePerIndex)
+	setInt(&s.PrescreenDriftPerIndex, f.PrescreenDriftPerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
 	setInt(&s.MaxThinlyCovered, f.MaxThinlyCovered)
@@ -614,6 +619,7 @@ func (s *Settings) applyEnv() {
 	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")
 	setPosInt(&s.PrescreenPullbackPerIndex, "CFR_PRESCREEN_PULLBACK_PER_INDEX")
 	setPosInt(&s.PrescreenBasePerIndex, "CFR_PRESCREEN_BASE_PER_INDEX")
+	setPosInt(&s.PrescreenDriftPerIndex, "CFR_PRESCREEN_DRIFT_PER_INDEX")
 	// Any parsed integer wins here, negative included: a negative reserve is the
 	// documented way to disable the archetype reserve, so setPosInt would make
 	// the switch unreachable from the environment.

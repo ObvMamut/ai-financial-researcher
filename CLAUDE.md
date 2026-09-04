@@ -86,6 +86,11 @@ internal/
   quant/        pure-stdlib statistical metrics (momentum, YZ vol, VR, …) — no TA
   marketdata/   HTTP data providers: Yahoo chart + search-news + option chain
                 (keyless), EDGAR (keyless), FRED/AV/Alpaca (keyed);
+                edgarreports.go walks SEC's *daily* index for the last 10-Q/10-K
+                per filer — one ~1MB file per session, immutable once published
+                so it caches forever and a run fetches only new days, where the
+                quarterly index is 55MB and per-issuer submissions are ~150
+                requests; it feeds Stage 0.5's drift leg;
                 prices.go routes daily bars per symbol — alpaca.go for US
                 equities (batched, many symbols per request), yahoo.go for
                 foreign listings, index benchmarks and FX; alpacanews.go and
@@ -139,15 +144,25 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    discount a trend but never reverse it**. Standardising within the index *is* the
    relative-strength adjustment, so there is no separate `rs63` term — it was arithmetically
    identical to `z(ret63d)`. Every row is then classified first-match-wins into a **setup
-   archetype** — `pullback` (composite and last month disagree), `base` (vol contracting,
-   price flat), or `continuation` — because every term in the composite is a trailing
-   return, so its top is by construction the names that have already run. Illiquid and
+   archetype** — `drift`, `pullback` (composite and last month disagree), `base` (vol
+   contracting, price flat), or `continuation` — because every term in the composite is a
+   trailing return, so its top is by construction the names that have already run.
+   `drift` is tested first and is the only archetype not read off trailing returns: the
+   name filed a 10-Q/10-K inside the last 25 sessions (SEC's daily index via
+   `marketdata/edgarreports.go`; US filers only, additive — no `contact_email` means no
+   drift leg) and repriced on it by ≥1.5σ over a two-session window measured net of its
+   benchmark, with the decayed reaction still clearing half that. It exists because every
+   other term is a 3- or 12-month factor while this system holds for 2–3 weeks, and
+   post-earnings drift is the one documented effect on that clock. Its direction is the
+   sign of the *reaction*, not of the composite — a name that ran all year and then missed
+   is a short sitting at the top of the ranking — so both its table and `meritComposite`
+   split on the drift rather than on the score. Illiquid and
    short-history names are excluded, against turnover **converted to USD**
    (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price series stay in the
    data cache.
-1. **Scouts (cheap engine):** one call per index, each screening *six disjoint ranked
-   tables* — continuation, pullback and base each split into a long and a short half, plus
-   the bottom of the ranking — → ~5–10 nominations each. The counter-trend archetypes are
+1. **Scouts (cheap engine):** one call per index, each screening *eight disjoint ranked
+   tables* — drift, pullback and base each split into a long and a short half, plus
+   continuation and the bottom of the ranking — → ~5–10 nominations each. The counter-trend archetypes are
    split by direction because the composite is a signed long ranking, so a section ranked
    by it is long-only whatever the classifier found: the best shorts carry the most
    negative scores and sit at the far end of a best-first walk. Nominations outside the index's constituent list are

@@ -135,7 +135,7 @@ Stage 1.5 reads back the dozen it needs for free.
 ## Stage 1 — Screening (Scouts)
 
 - One **Scout** subprocess per index: SP500, NQ100, EU50, Asia100 (4 parallel).
-- Each scout receives the **pre-screen tables** for its index — six disjoint sections,
+- Each scout receives the **pre-screen tables** for its index — eight disjoint sections,
   every measured column — followed by the full constituent list. It returns **~5–10
   nominations** with a one-line reason and a bias, each reason citing a column from the
   tables. Names in none of the sections may be nominated only on reasoning that does not
@@ -143,6 +143,8 @@ Stage 1.5 reads back the dozen it needs for free.
 
   | Section | Rows | Contents |
   |---|---|---|
+  | Drift (long) | `prescreen_drift_per_index` (5) | reported inside the last trading month and *jumped* on it, and has kept the move |
+  | Drift (short) | same, per half (5) | reported inside the last trading month and *fell* on it, without recovering |
   | Continuation | `prescreen_top_per_index` (15) | highest composites — trends still running |
   | Pullback (long) | `prescreen_pullback_per_index` (5) | positive composite, negative last month — an uptrend dipping |
   | Pullback (short) | same, per half (5) | negative composite, positive last month — a downtrend bouncing |
@@ -178,10 +180,12 @@ Stage 1.5 reads back the dozen it needs for free.
 
 Assigned **first-match-wins** so the sections are disjoint and their counts mean something.
 Each is a *filter*; `trend` ranks within it, which keeps every candidate on one scale so
-the merge can compare across archetypes at all.
+the merge can compare across archetypes at all. `drift` is the exception on both counts —
+it is ranked by its own score and split by its own sign; see below.
 
 | Setup | Filter |
 |---|---|
+| `drift` | a 10-Q/10-K filed within `driftWindowSessions` (25), `\|gapZ\| ≥ 1.5`, decayed `\|drift\| ≥ 0.75`, reaction not retraced |
 | `pullback` | `bars ≥ 252`, `sign(ret21d) ≠ sign(trend)`, `volTrend ≤ 1.2`, and `p/52wH` in `[0.80, 0.95]` for longs / `≤ 0.85` for shorts |
 | `base` | `volTrend` in `(0, 0.9)`, `\|stretch21\| < 0.5`, `regime != trending`, `p/52wH ≥ 0.75` |
 | `continuation` | everything else that scores |
@@ -197,6 +201,58 @@ own counter-trend condition is one: a bearish pullback requires a *positive* 21-
 The `base` filter is stated against `volTrend` rather than a price range because
 contraction is the thing being selected; it is the one archetype that cannot be extended
 by construction, since a name that has just run is not flat over the month.
+
+#### `drift` — the only leg whose horizon is the one being traded
+
+Every other term on this page is a trailing return over three or twelve months. They are
+real cross-sectional factors and this file already says what is wrong with leaning on them
+here: a twelve-month trend measured to a month ago *"is right about the next twelve months
+rather than the next fortnight"*. Nothing in the ranking was about the next fortnight.
+
+Post-earnings announcement drift is. Prices continue in the direction of an earnings
+surprise for weeks after the report, which is the window every idea here is written for.
+
+- **The surprise is the market's reaction, not a beat or a miss.** The reaction is the
+  better predictor — a company can beat a consensus everyone had already revised toward
+  and go nowhere — and it needs no data the pipeline does not hold. A consensus-estimate
+  feed would be a new keyed provider bought to produce a worse number.
+- **The event window spans `[0, +1]` sessions.** EDGAR's index carries the filing date and
+  not the hour. A report filed before the open is priced that day; one filed after the
+  close is priced the next. Measuring day 0 alone silently scores every post-close filer's
+  pre-announcement drift instead of its reaction.
+- **The reaction is abnormal and in σ.** Net of the name's own index over the identical
+  two dates, so a market that fell 3% on the day of a report is not read as the report;
+  and divided by the name's daily volatility, because a 6% move is a different event for a
+  utility and for a semiconductor.
+- **It decays linearly to zero over the window, and dies early if retraced.** Linear
+  rather than fitted: fitting a shape needs closed trades this pipeline does not have yet,
+  and a curve fitted to five observations is a decoration on an assumption. A second floor
+  on the *decayed* score releases a name back to the trailing-return archetypes once its
+  report is history — without it, an event 24 sessions old still claimed the archetype and,
+  because the archetypes are disjoint, vanished from every table at once. On the live
+  sp500 ranking of 2026-09-04 that was eight of twelve drift names.
+- **Direction is the sign of the reaction, not of the composite.** The two frequently
+  disagree, and that disagreement is the point: a name that rallied all year and then
+  missed is a short sitting near the top of the ranking, and no trailing-return table can
+  ever show it. On 2026-09-04 SNPS carried a composite of −1.23 and a drift of +2.68 — a
+  long the ranking would have buried at rank 90 of 98.
+- **The merge follows the same rule** (`meritComposite`): a drift candidate is ranked on
+  its drift. Aligned to the composite, the best short the leg can find would carry a large
+  *negative* merit and be deleted — which is exactly what happened to the pullback
+  archetype before `shortlist_reserve` was added. Both figures are in σ units, so the
+  substitution keeps every candidate on one comparable scale.
+
+**It is deliberately not a term in the composite.** As its own column and its own table it
+is visible and attributable, and `cfr scoreboard --control` can score a ranking carrying it
+against the same ranking without it. Folded in, it would be neither.
+
+Report dates come from SEC's **daily** index (`internal/marketdata/edgarreports.go`): one
+~1 MB file per session, immutable once published, so the parsed result caches permanently
+and a run fetches only the sessions that have appeared since the last one. The quarterly
+full index is one request but 55 MB, and one submissions document per issuer is ~150
+requests for one date each. Only US filers appear, so a foreign listing with no US line
+carries no drift signal rather than a wrong one. The whole leg is additive: no
+`contact_email`, no SEC, or a failed day costs the signal and nothing else.
 - **Nominations are validated against the index's own constituent list.** A symbol that
   is not in it is dropped and logged: a hallucinated ticker used to reach the shortlist
   and consume a data fetch and an analysis slot on a company the run never screened.
