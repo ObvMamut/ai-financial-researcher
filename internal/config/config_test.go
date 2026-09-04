@@ -558,3 +558,48 @@ alpaca_secret_key = "file-secret"
 		}
 	})
 }
+
+// The archetype and entry-band keys are the levers for "stop buying at the
+// high", so a silent parse failure would be indistinguishable from the feature
+// not working.
+func TestLoadFileAppliesArchetypeAndEntryBandKeys(t *testing.T) {
+	_, cwd := isolate(t)
+	toml := `
+prescreen_pullback_per_index = 7
+prescreen_base_per_index = 4
+shortlist_reserve = -1
+shortlist_reserve_min_merit = 0.9
+
+[risk]
+entry_patience_sigma = 2.0
+entry_chase_sigma = 0.25
+`
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.PrescreenPullbackPerIndex != 7 || s.PrescreenBasePerIndex != 4 {
+		t.Errorf("archetype section sizes = %d/%d, want 7/4",
+			s.PrescreenPullbackPerIndex, s.PrescreenBasePerIndex)
+	}
+	// Negative is the documented way to turn the reserve off, so this key
+	// cannot be presence-detected by sign the way the other counts are.
+	if s.ShortlistReserve != -1 {
+		t.Errorf("shortlist_reserve = %d, want -1 to survive as the off switch", s.ShortlistReserve)
+	}
+	if s.ShortlistReserveMinMerit != 0.9 {
+		t.Errorf("shortlist_reserve_min_merit = %v, want 0.9", s.ShortlistReserveMinMerit)
+	}
+	if s.Risk.EntryPatienceSigma != 2.0 || s.Risk.EntryChaseSigma != 0.25 {
+		t.Errorf("entry bands = %v/%v, want 2.0/0.25",
+			s.Risk.EntryPatienceSigma, s.Risk.EntryChaseSigma)
+	}
+	for _, key := range []string{"entry_patience_sigma", "entry_chase_sigma"} {
+		if !s.Risk.Set(key) {
+			t.Errorf("%s not recorded as explicitly set", key)
+		}
+	}
+}

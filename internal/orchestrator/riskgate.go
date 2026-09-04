@@ -270,6 +270,11 @@ func riskDefaults(c model.RiskConfig) model.RiskConfig {
 	fill(&c.StopSigmaMin, "stop_sigma_min", 1.0)
 	fill(&c.StopSigmaMax, "stop_sigma_max", 2.0)
 	fill(&c.TargetSigmaMax, "target_sigma_max", 3.5)
+	// A long may bid up to 1.5σ√5 below the close and a short offer the same
+	// distance above; either may only reach 0.5σ√5 the other way. See
+	// isPatientEntry.
+	fill(&c.EntryPatienceSigma, "entry_patience_sigma", 1.5)
+	fill(&c.EntryChaseSigma, "entry_chase_sigma", 0.5)
 	fill(&c.ADVMinUSD, "adv_min_usd", defaultADVMinUSD)
 	fill(&c.MaxPairCorr, "max_pair_corr", 0.75)
 	fill(&c.MaxPortfolioBeta, "max_portfolio_beta", 1.5)

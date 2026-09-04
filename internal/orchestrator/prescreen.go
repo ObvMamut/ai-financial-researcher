@@ -29,12 +29,18 @@ import (
 // PrescreenParams records the knobs a pre-screen ran with. It is persisted with
 // the rows so a run's ranking can be reproduced from its own artifact.
 type PrescreenParams struct {
-	TopPerIndex    int     `json:"top_per_index"`
-	BottomPerIndex int     `json:"bottom_per_index"`
-	ADVMinUSD      float64 `json:"adv_min_usd"`
-	MinBars        int     `json:"min_bars"`
-	VolTrendFlag   float64 `json:"vol_trend_flag"`
-	Formula        string  `json:"formula"`
+	TopPerIndex int `json:"top_per_index"`
+	// PullbackPerIndex and BasePerIndex size the two archetype sections the
+	// scout table gained alongside the top-of-ranking one. They are separate
+	// knobs because the sections answer different questions and a run may want
+	// more of one than the other.
+	PullbackPerIndex int     `json:"pullback_per_index"`
+	BasePerIndex     int     `json:"base_per_index"`
+	BottomPerIndex   int     `json:"bottom_per_index"`
+	ADVMinUSD        float64 `json:"adv_min_usd"`
+	MinBars          int     `json:"min_bars"`
+	VolTrendFlag     float64 `json:"vol_trend_flag"`
+	Formula          string  `json:"formula"`
 }
 
 const (
@@ -43,6 +49,13 @@ const (
 	// entirely long; the bottom of the ranking is where a defensible short comes
 	// from, and it costs nothing to show.
 	prescreenBottomPerIndex = 5
+	// prescreenPullbackPerIndex and prescreenBasePerIndex size the two new
+	// archetype sections. Smaller than the continuation table because both are
+	// filtered shapes: an index rarely holds fifteen genuine pullbacks, and
+	// padding the section with rows that only just clear the filter would undo
+	// the point of having one.
+	prescreenPullbackPerIndex = 8
+	prescreenBasePerIndex     = 5
 	// prescreenMinBars is the shortest history that still supports the 12-1
 	// momentum term at all. Below it the composite is noise.
 	prescreenMinBars = 60
@@ -51,22 +64,80 @@ const (
 	prescreenVolTrendFlag = 1.5
 	// prescreenFormula is written into the artifact so a row's Score is legible
 	// without reading this file.
-	prescreenFormula = "0.5·z(mom12-1) + z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
+	prescreenFormula = "0.5·z(mom12-1) + z(ret63d) − 0.5·strZ − 0.35·stretch21, each penalty only when that move runs with the composite; mom/ret63d z-scored within index, strZ and stretch21 already per-name sigma units"
 	// defaultADVMinUSD is the tradeable-size floor, in 20-day average dollar
 	// volume. A swing position sized off a real account cannot be entered or
 	// exited in a name that trades a few million a day, so such names are
 	// dropped before a model ever sees them. Config key: risk.adv_min_usd.
 	defaultADVMinUSD = 20e6
+	// stretch21Weight is what a full 21-day sigma of extension costs the
+	// composite. Half the 5-day term's weight: a month of steady gains is the
+	// trend this system trades, so it is a milder warning than the same
+	// distance covered in a week, but AMGN's +1.2 still costs 0.42 of a point
+	// where the 5-day term charged 0.095.
+	stretch21Weight = 0.35
+)
+
+// Setup archetypes. The pre-screen's composite is built from trailing returns,
+// so its top is by construction the names that have already run — on 2026-09-04
+// eight or nine of every index's top fifteen sat within 5% of their 52-week
+// high, and the shortlist that came out of it was three longs at 0.993, 0.982
+// and 1.000 of theirs. Ranking harder does not fix that; the ranking is honest
+// about what it measures. What was missing is that no *other* shape was ever
+// put in front of a model: the table showed the top 15 and the bottom 5, and
+// the 187 rows in between — median 0.78-0.89 of their highs, which is where a
+// pullback or a base lives — were printed as "(mid-ranked names omitted)".
+//
+// So the archetypes are filters, not new composites. Each one selects a shape;
+// Trend still ranks within it. That keeps every candidate on one scale, which
+// is what lets the merge compare a pullback against a continuation at all.
+const (
+	SetupContinuation = "continuation"
+	SetupPullback     = "pullback"
+	SetupBase         = "base"
+)
+
+const (
+	// pullbackMinBars is a full year, because the band below is stated against
+	// the 52-week high and a shorter history does not have one.
+	pullbackMinBars = 252
+	// pullbackVolTrendMax keeps the dip from being a volatility event. A
+	// pullback is the trend resting; expanding realized vol means something
+	// happened, and the levels a trade would be built on are not stable.
+	pullbackVolTrendMax = 1.2
+	// pullbackHighMin/Max bound how deep a long pullback may be. Above 0.95 the
+	// name has not actually pulled back; below 0.80 the trend it is pulling
+	// back within is in question.
+	pullbackHighMin = 0.80
+	pullbackHighMax = 0.95
+	// pullbackShortHighMax is the mirror for a bearish pullback: a bounce is
+	// only a fresh short if the name is genuinely in a downtrend, and being 15%
+	// or more below the 52-week high is the available evidence of that. There
+	// is no "already collapsed" test here because the archetype's own
+	// counter-trend condition is one — a bearish pullback requires a *positive*
+	// 21-day return, which is exactly the bounce a short wants to sell into
+	// rather than the capitulation it does not.
+	pullbackShortHighMax = 0.85
+
+	// baseVolTrendMax is the defining term: 20-day realized vol running below
+	// 90% of the 60-day is a name coiling. baseStretchMax holds it flat over the
+	// month, and baseHighMin keeps it in the upper part of its own range so this
+	// selects consolidation rather than a long decline that has stopped moving.
+	baseVolTrendMax = 0.9
+	baseStretchMax  = 0.5
+	baseHighMin     = 0.75
 )
 
 func defaultPrescreenParams() PrescreenParams {
 	return PrescreenParams{
-		TopPerIndex:    15,
-		BottomPerIndex: prescreenBottomPerIndex,
-		ADVMinUSD:      defaultADVMinUSD,
-		MinBars:        prescreenMinBars,
-		VolTrendFlag:   prescreenVolTrendFlag,
-		Formula:        prescreenFormula,
+		TopPerIndex:      15,
+		PullbackPerIndex: prescreenPullbackPerIndex,
+		BasePerIndex:     prescreenBasePerIndex,
+		BottomPerIndex:   prescreenBottomPerIndex,
+		ADVMinUSD:        defaultADVMinUSD,
+		MinBars:          prescreenMinBars,
+		VolTrendFlag:     prescreenVolTrendFlag,
+		Formula:          prescreenFormula,
 	}
 }
 
@@ -100,9 +171,32 @@ type PrescreenRow struct {
 	Currency       string  `json:"currency,omitempty"`
 	PriceTo52wHigh float64 `json:"price_to_52w_high"`
 
+	// Stretch21 is the trailing 21-day return in units of its own 21-day sigma
+	// (Ret21d / (SigmaDaily·sqrt(21))). It is the same idea as STRZ — how far
+	// this name has just travelled, measured against how far it normally
+	// travels — over a month rather than a week.
+	//
+	// The distinction matters because STRZ was the *only* extension term, and a
+	// week is not long enough to see a stock get extended. On 2026-09-04 AMGN
+	// sat at 0.993 of its 52-week high after +47% on 12-1 and +29% on the
+	// quarter, but its 5-day return was +1.6%, so STRZ read +0.19 and docked the
+	// composite 0.095 of a point out of +1.82. The Chief read that ranking and
+	// wrote "extension risk is absent". Over 21 days the same name reads +1.2.
+	Stretch21 float64 `json:"stretch_21"`
+
+	// Setup is the trade shape this row qualifies as, assigned first-match-wins
+	// by classifySetups so the scout's three tables are disjoint: "pullback",
+	// "base", or "continuation". Excluded rows carry none.
+	Setup string `json:"setup,omitempty"`
+
 	// Score is the within-index composite. Excluded rows keep 0 and are never
 	// ranked; read Excluded before reading Score.
-	Score    float64  `json:"score"`
+	Score float64 `json:"score"`
+	// Trend is the composite before the extension penalties — 0.5·z(mom12-1) +
+	// z(ret63d). It is what ranks rows *within* an archetype, so that a
+	// pullback and a continuation name are compared on the same scale, and it
+	// is the sign the extension gates test against.
+	Trend    float64  `json:"trend"`
 	Excluded string   `json:"excluded,omitempty"`
 	Flags    []string `json:"flags,omitempty"`
 }
@@ -169,52 +263,91 @@ func (p *Prescreen) Ranked(index string) []PrescreenRow {
 // the scout screens from. Empty when the pre-screen produced nothing for the
 // index, so the scout prompt degrades to the plain constituent list rather than
 // carrying an empty heading.
-func (p *Prescreen) Table(index string, top, bottom int) string {
+func (p *Prescreen) Table(index string, params PrescreenParams) string {
 	ranked := p.Ranked(index)
 	if len(ranked) == 0 {
 		return ""
 	}
-	if top <= 0 {
-		top = 1
-	}
-	if bottom < 0 {
-		bottom = 0
-	}
 
-	head := ranked
-	if len(head) > top {
-		head = head[:top]
-	}
-	var tail []PrescreenRow
-	if n := len(ranked); bottom > 0 && n > len(head) {
-		start := n - bottom
-		if start < len(head) {
-			start = len(head)
+	shown := map[string]bool{}
+	pick := func(setup string, n int) []PrescreenRow {
+		var out []PrescreenRow
+		for _, r := range ranked {
+			if len(out) == n {
+				break
+			}
+			if r.Setup != setup || shown[r.Ticker] {
+				continue
+			}
+			shown[r.Ticker] = true
+			out = append(out, r)
 		}
-		tail = ranked[start:]
+		return out
 	}
 
 	var sb strings.Builder
-	// `close` is in the listing's own currency (the ccy column) because that is
-	// what an order is placed in; ADV is converted, because a floor stated in
-	// dollars has to be met in dollars.
-	sb.WriteString("| rank | ticker | name | sector | close (as of) | ccy | score | mom12-1 | 63d | 21d | 5d | RS63 | vol20 | volTrend | regime | ADV$M (USD) | p/52wH |\n")
-	sb.WriteString("|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n")
-	writeRows := func(rows []PrescreenRow, offset int) {
-		for i, r := range rows {
-			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %.2f (%s) | %s | %+.2f | %s | %s | %s | %s | %s | %.0f%% | %.2f | %s | %.0f | %.2f |\n",
-				offset+i+1, r.Ticker, r.Name, r.Sector, r.Close, r.AsOf, r.Currency, r.Score,
-				pctStr(r.Mom12_1), pctStr(r.Ret63d), pctStr(r.Ret21d), pctStr(r.Ret5d), pctStr(r.RS63),
-				r.VolYZ20*100, r.VolTrend, r.Regime, r.ADV/1e6, r.PriceTo52wHigh))
+	section := func(heading, blurb string, rows []PrescreenRow) {
+		if len(rows) == 0 {
+			return
+		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		fmt.Fprintf(&sb, "**%s** — %s\n\n", heading, blurb)
+		// `close` is in the listing's own currency (the ccy column) because that
+		// is what an order is placed in; ADV is converted, because a floor
+		// stated in dollars has to be met in dollars.
+		sb.WriteString("| ticker | name | sector | close (as of) | ccy | score | trend | mom12-1 | 63d | 21d | 5d | str21 | RS63 | vol20 | volTrend | regime | ADV$M (USD) | p/52wH |\n")
+		sb.WriteString("|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|\n")
+		for _, r := range rows {
+			fmt.Fprintf(&sb, "| %s | %s | %s | %.2f (%s) | %s | %+.2f | %+.2f | %s | %s | %s | %s | %+.2f | %s | %.0f%% | %.2f | %s | %.0f | %.2f |\n",
+				r.Ticker, r.Name, r.Sector, r.Close, r.AsOf, r.Currency, r.Score, r.Trend,
+				pctStr(r.Mom12_1), pctStr(r.Ret63d), pctStr(r.Ret21d), pctStr(r.Ret5d), r.Stretch21,
+				pctStr(r.RS63), r.VolYZ20*100, r.VolTrend, r.Regime, r.ADV/1e6, r.PriceTo52wHigh)
 		}
 	}
-	writeRows(head, 0)
-	if len(tail) > 0 {
-		sb.WriteString(fmt.Sprintf("| … | *(%d mid-ranked names omitted)* | | | | | | | | | | | | | | | |\n",
-			len(ranked)-len(head)-len(tail)))
-		writeRows(tail, len(ranked)-len(tail))
+
+	section("Continuation", "strongest composites in the index — trends that are still running. `str21` is how many 21-day sigmas of that run are already behind it; a high `p/52wH` with a high `str21` is where trend-followers get filled last",
+		pick(SetupContinuation, positiveOr(params.TopPerIndex, 1)))
+	section("Pullback", "the composite and the last month disagree: an uptrend currently dipping, or a downtrend currently bouncing. These are counter-move entries into an established trend, and they are the rows the old single table never showed you",
+		pick(SetupPullback, params.PullbackPerIndex))
+	section("Base", "volatility contracting (`volTrend` below 0.9) while price goes nowhere. No directional claim — the shape says a range is tightening, and you supply the direction from the rest of the row",
+		pick(SetupBase, params.BasePerIndex))
+
+	// The weakest composites in the index, whatever shape they are. This is a
+	// different question from the archetypes above — not "what setup is this"
+	// but "what is this index's bottom" — so it is drawn from the whole ranking
+	// and only skips names an earlier section already listed.
+	if n := params.BottomPerIndex; n > 0 {
+		var tail []PrescreenRow
+		for i := len(ranked) - 1; i >= 0 && len(tail) < n; i-- {
+			if shown[ranked[i].Ticker] {
+				continue
+			}
+			shown[ranked[i].Ticker] = true
+			tail = append(tail, ranked[i])
+		}
+		// Read back to worst-last so the section reads in ranking order.
+		for i, j := 0, len(tail)-1; i < j; i, j = i+1, j-1 {
+			tail[i], tail[j] = tail[j], tail[i]
+		}
+		section("Weakest", fmt.Sprintf("the bottom of the same %d-name ranking. A short candidate comes from here, but a name that has already collapsed (`5d` large and negative) is a bounce risk, not a fresh short — for that, read the bearish half of the Pullback table", len(ranked)), tail)
 	}
+
+	if sb.Len() == 0 {
+		return ""
+	}
+	fmt.Fprintf(&sb, "\n*%d of this index's %d rankable names are not shown; they sat between these sections.*\n", len(ranked)-len(shown), len(ranked))
 	return sb.String()
+}
+
+// positiveOr floors a configured section size at a usable minimum, so a zero or
+// negative setting shows one row rather than silently emptying the section.
+func positiveOr(n, min int) int {
+	if n < min {
+		return min
+	}
+	return n
 }
 
 func pctStr(x float64) string { return fmt.Sprintf("%+.1f%%", x*100) }
@@ -244,6 +377,7 @@ func newPrescreenRow(c model.Constituent, m quant.Metrics, benchRet63 float64, p
 		ADVLocal:       m.AvgDollarVol20,
 		Currency:       m.Currency,
 		PriceTo52wHigh: m.PriceTo52wHigh,
+		Stretch21:      m.Stretch21(),
 	}
 	if params.VolTrendFlag > 0 && m.VolTrend > params.VolTrendFlag {
 		r.Flags = append(r.Flags, fmt.Sprintf("vol expanding (20d/60d %.2f)", m.VolTrend))
@@ -344,12 +478,14 @@ func scorePrescreen(rows []PrescreenRow) {
 			// REGN into the top twelve and drops the two extremes down it. The
 			// short-term reversal penalty below is unchanged: it is what keeps a
 			// heavier 63-day term from simply buying the most extended name.
-			score := 0.5*zMom[k] + zR63[k]
+			trend := 0.5*zMom[k] + zR63[k]
+			rows[i].Trend = trend
+			score := trend
 			// Short-term reversal only argues against the trend when the recent
 			// move ran *with* it: a name that has just spiked on top of an
 			// uptrend is the classic thing that gives the spike back, while an
 			// uptrend that just dipped is a pullback entry, not a warning. So
-			// the penalty applies when the 5d move shares the sign of the 12-1
+			// the penalty applies when the recent move shares the sign of the
 			// trend, and is symmetric — a crashed name is a poor short for the
 			// same reason an extended one is a poor long.
 			//
@@ -364,12 +500,124 @@ func scorePrescreen(rows []PrescreenRow) {
 			// an identical +40% trend, one that had run up 0.3σ scored +0.39
 			// against +0.00 for one that had not moved at all — the reversal
 			// penalty rewarding the extension it exists to punish.
-			if sameSign(rows[i].STRZ, rows[i].Mom12_1) {
+			//
+			// The sign is taken from `trend`, the composite itself, and not from
+			// Mom12_1 alone. Keying it on the 12-month term let the most
+			// extended shape in the table through untouched: a name whose last
+			// year was poor but whose last quarter was vertical has a negative
+			// Mom12_1 and a positive composite, so sameSign was false and no
+			// penalty applied at all. On 2026-09-04 CRM ran +37.0% in 21 days
+			// and +4.9% in 5, sat at 0.986 of its 52-week high on 60%
+			// annualized vol, and was docked exactly nothing on a +1.72
+			// composite — while REGN, up a third of that in 21 days, paid 0.386.
+			if sameSign(rows[i].STRZ, trend) {
 				score -= 0.5 * rows[i].STRZ
+			}
+			// The same test over 21 days. STRZ alone gave the composite a
+			// five-day memory, which is shorter than the thing it is trying to
+			// measure: getting extended is a move that takes weeks, and a name
+			// can sit at its high for a month without ever printing a spiky
+			// week. Weighted below the 5-day term because a month of steady
+			// gains is a weaker warning than a sudden one — it is the trend
+			// this system trades — but not by so much that it can be ignored.
+			if sameSign(rows[i].Stretch21, trend) {
+				score -= stretch21Weight * rows[i].Stretch21
+			}
+			// Both penalties discount the trend. Neither may reverse it.
+			//
+			// They are symmetric by design — a crashed name is a poor short for
+			// the same reason an extended one is a poor long — and symmetric
+			// means that for a *negative* composite both terms add. Unclamped
+			// that does not stop at "poor short": it carries the name across
+			// zero and ranks it as a strong long. On the 2026-09-04 eu50 table
+			// ENEL.MI held a −0.47 composite and a −2.22 str21, and the two
+			// bonuses lifted it to +1.42 — first of forty-seven names, a buy
+			// recommendation generated entirely by having fallen.
+			//
+			// Neutral is the floor. "This trend is less attractive than it
+			// looks" is the claim these terms are entitled to make; "take the
+			// other side" is not.
+			if trend > 0 && score < 0 {
+				score = 0
+			}
+			if trend < 0 && score > 0 {
+				score = 0
 			}
 			rows[i].Score = score
 		}
 	}
+	// Classify in the same step that scores. The archetype tests read Trend, so
+	// they cannot run earlier, and letting them run *later* made Setup a field
+	// that was sometimes populated and sometimes not depending on which caller
+	// you came through — with the only symptom being a scout table silently
+	// missing its Continuation section. A row that has a Score has a Setup.
+	classifySetups(rows)
+}
+
+// classifySetups labels every scorable row with the trade shape it qualifies
+// as. It is the tail of scorePrescreen rather than a step of its own, because
+// the tests read Trend and every caller that has a score needs a label.
+//
+// First match wins, pullback before base before continuation, so the three
+// tables the scout reads are disjoint and their counts mean something. The
+// order is by how specific the shape is: a pullback is a named entry, a base is
+// a named condition, and continuation is what is left — which is also today's
+// behaviour, so a row that matches nothing new keeps exactly the label the old
+// single table would have given it.
+func classifySetups(rows []PrescreenRow) {
+	for i := range rows {
+		if rows[i].Excluded != "" {
+			rows[i].Setup = ""
+			continue
+		}
+		switch {
+		case isPullback(rows[i]):
+			rows[i].Setup = SetupPullback
+		case isBase(rows[i]):
+			rows[i].Setup = SetupBase
+		default:
+			rows[i].Setup = SetupContinuation
+		}
+	}
+}
+
+// isPullback selects a trend that is currently resting against itself: the
+// composite says one direction and the last month says the other. A zero trend
+// has no direction to pull back from, and a zero 21-day return is not a
+// counter-move, so both fall through to the next archetype.
+func isPullback(r PrescreenRow) bool {
+	if r.Bars < pullbackMinBars || r.Trend == 0 || r.Ret21d == 0 {
+		return false
+	}
+	// The counter-trend condition. sameSign is the wrong helper here: it is
+	// this test's negation, and writing it as such says so.
+	if sameSign(r.Ret21d, r.Trend) {
+		return false
+	}
+	if r.VolTrend > pullbackVolTrendMax {
+		return false
+	}
+	if r.Trend > 0 {
+		return r.PriceTo52wHigh >= pullbackHighMin && r.PriceTo52wHigh <= pullbackHighMax
+	}
+	return r.PriceTo52wHigh <= pullbackShortHighMax
+}
+
+// isBase selects volatility contraction — a name whose recent range is
+// narrowing while it goes nowhere. Unlike a pullback this makes no claim about
+// direction, which is why it is the one archetype that cannot be extended: a
+// name that has just run is not flat over the month by construction.
+func isBase(r PrescreenRow) bool {
+	if r.VolTrend <= 0 || r.VolTrend >= baseVolTrendMax {
+		return false
+	}
+	if math.Abs(r.Stretch21) >= baseStretchMax {
+		return false
+	}
+	if r.Regime == "trending" {
+		return false
+	}
+	return r.PriceTo52wHigh >= baseHighMin
 }
 
 // sortPrescreenRows orders rows best-composite-first, with excluded rows last
@@ -422,7 +670,16 @@ func zscores(xs []float64) []float64 {
 		ss += d * d
 	}
 	sd := math.Sqrt(ss / float64(len(xs)-1))
-	if sd == 0 || math.IsNaN(sd) || math.IsInf(sd, 0) {
+	// "No spread" has to be judged with a tolerance, not against exact zero.
+	// Summing six copies of 0.4 yields 2.4 and a mean of 0.39999999999999997,
+	// so every deviation is ~5.6e-17 instead of 0 and sd lands at 6.1e-17 —
+	// non-zero, straight past an `sd == 0` guard, and every member of the index
+	// then gets the *same* meaningless z of 0.913 rather than 0. The guard is
+	// already trying to catch exactly this; it just could not see it.
+	//
+	// The tolerance is relative to the mean because these are returns: an index
+	// of large numbers carries proportionally larger residue.
+	if math.IsNaN(sd) || math.IsInf(sd, 0) || sd <= 1e-12*math.Max(1, math.Abs(mean)) {
 		return out
 	}
 	for i, x := range xs {
@@ -648,4 +905,15 @@ func meritComposite(ps *Prescreen, c model.Candidate) float64 {
 	default:
 		return 0
 	}
+}
+
+// orUnknown renders an unset setup label for the run log. A candidate has no
+// setup when the pre-screen could not price it — an off-table scout pick, or a
+// name whose history failed to fetch — which is a different thing from being
+// classified as continuation, and the log should not conflate them.
+func orUnknown(setup string) string {
+	if setup == "" {
+		return "no pre-screen row"
+	}
+	return setup
 }

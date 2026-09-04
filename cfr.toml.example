@@ -34,9 +34,26 @@
 # Stage 0.5 ranks every constituent of the selected indices on a computed quant
 # composite before any model is called; the scouts screen that ranking.
 
-# How many of each index's highest-composite names the scout's table shows. The
-# five weakest are always appended as short candidates.
+# How many of each index's highest-composite names the scout's Continuation table
+# shows. The five weakest are always appended as a Weakest section.
+#
+# The scout reads four tables, not one, because the composite is built entirely
+# from trailing returns and its top is therefore, by construction, the names that
+# have already run the furthest. Screening only that top is how a single run came
+# to propose three longs sitting at 0.993, 0.982 and 1.000 of their 52-week
+# highs. Alongside Continuation the pre-screen now classifies and shows:
+#
+#   pullback — the composite and the last month disagree: an uptrend currently
+#              dipping (0.80-0.95 of the 52-week high, vol not expanding), or a
+#              downtrend currently bouncing, which is where a fresh short lives
+#   base     — 20-day realized vol under 90% of the 60-day while price goes
+#              nowhere; the one shape that cannot be extended by construction
+#
+# The archetypes are disjoint filters, first match wins, and each is ranked by
+# the same trend composite so the merge can compare across them.
 #prescreen_top_per_index = 15
+#prescreen_pullback_per_index = 8
+#prescreen_base_per_index = 5
 
 # Cap on the merged shortlist that reaches the specialists, and on how many of
 # those names one index may contribute before the merit backfill.
@@ -61,6 +78,20 @@
 # recorded every one as missing, metadata.json read "thinly_covered": null, and
 # three of the five shipped ideas were scored by one domain or two.
 #max_thinly_covered = 4
+
+# Slots held in the shortlist for names that are *not* the continuation
+# archetype, and the merit a candidate needs (in the composite's own z units) to
+# take one. Set shortlist_reserve to a negative number to disable the reserve and
+# restore the pure merit sort.
+#
+# It exists because merit *is* the pre-screen composite, and the composite
+# rewards having already run — so left alone the merit sort undoes the archetypes
+# entirely, computing them, showing them to the scout, and then dropping every
+# one. The reserve is soft in only one direction: a reserved slot is filled only
+# by a candidate that also clears the merit floor, so a run with no decent
+# pullback ships a shorter shortlist rather than a padded one.
+#shortlist_reserve = 3
+#shortlist_reserve_min_merit = 0.5
 
 # How far, in confidence points, the Chief Analyst may move an idea from its
 # computed base score (docs/workflow/scoring.md). Confidence outside the band is
@@ -238,6 +269,20 @@
 #stop_sigma_min   = 1.0
 #stop_sigma_max   = 2.0
 #target_sigma_max = 3.5
+
+# How far a limit entry may sit from the verified last close, in units of
+# sigma_daily x sqrt(5). The band is asymmetric because the two sides are not the
+# same trade: a long bidding *below* the close (or a short offering above it) is
+# waiting for a better price, and the worst case is that the limit never trades —
+# which the scoreboard records as `unfilled`, not as a loss. A long bidding above
+# the close is chasing, and the worst case there is a filled position at the top
+# of the move.
+#
+# One number could only ever be set to the chasing width. That is why a run bid
+# 442 for a stock at 444.12 sitting on its 52-week high: waiting for a genuine
+# pullback was not expressible.
+#entry_patience_sigma = 1.5
+#entry_chase_sigma    = 0.5
 
 # 20-day average dollar volume below which a name is not tradeable in size. The
 # pre-screen drops anything under it, so such names never reach a model, and the

@@ -96,6 +96,11 @@ type Config struct {
 	// prescreenBottomPerIndex are always appended as short candidates). Zero
 	// means 15.
 	PrescreenTopPerIndex int
+	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the two setup
+	// archetype sections the scout table carries alongside the top-of-ranking
+	// one. Zero means 8 and 5.
+	PrescreenPullbackPerIndex int
+	PrescreenBasePerIndex     int
 	// MaxShortlist caps the merged shortlist that reaches the specialists. Zero
 	// means 12.
 	MaxShortlist int
@@ -107,6 +112,22 @@ type Config struct {
 	// seven of twelve shortlisted names were in that position, with three of the
 	// five shipped ideas resting on a single domain. Zero means 4.
 	MaxThinlyCovered int
+	// ShortlistReserve holds slots in the shortlist for names the pre-screen
+	// classified as something other than "continuation" — a pullback or a base.
+	// Zero means 3, of a twelve-name shortlist; a negative value disables the
+	// reserve and restores the pure merit sort.
+	//
+	// The reserve exists because merit is the pre-screen composite, the
+	// composite is built from trailing returns, and a name at its 52-week high
+	// is by construction the name with the highest trailing returns. Without a
+	// reserve the archetypes would be computed, displayed to the scout, and
+	// then sorted straight back out of the shortlist.
+	ShortlistReserve int
+	// ShortlistReserveMinMerit is the merit a candidate needs to take a
+	// reserved slot, in the composite's own z units. It is what keeps the
+	// reserve from becoming a quota: below it, the slot goes unfilled and the
+	// shortlist ships short. Zero means 0.5.
+	ShortlistReserveMinMerit float64
 	// Risk is the deterministic risk policy applied after synthesis: stop and
 	// target bands, the reward:risk floor, expectancy, liquidity, book-level
 	// correlation and beta, and position sizing. Zero fields take the defaults
@@ -243,6 +264,22 @@ func (c *Config) applyDefaults() {
 	// be mostly names four of the five domains must abstain on.
 	if c.MaxThinlyCovered <= 0 {
 		c.MaxThinlyCovered = 4
+	}
+	// A quarter of a twelve-name shortlist. Enough that a run cannot ship an
+	// all-continuation book by default, few enough that the merit sort still
+	// decides the majority of it.
+	if c.ShortlistReserve == 0 {
+		c.ShortlistReserve = 3
+	}
+	if c.ShortlistReserve < 0 {
+		c.ShortlistReserve = 0
+	}
+	// Half a standard deviation of the within-index composite: comfortably
+	// above average for its index, without demanding that a pullback outrank
+	// the continuation names it is being reserved against — which it cannot,
+	// since the composite is what ranks them and it rewards having already run.
+	if c.ShortlistReserveMinMerit == 0 {
+		c.ShortlistReserveMinMerit = 0.5
 	}
 	c.Risk = riskDefaults(c.Risk)
 	// Ten points is roughly one confidence band in scoring.md's calibration
@@ -513,6 +550,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// filter a computed shortlist instead of inventing one from familiarity.
 	prescreenParams := defaultPrescreenParams()
 	prescreenParams.TopPerIndex = cfg.PrescreenTopPerIndex
+	if cfg.PrescreenPullbackPerIndex > 0 {
+		prescreenParams.PullbackPerIndex = cfg.PrescreenPullbackPerIndex
+	}
+	if cfg.PrescreenBasePerIndex > 0 {
+		prescreenParams.BasePerIndex = cfg.PrescreenBasePerIndex
+	}
 	prescreenParams.ADVMinUSD = cfg.Risk.ADVMinUSD
 	var prescreen *Prescreen
 	if cfg.Mode == model.ModeIndependent {
@@ -556,7 +599,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				RunTS:                run.TS,
 				IndexKey:             idx,
 				IndexConstituentList: universe.ConstituentList(cs),
-				PrescreenTable:       prescreen.Table(idx, prescreenParams.TopPerIndex, prescreenParams.BottomPerIndex),
+				PrescreenTable:       prescreen.Table(idx, prescreenParams),
 				Caps:                 cheapCaps,
 			})
 			if err != nil {
@@ -625,24 +668,48 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				log(ch, fmt.Sprintf("%s was nominated by %d scouts in the same direction", c.Ticker, c.Nominations))
 			}
 		}
+		// Label each nomination with the archetype its own pre-screen row was
+		// classified under, before the merge reads it. The scout picks which
+		// table to nominate from; the label is the classifier's to assign.
+		for i := range shortlist {
+			if r, ok := prescreen.Row(shortlist[i].Index, shortlist[i].Ticker); ok {
+				shortlist[i].Setup = r.Setup
+			}
+		}
 		before := len(shortlist)
 		// Merit, not round-robin: keep the nominations the pre-screen composite
-		// agrees with, in the direction they were nominated in.
+		// agrees with, in the direction they were nominated in — but hold a few
+		// slots for the setups that are not "this has already run", because the
+		// composite is built from trailing returns and left alone it fills the
+		// whole shortlist with names at their highs.
 		shortlist = universe.CapMerit(shortlist, universe.MeritCaps{
-			Max:           cfg.MaxShortlist,
-			PerIndex:      cfg.MaxPerIndex,
-			ThinlyCovered: cfg.MaxThinlyCovered,
-			CoverageFloor: thinCoverage,
-			Score:         func(c model.Candidate) float64 { return meritScore(prescreen, c) },
-			Coverage:      func(c model.Candidate) float64 { return expectedCoverage(cfg.Weights, c.Ticker) },
+			Max:              cfg.MaxShortlist,
+			PerIndex:         cfg.MaxPerIndex,
+			ThinlyCovered:    cfg.MaxThinlyCovered,
+			CoverageFloor:    thinCoverage,
+			Reserve:          cfg.ShortlistReserve,
+			ReservePredicate: func(c model.Candidate) bool { return c.Setup != "" && c.Setup != SetupContinuation },
+			ReserveMinMerit:  cfg.ShortlistReserveMinMerit,
+			Score:            func(c model.Candidate) float64 { return meritScore(prescreen, c) },
+			Coverage:         func(c model.Candidate) float64 { return expectedCoverage(cfg.Weights, c.Ticker) },
 		})
 		if len(shortlist) < before {
 			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index, max %d under %.0f%% coverage)",
 				before, len(shortlist), cfg.MaxPerIndex, cfg.MaxThinlyCovered, thinCoverage*100))
 		}
+		if cfg.ShortlistReserve > 0 {
+			var held int
+			for _, c := range shortlist {
+				if c.Setup != "" && c.Setup != SetupContinuation {
+					held++
+				}
+			}
+			log(ch, fmt.Sprintf("shortlist setups: %d of %d are pullback or base (reserve %d at merit ≥ %+.2f)",
+				held, len(shortlist), cfg.ShortlistReserve, cfg.ShortlistReserveMinMerit))
+		}
 		for _, c := range shortlist {
-			log(ch, fmt.Sprintf("shortlist: %s (%s, %s) — scout %s, merit %+.2f",
-				c.Ticker, c.Index, c.Sector, c.Bias, meritScore(prescreen, c)))
+			log(ch, fmt.Sprintf("shortlist: %s (%s, %s) — scout %s, %s, merit %+.2f",
+				c.Ticker, c.Index, c.Sector, c.Bias, orUnknown(c.Setup), meritScore(prescreen, c)))
 		}
 		if err := run.WriteShortlist(shortlist); err != nil {
 			log(ch, fmt.Sprintf("warn: write shortlist: %v", err))

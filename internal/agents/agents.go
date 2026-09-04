@@ -296,7 +296,7 @@ func shortlistSection(cs []model.Candidate) string {
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("\n### Shortlist (%d names)\n\n", len(cs)))
-	sb.WriteString("Each line is the name, its sector and source index, and the direction and reason a scout nominated it for. The scout's reason is a hypothesis to test, not a verified fact.\n\n")
+	sb.WriteString("Each line is the name, its sector and source index, the setup archetype the pre-screen classified it as, and the direction and reason a scout nominated it for. The archetype is computed from price data and is verified; the scout's reason is a hypothesis to test, not a verified fact.\n\n")
 	sb.WriteString(shortlistBlock(cs))
 	sb.WriteString("\n")
 	return sb.String()
@@ -317,6 +317,13 @@ func shortlistBlock(cs []model.Candidate) string {
 		}
 		if c.Index != "" {
 			meta = append(meta, c.Index)
+		}
+		// The pre-screen's setup archetype. It travels with the name because it
+		// is what the chasing adjustment and the entry band both key off: a
+		// pullback is defined by not being extended, and charging it for
+		// extension double-counts the thing that made it a candidate.
+		if c.Setup != "" {
+			meta = append(meta, "setup: "+c.Setup)
 		}
 		if len(meta) > 0 {
 			sb.WriteString(" (" + strings.Join(meta, ", ") + ")")

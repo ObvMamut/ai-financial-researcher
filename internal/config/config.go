@@ -40,9 +40,20 @@ type Settings struct {
 	// ground less than 60% of the domain weight for. Zero means the
 	// orchestrator's defaults (15 / 12 / 5 / 4).
 	PrescreenTopPerIndex int
-	MaxShortlist         int
-	MaxPerIndex          int
-	MaxThinlyCovered     int
+	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the two setup
+	// archetype sections the scout table carries alongside the top-of-ranking
+	// one. Zero means the orchestrator's defaults (8 / 5).
+	PrescreenPullbackPerIndex int
+	PrescreenBasePerIndex     int
+	MaxShortlist              int
+	MaxPerIndex               int
+	MaxThinlyCovered          int
+	// ShortlistReserve holds slots in the shortlist for non-continuation
+	// archetypes, and ShortlistReserveMinMerit is the composite z a candidate
+	// needs to take one. Zero means the orchestrator's defaults (3 / 0.5);
+	// a negative reserve disables it.
+	ShortlistReserve         int
+	ShortlistReserveMinMerit float64
 
 	// Risk is the deterministic post-synthesis risk policy. Zero fields take the
 	// orchestrator's defaults. Risk.ADVMinUSD also gates the Stage 0.5
@@ -98,11 +109,15 @@ type fileFormat struct {
 	PriceTTL      string `toml:"price_ttl"`       // Go duration, e.g. "4h"
 	DataCacheDays int    `toml:"data_cache_days"` // 0 disables pruning
 
-	PrescreenTopPerIndex int `toml:"prescreen_top_per_index"`
-	MaxShortlist         int `toml:"max_shortlist"`
-	MaxPerIndex          int `toml:"max_per_index"`
-	MaxThinlyCovered     int `toml:"max_thinly_covered"`
-	ChiefAdjustBand      int `toml:"chief_adjust_band"`
+	PrescreenTopPerIndex      int     `toml:"prescreen_top_per_index"`
+	PrescreenPullbackPerIndex int     `toml:"prescreen_pullback_per_index"`
+	PrescreenBasePerIndex     int     `toml:"prescreen_base_per_index"`
+	MaxShortlist              int     `toml:"max_shortlist"`
+	MaxPerIndex               int     `toml:"max_per_index"`
+	MaxThinlyCovered          int     `toml:"max_thinly_covered"`
+	ShortlistReserve          int     `toml:"shortlist_reserve"`
+	ShortlistReserveMinMerit  float64 `toml:"shortlist_reserve_min_merit"`
+	ChiefAdjustBand           int     `toml:"chief_adjust_band"`
 
 	GeminiConcurrency int `toml:"gemini_concurrency"`
 
@@ -160,19 +175,21 @@ type fileFormat struct {
 	// synthesis (docs/workflow/scoring.md). Every one of these was a preference
 	// in a persona before it was a number here.
 	Risk struct {
-		AccountEquity    float64 `toml:"account_equity"`
-		RiskPerTradePct  float64 `toml:"risk_per_trade_pct"`
-		CostBps          float64 `toml:"cost_bps"`
-		RRMin            float64 `toml:"rr_min"`
-		StopSigmaMin     float64 `toml:"stop_sigma_min"`
-		StopSigmaMax     float64 `toml:"stop_sigma_max"`
-		TargetSigmaMax   float64 `toml:"target_sigma_max"`
-		ADVMinUSD        float64 `toml:"adv_min_usd"`
-		MaxPairCorr      float64 `toml:"max_pair_corr"`
-		MaxPortfolioBeta float64 `toml:"max_portfolio_beta"`
-		EdgeSigmaDaily   float64 `toml:"edge_sigma_daily"`
-		MinExpectancyR   float64 `toml:"min_expectancy_r"`
-		MinExpectancyBps float64 `toml:"min_expectancy_bps"`
+		AccountEquity      float64 `toml:"account_equity"`
+		RiskPerTradePct    float64 `toml:"risk_per_trade_pct"`
+		CostBps            float64 `toml:"cost_bps"`
+		RRMin              float64 `toml:"rr_min"`
+		StopSigmaMin       float64 `toml:"stop_sigma_min"`
+		StopSigmaMax       float64 `toml:"stop_sigma_max"`
+		TargetSigmaMax     float64 `toml:"target_sigma_max"`
+		EntryPatienceSigma float64 `toml:"entry_patience_sigma"`
+		EntryChaseSigma    float64 `toml:"entry_chase_sigma"`
+		ADVMinUSD          float64 `toml:"adv_min_usd"`
+		MaxPairCorr        float64 `toml:"max_pair_corr"`
+		MaxPortfolioBeta   float64 `toml:"max_portfolio_beta"`
+		EdgeSigmaDaily     float64 `toml:"edge_sigma_daily"`
+		MinExpectancyR     float64 `toml:"min_expectancy_r"`
+		MinExpectancyBps   float64 `toml:"min_expectancy_bps"`
 	} `toml:"risk"`
 
 	// API configures the remote OpenAI-compatible cheap-research engine. Prefer
@@ -267,6 +284,8 @@ func (s *Settings) validateRisk() error {
 		{"risk_per_trade_pct", s.Risk.RiskPerTradePct},
 		{"stop_sigma_max", s.Risk.StopSigmaMax},
 		{"target_sigma_max", s.Risk.TargetSigmaMax},
+		{"entry_patience_sigma", s.Risk.EntryPatienceSigma},
+		{"entry_chase_sigma", s.Risk.EntryChaseSigma},
 		{"max_pair_corr", s.Risk.MaxPairCorr},
 		{"max_portfolio_beta", s.Risk.MaxPortfolioBeta},
 	}
@@ -332,9 +351,19 @@ func (s *Settings) applyFile(path string) error {
 	}
 	setInt(&s.GeminiConcurrency, f.GeminiConcurrency)
 	setInt(&s.PrescreenTopPerIndex, f.PrescreenTopPerIndex)
+	setInt(&s.PrescreenPullbackPerIndex, f.PrescreenPullbackPerIndex)
+	setInt(&s.PrescreenBasePerIndex, f.PrescreenBasePerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
 	setInt(&s.MaxThinlyCovered, f.MaxThinlyCovered)
+	// Not setInt: a negative shortlist_reserve is the documented way to turn the
+	// archetype reserve off, so sign cannot decide whether the key was set.
+	if f.ShortlistReserve != 0 {
+		s.ShortlistReserve = f.ShortlistReserve
+	}
+	if f.ShortlistReserveMinMerit != 0 {
+		s.ShortlistReserveMinMerit = f.ShortlistReserveMinMerit
+	}
 	setInt(&s.ChiefAdjustBand, f.ChiefAdjustBand)
 	// The whole [risk] block is presence-detected, the way data_cache_days above
 	// is. Every key in it is a float64 whose zero value is also a legal setting
@@ -361,6 +390,8 @@ func (s *Settings) applyFile(path string) error {
 	setRisk(&s.Risk.StopSigmaMin, "stop_sigma_min", f.Risk.StopSigmaMin)
 	setRisk(&s.Risk.StopSigmaMax, "stop_sigma_max", f.Risk.StopSigmaMax)
 	setRisk(&s.Risk.TargetSigmaMax, "target_sigma_max", f.Risk.TargetSigmaMax)
+	setRisk(&s.Risk.EntryPatienceSigma, "entry_patience_sigma", f.Risk.EntryPatienceSigma)
+	setRisk(&s.Risk.EntryChaseSigma, "entry_chase_sigma", f.Risk.EntryChaseSigma)
 	setRisk(&s.Risk.ADVMinUSD, "adv_min_usd", f.Risk.ADVMinUSD)
 	setRisk(&s.Risk.MaxPairCorr, "max_pair_corr", f.Risk.MaxPairCorr)
 	setRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", f.Risk.MaxPortfolioBeta)
@@ -580,6 +611,21 @@ func (s *Settings) applyEnv() {
 		}
 	}
 	setPosInt(&s.PrescreenTopPerIndex, "CFR_PRESCREEN_TOP_PER_INDEX")
+	setPosInt(&s.PrescreenPullbackPerIndex, "CFR_PRESCREEN_PULLBACK_PER_INDEX")
+	setPosInt(&s.PrescreenBasePerIndex, "CFR_PRESCREEN_BASE_PER_INDEX")
+	// Any parsed integer wins here, negative included: a negative reserve is the
+	// documented way to disable the archetype reserve, so setPosInt would make
+	// the switch unreachable from the environment.
+	if v := os.Getenv("CFR_SHORTLIST_RESERVE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			s.ShortlistReserve = n
+		}
+	}
+	if v := os.Getenv("CFR_SHORTLIST_RESERVE_MIN_MERIT"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			s.ShortlistReserveMinMerit = f
+		}
+	}
 	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
 	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
 	setPosInt(&s.MaxThinlyCovered, "CFR_MAX_THINLY_COVERED")
@@ -610,6 +656,8 @@ func (s *Settings) applyEnv() {
 	envRisk(&s.Risk.StopSigmaMin, "stop_sigma_min", "CFR_STOP_SIGMA_MIN")
 	envRisk(&s.Risk.StopSigmaMax, "stop_sigma_max", "CFR_STOP_SIGMA_MAX")
 	envRisk(&s.Risk.TargetSigmaMax, "target_sigma_max", "CFR_TARGET_SIGMA_MAX")
+	envRisk(&s.Risk.EntryPatienceSigma, "entry_patience_sigma", "CFR_ENTRY_PATIENCE_SIGMA")
+	envRisk(&s.Risk.EntryChaseSigma, "entry_chase_sigma", "CFR_ENTRY_CHASE_SIGMA")
 	envRisk(&s.Risk.MaxPairCorr, "max_pair_corr", "CFR_MAX_PAIR_CORR")
 	envRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", "CFR_MAX_PORTFOLIO_BETA")
 	envRisk(&s.Risk.EdgeSigmaDaily, "edge_sigma_daily", "CFR_EDGE_SIGMA_DAILY")

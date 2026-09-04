@@ -29,10 +29,14 @@ like `ASML`/`ASML.AS`), and trims the combined shortlist to `max_shortlist` (def
 by pre-screen merit — see `independent-research.md`, Stage 1.
 
 `shortlist.json` therefore carries more than the scout wrote: `sector` and `index` come
-from the universe, while `bias` and `reason` are the scout's and travel on into every
-specialist and Chief Analyst prompt. Two more fields record what the merge found:
-`nominations` (how many scouts wanted this name in this direction, omitted when 1) and
-`contested` (the indices that nominated it the *other* way). Both feed the merit sort.
+from the universe, and `setup` — the pre-screen archetype, `continuation` / `pullback` /
+`base` — comes from the name's own pre-screen row rather than from the scout, since the
+scout picks which table to nominate from but the classification is computed from price
+data. `bias` and `reason` are the scout's and travel on into every specialist and Chief
+Analyst prompt. Two more fields record what the merge found: `nominations` (how many
+scouts wanted this name in this direction, omitted when 1) and `contested` (the indices
+that nominated it the *other* way). Both feed the merit sort, and `setup` gates the
+archetype reserve.
 
 ## Pre-screen (`runs/<ts>/prescreen.json`)
 
@@ -45,9 +49,9 @@ indices, ranked best-composite-first with excluded rows last:
   "as_of": "2026-08-28",
   "indices": ["sp500", "nq100"],
   "params": {
-    "top_per_index": 15, "bottom_per_index": 5,
+    "top_per_index": 15, "pullback_per_index": 8, "base_per_index": 5, "bottom_per_index": 5,
     "adv_min_usd": 20000000, "min_bars": 60, "vol_trend_flag": 1.5,
-    "formula": "0.5·z(mom12-1) + z(ret63d) − 0.5·strZ when the recent move runs with the trend; mom/ret63d z-scored within index, strZ already a per-name z-score"
+    "formula": "0.5·z(mom12-1) + z(ret63d) − 0.5·strZ − 0.35·stretch21, each penalty only when that move runs with the composite; mom/ret63d z-scored within index, strZ and stretch21 already per-name sigma units"
   },
   "rows": [
     { "ticker": "NVDA", "name": "NVIDIA Corporation", "sector": "Information Technology",
@@ -55,8 +59,8 @@ indices, ranked best-composite-first with excluded rows last:
       "mom_12_1": 0.482, "ret_63d": 0.191, "ret_21d": 0.064, "ret_5d": 0.012,
       "rs_63": 0.114, "str_z": 0.4, "vol_yz_20": 0.38, "vol_trend": 1.12,
       "regime": "trending", "adv_usd": 3.1e10, "adv_local": 3.1e10, "currency": "USD",
-      "price_to_52w_high": 0.94,
-      "score": 2.31 }
+      "price_to_52w_high": 0.94, "stretch_21": 0.62,
+      "setup": "continuation", "trend": 2.53, "score": 2.31 }
   ],
   "errors": ["005930.KS: yahoo 005930.KS: empty chart result"]
 }
@@ -64,9 +68,17 @@ indices, ranked best-composite-first with excluded rows last:
 ````
 
 An excluded row carries `"excluded"` with the reason (`illiquid …`, `insufficient history
-…`, `no price history`) and `"score": 0`; it is never ranked and never contributes to the
-within-index mean or standard deviation. `params.formula` is recorded so a row's `score`
-is legible without reading the source.
+…`, `no price history`), `"score": 0` and **no `setup`** — it is not a candidate in any
+shape; it is never ranked and never contributes to the within-index mean or standard
+deviation. `params.formula` is recorded so a row's `score` is legible without reading the
+source.
+
+`trend` is the composite *before* its extension penalties, and `score` is what remains
+after them. A `score` well below its `trend` means the name was charged for how far it has
+already travelled: `stretch_21` (the 21-day return in units of the name's own 21-day sigma)
+and `str_z` (the same over five days) are what it was charged on. `setup` is the archetype
+the row was classified under — `continuation`, `pullback` or `base` — and it travels
+onward to `shortlist.json` and to each idea in `ideas.json`.
 
 ## Specialist report (each specialist → Chief Analyst)
 
@@ -175,6 +187,7 @@ The deliverable: direction, confidence, trade mechanics, quick why.
       "index": "nq100",
       "direction": "BUY",
       "confidence": 78,
+      "setup": "pullback",
       "entry": 212.0,
       "stop": 201.5,
       "target": 233.0,
@@ -360,9 +373,22 @@ type IdeasResult struct {
 Go extracts the **last** fenced ```json block from the agent's stdout and unmarshals it.
 Validation (warn, don't drop, except invalid directions): direction ∈ {BUY,SELL},
 confidence ∈ [0,100] **and inside `base_confidence ± chief_adjust_band`** (clamped, and the
-coverage cap binds over the band — see `scoring.md`), level ordering per direction, entry
-within ±5% of the verified last close, stop distance within 0.5–5 × σ_daily·√h, risk_reward
-recomputed from levels. Hard level-ordering violations, every risk-gate violation, and a
+coverage cap binds over the band — see `scoring.md`), level ordering per direction, the
+**asymmetric entry band** below, stop distance within 0.5–5 × σ_daily·√h, risk_reward
+recomputed from levels.
+
+The entry band is asymmetric because bidding for a better price and paying up for a worse
+one are not the same trade. An entry on the **patient** side — a long *below* the last
+close, a short *above* it — may reach `risk.entry_patience_sigma · σ_daily·√5` (default
+1.5); an entry on the **chasing** side may reach only `risk.entry_chase_sigma · σ_daily·√5`
+(default 0.5). The worst case on the patient side is a limit that never trades, which the
+scoreboard records as `unfilled` rather than as a loss; the worst case on the chasing side
+is a filled position at the top of the move.
+
+One number could only ever be set to the chasing width, and that is why the 2026-09-04 run
+bid 442 for AMGN against a 444.12 close — half a percent below the market on a name at
+0.993 of its 52-week high, when what its own reasoning argued for was waiting. Under a
+symmetric 0.5σ√5 there was no wider bid available to place. Hard level-ordering violations, every risk-gate violation, and a
 confidence more than twice the band out trigger one corrective re-prompt of the chief.
 Malformed output → degraded mechanical fallback from specialist scores (confidence ≤ 55),
 never a crash.

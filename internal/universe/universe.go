@@ -248,6 +248,32 @@ type MeritCaps struct {
 	// CoverageFloor is the share of total domain weight below which a name
 	// counts as thinly covered. Zero disables the cap with ThinlyCovered.
 	CoverageFloor float64
+	// Reserve is how many of Max's slots are held for candidates ReservePredicate
+	// matches, before the ordinary passes fill the rest. Zero disables it.
+	//
+	// It exists because the merit sort ranks on the pre-screen composite, and
+	// that composite is built from trailing returns — so left to itself it
+	// hands every slot to whatever has run hardest. On 2026-09-04 that was
+	// three longs at 0.993, 0.982 and 1.000 of their 52-week highs. Reserving
+	// slots for the other setup archetypes is what keeps the shortlist from
+	// collapsing back onto one shape once the pre-screen has gone to the
+	// trouble of finding several.
+	//
+	// The reserve is *soft in the only direction that matters*: it can leave
+	// the shortlist short but it cannot pad it. A reserved slot is filled only
+	// by a candidate that also clears ReserveMinMerit, so a run with no decent
+	// pullback ships fewer names rather than a bad one — the same bargain
+	// ThinlyCovered strikes above.
+	Reserve int
+	// ReservePredicate selects the candidates eligible for a reserved slot. Nil
+	// disables the reserve. This package holds no opinion about what deserves
+	// reserving; the orchestrator passes the archetype test.
+	ReservePredicate func(model.Candidate) bool
+	// ReserveMinMerit is the Score a candidate must reach to take a reserved
+	// slot. Without it the reserve would guarantee three names of some other
+	// shape whatever their quality, which trades one bad selection rule for
+	// another.
+	ReserveMinMerit float64
 	// Score ranks a candidate. Supplied by the caller (the orchestrator aligns
 	// each candidate's pre-screen composite with the direction it was nominated
 	// in), which keeps this package free of scoring policy.
@@ -312,7 +338,41 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 	taken := make([]bool, len(ranked))
 	perIndex := map[string]int{}
 	thin := 0
+
+	// Pass 0: the archetype reserve. It runs first because a slot held back
+	// after the fact is not held back at all — the ordinary passes below fill
+	// to Max, and there would be nothing left to reserve. Every other cap still
+	// binds here, so a reserved name cannot smuggle a run past PerIndex or
+	// ThinlyCovered.
+	if caps.Reserve > 0 && caps.ReservePredicate != nil {
+		reserved := 0
+		for i, c := range ranked {
+			if reserved == caps.Reserve || len(out) == caps.Max {
+				break
+			}
+			if !caps.ReservePredicate(c) || score(c) < caps.ReserveMinMerit {
+				continue
+			}
+			if caps.PerIndex > 0 && perIndex[c.Index] >= caps.PerIndex {
+				continue
+			}
+			if caps.thinlyCovered(c) {
+				if thin >= caps.ThinlyCovered {
+					continue
+				}
+				thin++
+			}
+			perIndex[c.Index]++
+			taken[i] = true
+			out = append(out, c)
+			reserved++
+		}
+	}
+
 	for i, c := range ranked {
+		if taken[i] {
+			continue
+		}
 		if len(out) == caps.Max {
 			break
 		}
@@ -344,6 +404,12 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 		}
 		out = append(out, c)
 	}
+	// Re-rank what the three passes selected. Each pass appends in score order
+	// within itself, but a name a later pass rescued can outscore one an
+	// earlier pass took — and with the reserve running first, usually does.
+	// Selection order is not presentation order, and everything downstream
+	// reads this list as a ranking.
+	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
 	return out
 }
 

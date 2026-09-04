@@ -125,18 +125,29 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 0. **Stage 0.5 — pre-screen (in-process, no model):** fetch 2y daily OHLCV for *every*
    constituent of the selected indices (US names batched through Alpaca in a handful of
    multi-symbol requests when a key is configured, the rest one-at-a-time from Yahoo), compute `internal/quant` metrics, and rank each
-   index on a composite (`0.5·z(mom12-1) + z(ret63d)`, minus a short-term reversal penalty
-   when the recent move runs with the trend; standardising within the index *is* the
+   index on `trend` = `0.5·z(mom12-1) + z(ret63d)`, less two extension penalties —
+   `0.5·strZ` (5-day) and `0.35·stretch21` (21-day, `ret21d/(σ_daily·√21)`) — each applied
+   only when that move runs with `trend`, and **clamped at neutral so a penalty can
+   discount a trend but never reverse it**. Standardising within the index *is* the
    relative-strength adjustment, so there is no separate `rs63` term — it was arithmetically
-   identical to `z(ret63d)`). Illiquid and short-history names are excluded, against turnover
-   **converted to USD** (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price
-   series stay in the data cache.
-1. **Scouts (cheap engine):** one call per index, each screening *its index's ranked
-   table* → ~5–10 nominations each. Nominations outside the index's constituent list are
+   identical to `z(ret63d)`. Every row is then classified first-match-wins into a **setup
+   archetype** — `pullback` (composite and last month disagree), `base` (vol contracting,
+   price flat), or `continuation` — because every term in the composite is a trailing
+   return, so its top is by construction the names that have already run. Illiquid and
+   short-history names are excluded, against turnover **converted to USD**
+   (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price series stay in the
+   data cache.
+1. **Scouts (cheap engine):** one call per index, each screening *four disjoint ranked
+   tables* — continuation, pullback, base, and the bottom of the ranking — → ~5–10
+   nominations each. Nominations outside the index's constituent list are
    dropped. Orchestrator merges/dedupes (incl. cross-listings) and trims to
    `max_shortlist` by merit — the pre-screen composite aligned with the nominated
    direction, plus a bonus per agreeing scout and a penalty when another scout nominated
-   the same name the other way — capped at `max_per_index` per index. A name three of the
+   the same name the other way — capped at `max_per_index` per index. `shortlist_reserve`
+   slots are held for non-`continuation` archetypes in a pass that runs first, filled only
+   by candidates clearing `shortlist_reserve_min_merit` so the list ships short rather than
+   padded; without it the merit sort simply undoes the archetypes, since merit *is* the
+   composite and the composite rewards having run. A name three of the
    five domains cannot reach (an unmapped foreign listing: 0.45 of the weight) is capped
    by `max_thinly_covered`.
 2. **Stage 1.5 (in-process, no model):** compute `internal/quant` metrics for the
@@ -177,7 +188,11 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    replayed track record and the lessons drawn from it, adjusts each base by at most
    `chief_adjust_band` points with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived from
    vol-scaled distances) as a fenced ```json block that Go parses into
-   `[]model.TradeIdea`. Confidence outside the band is clamped in Go.
+   `[]model.TradeIdea`. Confidence outside the band is clamped in Go. The entry band is
+   **asymmetric**: a limit on the patient side (a long below the last close, a short above
+   it) may reach `entry_patience_sigma·σ_daily·√5` (default 1.5), one on the chasing side
+   only `entry_chase_sigma` (default 0.5) — waiting risks an `unfilled`, chasing risks a
+   fill at the top of the move.
 5. **Risk gate (in-process, no model):** `riskgate.go` sizes each idea from the account's
    risk budget and checks stop/target bands, reward:risk, liquidity and simulated
    expectancy, plus book-level correlation, sector and beta-adjusted exposure measured

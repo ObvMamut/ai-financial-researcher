@@ -87,6 +87,31 @@ const (
 	momentumSkip = 21
 )
 
+// Stretch expresses a trailing return over days sessions in units of that
+// name's own volatility over the same span, so a 10% month is "large" for a
+// utility and unremarkable for a semiconductor. It is the same normalisation
+// STRZScore applies to the trailing week, stated as a function so the pre-screen
+// and the Chief's reference block cannot disagree about it.
+//
+// An unknown sigma yields 0. That reads as "not extended", which is wrong, but
+// it is the only neutral value available and the names it affects are the ones
+// with no usable vol data at all — which every downstream check already refuses.
+func Stretch(ret, sigmaDaily float64, days int) float64 {
+	if sigmaDaily <= 0 || days <= 0 {
+		return 0
+	}
+	return ret / (sigmaDaily * math.Sqrt(float64(days)))
+}
+
+// Stretch21 is the last month's move in units of the name's own 21-day
+// volatility. STRZScore covers the same ground over five sessions, and five
+// sessions turned out to be shorter than the thing being measured: on
+// 2026-09-04 AMGN sat at 0.993 of its 52-week high after +47% on 12-1 and +29%
+// on the quarter, but its week was +1.6%, so the only extension signal in the
+// system read +0.19 and the Chief concluded "extension risk is absent". The
+// same name reads +1.2 over 21 days.
+func (m Metrics) Stretch21() float64 { return Stretch(m.Ret21d, m.SigmaDaily, 21) }
+
 // Compute derives all metrics for s, optionally relating it to bench (may be
 // nil). It needs ~60 bars for a useful read and 273+ for the full set.
 func Compute(s *Series, bench *Series) Metrics {

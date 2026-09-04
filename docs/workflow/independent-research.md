@@ -30,7 +30,8 @@ foreign half, which no other source reaches.
 leaders instead of losing every slot to the strongest one:
 
 ```
-score = 0.5·z(mom12-1) + z(ret63d) − 0.5·strZ
+trend = 0.5·z(mom12-1) + z(ret63d)
+score = trend − 0.5·strZ − 0.35·stretch21     (clamped at neutral)
 ```
 
 The **63-day return leads and the 12-1 momentum supports it**. This system holds for 5–20
@@ -43,10 +44,38 @@ The merit sort took both anyway, at ranks 1 and 3, and dropped all four health-c
 the same scout nominated. Reversing the weights on that run's table lifts MRK, AMGN and
 REGN into the top twelve and drops the two extremes down it.
 
-The last term applies **only when the recent move runs with the trend** (`sign(strZ) == sign(mom12-1)`). That is the short-term
+Both penalty terms apply **only when that move runs with the trend**
+(`sign(strZ) == sign(trend)`, `sign(stretch21) == sign(trend)`). That is the short-term
 reversal case: a name that has just spiked on top of an uptrend gives the spike back,
 while an uptrend that has just dipped is a pullback entry. The rule is symmetric, so a
 name that has already collapsed is penalised as a short for the same reason.
+
+The sign is taken from **`trend`, the composite itself, not from `mom12-1`**. Keying it on
+the 12-month term let the most extended shape in the table through untouched: a name whose
+last year was poor but whose last quarter was vertical has a negative `mom12-1` and a
+positive composite, so the test failed and nothing was charged. On 2026-09-04 CRM ran
++37.0% in 21 days and +4.9% in 5, sat at 0.986 of its 52-week high on 60% annualized vol,
+and was docked exactly nothing on a +1.72 composite — while REGN, up a third of that over
+the month, paid 0.386.
+
+`stretch21` is the trailing 21-day return in units of that name's own 21-day sigma
+(`ret21d / (σ_daily·√21)`) — the same normalisation `strZ` applies to the week. It exists
+because a five-day window is shorter than the thing it is measuring. Getting extended
+takes weeks, and a name can sit at its high for a month without ever printing a spiky
+week: on 2026-09-04 AMGN was at 0.993 of its 52-week high after +47% on 12-1 and +29% on
+the quarter, but its week was +1.6%, so `strZ` read +0.19 and docked the composite 0.095
+of a point out of +1.82. The Chief read that ranking and wrote *"extension risk is
+absent."* Over 21 days the same name reads +1.2, and pays 0.42. The weight is half the
+5-day term's because a month of steady gains is the trend this system trades, so it is a
+milder warning than the same distance covered in a week.
+
+**Both penalties are clamped at neutral: they may discount a trend, never reverse it.**
+Symmetry means that for a negative composite both terms *add*, and unclamped that does not
+stop at "poor short" — it carries the name across zero and ranks it as a strong long. On
+the 2026-09-04 eu50 table ENEL.MI held a −0.47 composite and a −2.22 `stretch21`, and the
+two bonuses lifted it to +1.42: first of forty-seven names, a buy recommendation generated
+entirely by having fallen. "This trend is less attractive than it looks" is the claim these
+terms are entitled to make; "take the other side" is not.
 
 Note that `strZ` enters **raw**, while the other two terms are z-scored within the index.
 That is not an inconsistency: `strZ` is already a z-score — the trailing 5-day return
@@ -106,12 +135,50 @@ Stage 1.5 reads back the dozen it needs for free.
 ## Stage 1 — Screening (Scouts)
 
 - One **Scout** subprocess per index: SP500, NQ100, EU50, Asia100 (4 parallel).
-- Each scout receives the **pre-screen table** for its index — the top
-  `prescreen_top_per_index` rows (default 15) plus the bottom 5 as short candidates, with
+- Each scout receives the **pre-screen tables** for its index — four disjoint sections,
   every measured column — followed by the full constituent list. It returns **~5–10
   nominations** with a one-line reason and a bias, each reason citing a column from the
-  table. Names outside the table may be nominated only on reasoning that does not depend
-  on price data the scout was not given.
+  tables. Names in none of the sections may be nominated only on reasoning that does not
+  depend on price data the scout was not given.
+
+  | Section | Rows | Contents |
+  |---|---|---|
+  | Continuation | `prescreen_top_per_index` (15) | highest composites — trends still running |
+  | Pullback | `prescreen_pullback_per_index` (8) | the composite and the last month disagree |
+  | Base | `prescreen_base_per_index` (5) | realized vol contracting while price goes nowhere |
+  | Weakest | `bottom 5` | the bottom of the same ranking, whatever shape |
+
+  There used to be one table — the top 15 and the bottom 5 — and everything between them
+  was printed as `(N mid-ranked names omitted)`. That is the funnel's central defect,
+  because **every term in the composite is a trailing return**, so its top is by
+  construction the names that have run the furthest. On 2026-09-04 eight or nine of every
+  index's top fifteen sat within 5% of their 52-week high, 187 of 267 rankable names were
+  omitted at a median 0.78–0.89 of theirs, and the run shipped three longs at 0.993, 0.982
+  and 1.000. A scout that wanted a non-extended setup could not find one: the table did
+  not contain any.
+
+### Setup archetypes
+
+Assigned **first-match-wins** so the sections are disjoint and their counts mean something.
+Each is a *filter*; `trend` ranks within it, which keeps every candidate on one scale so
+the merge can compare across archetypes at all.
+
+| Setup | Filter |
+|---|---|
+| `pullback` | `bars ≥ 252`, `sign(ret21d) ≠ sign(trend)`, `volTrend ≤ 1.2`, and `p/52wH` in `[0.80, 0.95]` for longs / `≤ 0.85` for shorts |
+| `base` | `volTrend` in `(0, 0.9)`, `\|stretch21\| < 0.5`, `regime != trending`, `p/52wH ≥ 0.75` |
+| `continuation` | everything else that scores |
+
+An excluded row carries no setup — it is not a candidate in any shape.
+
+The bearish half of `pullback` is a bounce in a downtrend, which is the fresh short the
+scout persona already asks for and the direct lever on a book that has run 86 longs to 17
+shorts across 24 runs. There is no "already collapsed" test on it because the archetype's
+own counter-trend condition is one: a bearish pullback requires a *positive* 21-day return.
+
+The `base` filter is stated against `volTrend` rather than a price range because
+contraction is the thing being selected; it is the one archetype that cannot be extended
+by construction, since a name that has just run is not flat over the month.
 - **Nominations are validated against the index's own constituent list.** A symbol that
   is not in it is dropped and logged: a hallucinated ticker used to reach the shortlist
   and consume a data fetch and an analysis slot on a company the run never screened.
@@ -131,8 +198,29 @@ Stage 1.5 reads back the dozen it needs for free.
   purely because sp500's list was walked before nq100's. At most `max_per_index` (default
   5) names come from one index; if that leaves slots empty they are backfilled in pure
   score order, so a single-index run still returns a full shortlist.
+- **`shortlist_reserve` (default 3) of those slots are held for names whose setup is not
+  `continuation`**, filled in a pass that runs *before* the ordinary ones — a slot held
+  back afterwards is not held back at all. This is necessary because merit *is* the
+  pre-screen composite and the composite rewards having already run, so left alone the
+  merit sort undoes the archetypes entirely: it computes them, shows them to the scout,
+  and then sorts every one of them out again.
+
+  The reserve is **soft in one direction only**. A reserved slot is filled only by a
+  candidate also scoring at least `shortlist_reserve_min_merit` (default 0.5, in the
+  composite's own z units), so a run with no decent pullback ships a *shorter* shortlist
+  rather than a padded one — the same bargain `max_thinly_covered` strikes. Every other cap
+  still binds inside the reserve pass, so a reserved name cannot smuggle a run past
+  `max_per_index` or the coverage cap. A negative `shortlist_reserve` disables it.
+
+  The archetype label is taken from the candidate's **own pre-screen row**, never from the
+  scout's JSON: the scout chooses which table to nominate from, but the classification is
+  computed from price data, and a scout that mislabelled a name would otherwise win itself
+  a reserved slot.
+- Selection order is not presentation order: `CapMerit` re-ranks its output by score before
+  returning, because a name a later pass rescued can outscore one an earlier pass took —
+  and with the reserve running first, usually does.
 - The final shortlist is recorded in `runs/<ts>/shortlist.json`, carrying each name's
-  sector and the scout's bias and reason.
+  sector, setup archetype, and the scout's bias and reason.
 
 Persona: `agents/scout.md`. Output: see `output-schema.md` (shortlist schema).
 

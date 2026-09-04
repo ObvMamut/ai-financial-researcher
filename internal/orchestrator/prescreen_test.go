@@ -39,6 +39,17 @@ func scoreOf(t *testing.T, rows []PrescreenRow, ticker string) float64 {
 	return 0
 }
 
+func trendOf(t *testing.T, rows []PrescreenRow, ticker string) float64 {
+	t.Helper()
+	for _, r := range rows {
+		if r.Ticker == ticker {
+			return r.Trend
+		}
+	}
+	t.Fatalf("%s not in scored rows", ticker)
+	return 0
+}
+
 func excludedReason(t *testing.T, rows []PrescreenRow, ticker string) string {
 	t.Helper()
 	for _, r := range rows {
@@ -203,7 +214,7 @@ func TestPrescreenTableCarriesTopAndBottom(t *testing.T) {
 	scorePrescreen(rows)
 	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
 
-	table := ps.Table("sp500", 2, 2)
+	table := ps.Table("sp500", PrescreenParams{TopPerIndex: 2, BottomPerIndex: 2})
 	for _, want := range []string{"A", "B", "F", "G"} {
 		if !strings.Contains(table, "| "+want+" ") {
 			t.Errorf("table missing %s:\n%s", want, table)
@@ -258,7 +269,7 @@ func TestPrescreenIsInvariantToTheBenchmarkLevel(t *testing.T) {
 
 func TestPrescreenTableEmptyWithoutRows(t *testing.T) {
 	ps := &Prescreen{}
-	if got := ps.Table("sp500", 15, 5); got != "" {
+	if got := ps.Table("sp500", defaultPrescreenParams()); got != "" {
 		t.Errorf("empty pre-screen rendered %q, want no table at all", got)
 	}
 }
@@ -331,14 +342,39 @@ func TestPrescreenIsRobustToOutliers(t *testing.T) {
 // against the name's own one-year distribution), so it is used directly and gate
 // and magnitude agree by construction.
 func TestPrescreenReversalPenaltyNeverPaysABonus(t *testing.T) {
-	// Four names on an identical trend, differing only in how far they have run.
-	rows := []PrescreenRow{
-		row("HOT_A", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 3.0 }),
-		row("HOT_B", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 3.0 }),
-		row("MILD", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 0.3 }),
-		row("FLAT", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.STRZ = 0.0 }),
+	// Names on an identical trend, differing only in how far they have run.
+	//
+	// The anchors are load-bearing, and there are two on each side for a
+	// reason. The gate asks whether the recent move runs with the *composite*,
+	// and the composite is a within-index z-score, so the fixture needs real
+	// cross-sectional spread or every name scores 0 and this test asserts
+	// equal numbers against each other. One anchor per side is not enough:
+	// zscores winsorises at one value from each end once the sample reaches
+	// five, which clips a lone anchor away and collapses the spread again.
+	anchors := []PrescreenRow{
+		row("HI_1", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 1.00; r.Ret63d = 0.50 }),
+		row("HI_2", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 1.00; r.Ret63d = 0.50 }),
+		row("LO_1", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
+		row("LO_2", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
 	}
+	subject := func(ticker string, strz float64) PrescreenRow {
+		return row(ticker, "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d, r.STRZ = 0.40, 0.40, strz
+		})
+	}
+	// STRZ magnitudes are kept inside the trend so the ordering measures the
+	// penalty rather than the clamp at neutral, which has its own test.
+	rows := append(append([]PrescreenRow{}, anchors...),
+		subject("HOT_A", 0.9), subject("HOT_B", 0.9), subject("MILD", 0.3), subject("FLAT", 0.0))
 	scorePrescreen(rows)
+	if trendOf(t, rows, "FLAT") <= 0 {
+		t.Fatalf("fixture is degenerate: the test names must share a positive composite, got %+.4f",
+			trendOf(t, rows, "FLAT"))
+	}
+	if scoreOf(t, rows, "HOT_A") <= 0 {
+		t.Fatalf("fixture: HOT_A must stay above the neutral clamp to measure penalty size, got %+.4f",
+			scoreOf(t, rows, "HOT_A"))
+	}
 
 	flat, mild, hot := scoreOf(t, rows, "FLAT"), scoreOf(t, rows, "MILD"), scoreOf(t, rows, "HOT_A")
 	if mild > flat {
@@ -350,13 +386,18 @@ func TestPrescreenReversalPenaltyNeverPaysABonus(t *testing.T) {
 
 	// Symmetric on the short side: a crashed name is a poor short, so its signed
 	// long score is pushed back up toward neutral.
-	shorts := []PrescreenRow{
-		row("CRASHED", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -0.40; r.STRZ = -3.0 }),
-		func() PrescreenRow {
-			return row("STEADY", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -0.40; r.STRZ = 0.0 })
-		}(),
+	shortSubject := func(ticker string, strz float64) PrescreenRow {
+		return row(ticker, "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d, r.STRZ = -0.40, -0.40, strz
+		})
 	}
+	shorts := append(append([]PrescreenRow{}, anchors...),
+		shortSubject("CRASHED", -0.9), shortSubject("STEADY", 0.0))
 	scorePrescreen(shorts)
+	if trendOf(t, shorts, "STEADY") >= 0 {
+		t.Fatalf("fixture is degenerate: the two shorts must share a negative composite, got %+.4f",
+			trendOf(t, shorts, "STEADY"))
+	}
 	if scoreOf(t, shorts, "CRASHED") <= scoreOf(t, shorts, "STEADY") {
 		t.Errorf("a name that just crashed is a worse short than one drifting down: CRASHED %+.4f vs STEADY %+.4f",
 			scoreOf(t, shorts, "CRASHED"), scoreOf(t, shorts, "STEADY"))
@@ -398,5 +439,294 @@ func TestMeritScoreCountsScoutAgreementAndDisagreement(t *testing.T) {
 	// name still outranks a weak uncontested one.
 	if meritScore(ps, contested) <= meritScore(ps, solo) {
 		t.Error("a 1.77 contested read fell below a 0.70 uncontested one — the penalty is a veto")
+	}
+}
+
+// The composite is built from trailing returns, so its top is by construction
+// the names that have already run. These are the archetypes that give the scout
+// something else to look at.
+func TestClassifySetups(t *testing.T) {
+	// Spread so the composite has a real sign for every row to be tested
+	// against; see TestPrescreenReversalPenaltyNeverPaysABonus.
+	anchors := []PrescreenRow{
+		row("ANCHOR_HI", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 1.00; r.Ret63d = 0.50 }),
+		row("ANCHOR_LO", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
+	}
+
+	cases := []struct {
+		name string
+		want string
+		mut  func(*PrescreenRow)
+	}{
+		{
+			// The shape the old single table could never show: an uptrend
+			// resting. AMGN and REGN shipped at 0.993 and 0.982 of their highs
+			// while rows like this sat in the 187 the table printed as omitted.
+			name: "uptrend dipping is a pullback",
+			want: SetupPullback,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = 0.45, 0.25
+				r.Ret21d, r.PriceTo52wHigh, r.VolTrend = -0.06, 0.88, 1.05
+			},
+		},
+		{
+			// The bearish half, which is where a fresh short comes from: the
+			// book has run 86 longs to 17 shorts.
+			name: "downtrend bouncing is a pullback",
+			want: SetupPullback,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = -0.45, -0.25
+				r.Ret21d, r.PriceTo52wHigh, r.VolTrend = 0.07, 0.62, 1.05
+			},
+		},
+		{
+			// A dip on expanding vol is an event, not a rest, and the levels a
+			// trade would be built on are not stable.
+			name: "dip on expanding vol is not a pullback",
+			want: SetupContinuation,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = 0.45, 0.25
+				r.Ret21d, r.PriceTo52wHigh, r.VolTrend = -0.06, 0.88, 1.60
+			},
+		},
+		{
+			// Above the band the name has not actually pulled back.
+			name: "still at the high is not a pullback",
+			want: SetupContinuation,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = 0.45, 0.25
+				r.Ret21d, r.PriceTo52wHigh, r.VolTrend = -0.01, 0.99, 1.05
+			},
+		},
+		{
+			name: "vol contracting while price goes nowhere is a base",
+			want: SetupBase,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = 0.30, 0.10
+				r.Ret21d, r.Stretch21, r.PriceTo52wHigh, r.VolTrend = 0.004, 0.10, 0.92, 0.80
+			},
+		},
+		{
+			// A base is a range tightening, and a name the variance ratio calls
+			// trending is not in one.
+			name: "contracting vol in a trending regime is not a base",
+			want: SetupContinuation,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = 0.30, 0.10
+				r.Ret21d, r.Stretch21, r.PriceTo52wHigh, r.VolTrend = 0.004, 0.10, 0.92, 0.80
+				r.Regime = "trending"
+			},
+		},
+		{
+			name: "a name that has simply run is continuation",
+			want: SetupContinuation,
+			mut: func(r *PrescreenRow) {
+				r.Mom12_1, r.Ret63d = 0.47, 0.29
+				r.Ret21d, r.Stretch21, r.PriceTo52wHigh, r.VolTrend = 0.10, 1.20, 0.993, 0.84
+			},
+		},
+		{
+			// The band is quoted against the 52-week high, and under a year of
+			// bars there is not one to quote.
+			name: "short history cannot be a pullback",
+			want: SetupContinuation,
+			mut: func(r *PrescreenRow) {
+				r.Bars = 200
+				r.Mom12_1, r.Ret63d = 0.45, 0.25
+				r.Ret21d, r.PriceTo52wHigh, r.VolTrend = -0.06, 0.88, 1.05
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := append(append([]PrescreenRow{}, anchors...), row("SUBJ", "sp500", tc.mut))
+			scorePrescreen(rows)
+			for _, r := range rows {
+				if r.Ticker == "SUBJ" && r.Setup != tc.want {
+					t.Errorf("setup = %q, want %q (trend %+.2f, 21d %+.1f%%, p/52wH %.2f, volTrend %.2f)",
+						r.Setup, tc.want, r.Trend, r.Ret21d*100, r.PriceTo52wHigh, r.VolTrend)
+				}
+			}
+		})
+	}
+}
+
+// An excluded row is not a candidate in any shape, and labelling it would let it
+// compete for a reserved shortlist slot.
+func TestClassifySetupsLeavesExcludedRowsUnlabelled(t *testing.T) {
+	rows := []PrescreenRow{
+		row("OK", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40 }),
+		row("THIN", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.Excluded = "illiquid" }),
+	}
+	scorePrescreen(rows)
+	for _, r := range rows {
+		if r.Ticker == "THIN" && r.Setup != "" {
+			t.Errorf("excluded row carries setup %q, want none", r.Setup)
+		}
+		if r.Ticker == "OK" && r.Setup == "" {
+			t.Error("scorable row carries no setup; Score and Setup must be set together")
+		}
+	}
+}
+
+// The extension penalty keyed on Mom12_1, which let the most extended shape in
+// the table through untouched: a name whose last year was poor but whose last
+// quarter was vertical has a negative Mom12_1 and a positive composite, so the
+// sign test failed and nothing was charged. CRM on 2026-09-04 ran +37.0% in 21
+// days at 0.986 of its 52-week high and was docked exactly nothing.
+func TestExtensionPenaltyFollowsTheCompositeNotTheYearOldMomentum(t *testing.T) {
+	mk := func(ticker string, mom, ret63, stretch float64) PrescreenRow {
+		return row(ticker, "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d, r.Stretch21 = mom, ret63, stretch
+			// Hold the archetype fixed so this measures the penalty alone.
+			r.PriceTo52wHigh, r.VolTrend, r.Ret21d = 0.99, 1.10, 0.30
+		})
+	}
+	rows := []PrescreenRow{
+		mk("ANCHOR_LO", -1.00, -0.50, 0),
+		mk("CRM_LIKE", -0.24, 0.40, 1.60), // bad year, vertical quarter
+		mk("CALM", -0.24, 0.40, 0.00),     // same trend, no extension
+	}
+	scorePrescreen(rows)
+
+	crm, calm := scoreOf(t, rows, "CRM_LIKE"), scoreOf(t, rows, "CALM")
+	if trendOf(t, rows, "CRM_LIKE") <= 0 {
+		t.Fatalf("fixture: CRM_LIKE must carry a positive composite despite negative 12-1, got %+.4f",
+			trendOf(t, rows, "CRM_LIKE"))
+	}
+	if crm >= calm {
+		t.Errorf("a name up 1.6 sigma on the month scored at or above an unextended one on the same trend: %+.4f vs %+.4f", crm, calm)
+	}
+	if want := calm - stretch21Weight*1.60; math.Abs(crm-want) > 1e-9 {
+		t.Errorf("penalty = %+.4f, want %+.4f (%.2f x 1.60 sigma)", calm-crm, calm-want, stretch21Weight)
+	}
+}
+
+// A five-day window is shorter than the thing it is measuring. AMGN sat at
+// 0.993 of its 52-week high on +47% 12-1 and +29% on the quarter, printed a
+// +1.6% week, and was docked 0.095 of a point out of +1.82 — which the Chief
+// then read as "extension risk is absent".
+func TestStretch21SeesExtensionTheFiveDayTermMisses(t *testing.T) {
+	// AMGN's own numbers: 21d +10% on sigma_daily 1.8%.
+	if got := quant.Stretch(0.10, 0.018, 21); got < 1.0 {
+		t.Errorf("stretch21 = %+.2f, want above 1.0 sigma — the 5d term read this same name at +0.19", got)
+	}
+	if got := quant.Stretch(0.10, 0, 21); got != 0 {
+		t.Errorf("unknown sigma yielded %+.2f, want 0", got)
+	}
+}
+
+// The scout used to be handed the top 15 and the bottom 5 of one ranking, with
+// everything between them printed as "(mid-ranked names omitted)" — on
+// 2026-09-04 that was 187 of 267 names, median 0.78-0.89 of their highs.
+func TestPrescreenTableRendersEachArchetypeSection(t *testing.T) {
+	rows := []PrescreenRow{
+		row("ANCHOR_LO", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
+		row("RUNNER", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d, r.PriceTo52wHigh, r.VolTrend = 0.60, 0.30, 0.99, 1.10
+		}),
+		row("DIPPER", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = 0.45, 0.25
+			r.Ret21d, r.PriceTo52wHigh, r.VolTrend = -0.06, 0.88, 1.05
+		}),
+		row("COILED", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = 0.30, 0.10
+			r.Ret21d, r.Stretch21, r.PriceTo52wHigh, r.VolTrend = 0.004, 0.10, 0.92, 0.80
+		}),
+	}
+	scorePrescreen(rows)
+	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
+	// Sized to the fixture: at four names a 15-deep Continuation section would
+	// swallow the weakest row too and leave the last section nothing to show,
+	// which is not what happens against an index of fifty-odd.
+	table := ps.Table("sp500", PrescreenParams{
+		TopPerIndex: 1, PullbackPerIndex: 8, BasePerIndex: 5, BottomPerIndex: 2,
+	})
+
+	for _, want := range []string{"**Continuation**", "**Pullback**", "**Base**", "**Weakest**"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("table missing %s section:\n%s", want, table)
+		}
+	}
+	// str21 is a scoring term now, so the scout has to be able to cite it.
+	if !strings.Contains(table, "str21") {
+		t.Errorf("table omits the str21 column:\n%s", table)
+	}
+	// Sections are disjoint: a name appears once, under its own archetype.
+	for _, tk := range []string{"RUNNER", "DIPPER", "COILED", "ANCHOR_LO"} {
+		if n := strings.Count(table, "| "+tk+" |"); n != 1 {
+			t.Errorf("%s appears %d times, want exactly 1:\n%s", tk, n, table)
+		}
+	}
+}
+
+// The extension penalties are symmetric — a crashed name is a poor short for
+// the same reason an extended one is a poor long — and symmetric means that for
+// a negative composite both terms add. Unclamped they do not stop at "poor
+// short": they carry the name across zero and rank it as a strong long. On the
+// 2026-09-04 eu50 table ENEL.MI held a -0.47 composite and a -2.22 str21, and
+// the bonuses lifted it to +1.42, first of forty-seven names — a buy generated
+// entirely by having fallen.
+func TestExtensionPenaltyCannotReverseTheTrend(t *testing.T) {
+	anchors := []PrescreenRow{
+		row("HI_1", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 1.00; r.Ret63d = 0.50 }),
+		row("HI_2", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 1.00; r.Ret63d = 0.50 }),
+		row("LO_1", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
+		row("LO_2", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
+	}
+	// ENEL.MI's shape: a mildly negative composite and a hard recent fall.
+	rows := append(append([]PrescreenRow{}, anchors...),
+		row("FALLEN", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = 0.30, -0.20
+			r.STRZ, r.Stretch21 = -1.8, -2.2
+		}),
+	)
+	scorePrescreen(rows)
+
+	trend, score := trendOf(t, rows, "FALLEN"), scoreOf(t, rows, "FALLEN")
+	if trend >= 0 {
+		t.Fatalf("fixture: FALLEN must carry a negative composite, got %+.4f", trend)
+	}
+	if score > 0 {
+		t.Errorf("a name with a %+.2f composite scored %+.2f — the penalty turned a weak short into a long", trend, score)
+	}
+	if score < trend {
+		t.Errorf("score %+.4f is below the unpenalised trend %+.4f; the bonus must move toward neutral, not away", score, trend)
+	}
+	// And it must still rank below anything genuinely positive.
+	if score > scoreOf(t, rows, "HI_1") {
+		t.Errorf("FALLEN %+.4f outranks a real uptrend %+.4f", score, scoreOf(t, rows, "HI_1"))
+	}
+}
+
+// zscores guards against a sample with no spread, but compared sd against exact
+// zero. Six copies of 0.4 sum to 2.4 and mean 0.39999999999999997, so the
+// deviations are ~5.6e-17 and sd lands at 6.1e-17 — past the guard, and every
+// member of the index then receives the same meaningless z of 0.913.
+func TestZScoresTreatsAConstantSampleAsNoInformation(t *testing.T) {
+	cases := map[string][]float64{
+		"exactly representable": {0.5, 0.5, 0.5, 0.5, 0.5, 0.5},
+		"with binary residue":   {0.4, 0.4, 0.4, 0.4, 0.4, 0.4},
+		"large values":          {1234.56, 1234.56, 1234.56, 1234.56, 1234.56, 1234.56},
+		// Winsorising clips one from each end at n>=5, so a lone outlier on
+		// each side leaves a constant interior — the case that actually reached
+		// this in a test fixture.
+		"constant after winsorising": {1.0, -1.0, 0.4, 0.4, 0.4, 0.4},
+	}
+	for name, xs := range cases {
+		t.Run(name, func(t *testing.T) {
+			for i, z := range zscores(xs) {
+				if z != 0 {
+					t.Errorf("z[%d] = %v, want 0 — a sample with no spread carries no information", i, z)
+				}
+			}
+		})
+	}
+
+	// The guard must not swallow a real, small spread.
+	got := zscores([]float64{0.40, 0.41, 0.42, 0.43, 0.44, 0.45})
+	if got[0] >= 0 || got[len(got)-1] <= 0 {
+		t.Errorf("a genuine spread was flattened: %v", got)
 	}
 }

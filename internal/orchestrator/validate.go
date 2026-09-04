@@ -109,6 +109,11 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 			if idea.Name == "" {
 				idea.Name = c.Name
 			}
+			// The setup archetype is always the shortlist's, never the Chief's:
+			// it is a classification of measured price data, and the only
+			// reason it travels on the idea at all is so the run artifact
+			// records which shape was traded.
+			idea.Setup = c.Setup
 			if c.Index != "" && idea.Index != c.Index {
 				if idea.Index != "" {
 					warnings = append(warnings, warning{Ticker: idea.Ticker,
@@ -130,7 +135,7 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 		warnings = append(warnings, anchorConfidence(idea, baseByTicker, cfg.ChiefAdjustBand)...)
 
 		// 5. Trade mechanics: ordering, plausibility vs verified data, RR.
-		warnings = append(warnings, validateLevels(idea, v.Quant)...)
+		warnings = append(warnings, validateLevels(idea, v.Quant, cfg.Risk.EntryPatienceSigma, cfg.Risk.EntryChaseSigma)...)
 
 		validIdeas = append(validIdeas, *idea)
 	}
@@ -148,7 +153,7 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 // drop: the human sees the flags and the re-prompt handles hard ordering
 // violations. Plausibility checks only fire when verified quant data exists
 // for the ticker.
-func validateLevels(idea *model.TradeIdea, qp *quant.Pack) []warning {
+func validateLevels(idea *model.TradeIdea, qp *quant.Pack, patient, chase float64) []warning {
 	var ws []warning
 	warn := func(format string, args ...any) {
 		ws = append(ws, warning{Ticker: idea.Ticker, Message: fmt.Sprintf(format, args...)})
@@ -196,19 +201,47 @@ func validateLevels(idea *model.TradeIdea, qp *quant.Pack) []warning {
 	if !ok || m.LastClose <= 0 {
 		return ws
 	}
-	// chief-analyst.md permits a limit entry within 0.5σ√5 of the last close — a
+	// chief-analyst.md permits a limit entry within a band of the last close — a
 	// band in the name's own volatility, not a flat percentage. This check read a
 	// flat 5% and claimed in its comment that 5% *was* the rule, so the two
 	// disagreed in both directions: on TTD (σ_daily 7.9%) the persona allowed
 	// 8.9% and the app warned at 5%, while on AMGN (σ_daily 1.8%) the persona
 	// allowed 2.0% and the app waved 5% through.
-	band := 0.05
-	if m.SigmaDaily > 0 {
-		band = 0.5 * m.SigmaDaily * math.Sqrt(5)
+	//
+	// The band is asymmetric, because the two directions are not the same
+	// trade. An entry placed *against* the position — a long bidding below the
+	// close, a short offering above it — is patience: the worst case is that
+	// the limit never trades, which the scoreboard already records as
+	// `unfilled` rather than as a loss. An entry placed *with* the position is
+	// chasing: paying up for a name that has already moved, where the worst
+	// case is a filled position at the top of the move.
+	//
+	// One band for both had a real cost. It is why the 2026-09-04 run bid 442
+	// for AMGN against a 444.12 close — half a percent below the market on a
+	// name at 0.993 of its 52-week high — when what the reasoning actually
+	// argued for was waiting. Under a symmetric 0.5σ√5 there was no wider bid
+	// available to place.
+	// Guard the widths rather than trust them. A zero band would warn on every
+	// idea including a limit set exactly at the close, and validateIdeas is
+	// reachable with a Config that never passed through riskDefaults.
+	if patient <= 0 {
+		patient = 1.5
 	}
-	if dev := math.Abs(idea.Entry/m.LastClose - 1); dev > band {
-		warn("entry %.2f is %.1f%% away from verified last close %.2f (%s), beyond the %.1f%% limit-entry band (0.5σ√5)",
-			idea.Entry, dev*100, m.LastClose, m.AsOf, band*100)
+	if chase <= 0 {
+		chase = 0.5
+	}
+	dev := idea.Entry/m.LastClose - 1
+	band, side := chase, "chasing"
+	if isPatientEntry(idea.Direction, dev) {
+		band, side = patient, "patient"
+	}
+	limit := 0.05
+	if m.SigmaDaily > 0 {
+		limit = band * m.SigmaDaily * math.Sqrt(5)
+	}
+	if math.Abs(dev) > limit {
+		warn("entry %.2f is %.1f%% away from verified last close %.2f (%s), beyond the %.1f%% %s limit-entry band (%.1fσ√5)",
+			idea.Entry, math.Abs(dev)*100, m.LastClose, m.AsOf, limit*100, side, band)
 	}
 	if m.SigmaDaily > 0 {
 		h := float64(idea.TimeframeDays)
@@ -285,4 +318,15 @@ func anchorConfidence(idea *model.TradeIdea, bases map[string]BaseScore, band in
 		msg += fmt.Sprintf(" — the domains read %s, so a %s starts from zero", b.Direction, idea.Direction)
 	}
 	return []warning{{Ticker: idea.Ticker, Message: msg}}
+}
+
+// isPatientEntry reports whether a limit sits on the waiting side of the last
+// close for this direction. dev is the entry's signed deviation from that
+// close. An entry exactly at the close is neither, and takes the tighter band,
+// which changes nothing: zero is inside both.
+func isPatientEntry(dir model.Direction, dev float64) bool {
+	if dir == model.DirectionSell {
+		return dev > 0
+	}
+	return dev < 0
 }

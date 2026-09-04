@@ -65,8 +65,18 @@ Let `σ = σ_daily · √h · close`, the one-standard-deviation move over your 
 period `h`. The "Quant reference" block gives you σ_daily and the 1σ/2σ distances at
 h = 10 directly; scale them if you choose a different `h`.
 
-- **Entry**: within **0.5σ√5** of the verified last close. A limit further out is not an
-  entry, it is a wish.
+- **Entry**: the band is **asymmetric**, because bidding for a better price and paying up
+  for a worse one are not the same trade.
+  - **Patient side** — a long *below* the last close, a short *above* it: up to
+    **1.5σ√5**. This is where a pullback entry goes. The worst case is that the limit
+    never trades, which the app records as `unfilled`, not as a loss.
+  - **Chasing side** — a long *above* the last close, a short *below* it: **0.5σ√5**, and
+    no further. The worst case here is a filled position at the top of the move.
+
+  Use the patient side deliberately rather than defaulting to the close. A name in the
+  Pullback archetype is *already* on a counter-move and may not need much; a name at
+  `p/52wH` ≥ 0.98 with `str21` above 1.5 is one you should be bidding well under, or not
+  taking. A limit beyond even the patient band is not an entry, it is a wish.
 - **Stop**: **1.0σ ≤ |entry − stop| ≤ 2.0σ**, hard both ways. Below 1.0σ you are stopped
   by noise before the thesis can resolve; above 2.0σ the position is too large for the
   risk budget. Sit nearer 2.0σ for names with fat tails or expanding vol — the quant line
@@ -110,9 +120,18 @@ same view.
 Each of these is a reason you may name. Use the smallest magnitude that fits, and state it
 in the Confluence Math line. The total across all of them is capped at ±10.
 
-- **−3 to −6 — chasing:** Fundamentals flags a rich multiple unsupported by growth **and**
-  the quant line shows short-term extension running with the trend (strong 5d/21d with a
-  high reversal z-score). Not both, no penalty.
+- **−3 to −6 — chasing:** the quant line shows the name is extended — `p/52wH` at or above
+  **0.98**, or `str21` above **1.5** (the last month's move in units of the name's own
+  21-day volatility) — with the recent move running *with* the trend rather than against
+  it. Deepen it toward −6 when Fundamentals also flags a rich multiple unsupported by
+  growth, but **do not wait for that**: this used to require both, and Fundamentals
+  abstains often enough that the penalty was unreachable exactly when it was needed. On
+  2026-09-04 it scored 0 on both shipped longs, and AMGN and REGN went out at 0.993 and
+  0.982 of their 52-week highs with no chasing adjustment available.
+
+  No penalty when the name is in the **Pullback** or **Base** archetype and the levels
+  reflect it — those shapes are defined by *not* being extended, and charging them here
+  would double-count the thing that made them attractive.
 - **+3 — undervalued growth:** a cheap-relative-to-growth multiple with real, ideally
   accelerating growth and a sound balance sheet, where the quant read is merely neutral.
   A base or pullback is a valid swing entry.

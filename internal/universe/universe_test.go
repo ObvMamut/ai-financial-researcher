@@ -413,3 +413,83 @@ func TestDedupeRecordsOppositeBiasesRatherThanPickingOne(t *testing.T) {
 		t.Errorf("nominations = %d — an opposite reading is not a second vote", got[0].Nominations)
 	}
 }
+
+// The merit sort ranks on the pre-screen composite, and that composite is built
+// from trailing returns — so left alone it fills the shortlist with whatever has
+// run hardest. On 2026-09-04 that was three longs at 0.993, 0.982 and 1.000 of
+// their 52-week highs. The reserve holds slots for the other setup archetypes.
+func TestCapMeritArchetypeReserve(t *testing.T) {
+	mk := func(ticker, setup string) model.Candidate {
+		return model.Candidate{Ticker: ticker, Name: ticker, Index: "sp500", Setup: setup}
+	}
+	notContinuation := func(c model.Candidate) bool { return c.Setup != "" && c.Setup != "continuation" }
+
+	t.Run("holds slots for other archetypes", func(t *testing.T) {
+		// Every continuation name outranks every pullback, which is the normal
+		// case rather than an adversarial one: the composite rewards having run.
+		scores := map[string]float64{"C1": 3.0, "C2": 2.8, "C3": 2.6, "C4": 2.4, "P1": 1.2, "P2": 0.9}
+		in := []model.Candidate{
+			mk("C1", "continuation"), mk("C2", "continuation"),
+			mk("C3", "continuation"), mk("C4", "continuation"),
+			mk("P1", "pullback"), mk("P2", "base"),
+		}
+		out := CapMerit(in, MeritCaps{
+			Max: 4, PerIndex: 5, Reserve: 2, ReserveMinMerit: 0.5,
+			ReservePredicate: notContinuation,
+			Score:            func(c model.Candidate) float64 { return scores[c.Ticker] },
+		})
+		// Reserved names are selected first but presented in rank order.
+		if got, want := tickers(out), []string{"C1", "C2", "P1", "P2"}; !equal(got, want) {
+			t.Errorf("got %v, want %v — two slots held for the non-continuation shapes", got, want)
+		}
+	})
+
+	t.Run("ships short rather than reserving a bad name", func(t *testing.T) {
+		// The reserve is soft in one direction only. A pullback below the merit
+		// floor leaves the slot empty; it does not get promoted into it.
+		scores := map[string]float64{"C1": 3.0, "C2": 2.8, "C3": 2.6, "P1": 0.1}
+		in := []model.Candidate{
+			mk("C1", "continuation"), mk("C2", "continuation"),
+			mk("C3", "continuation"), mk("P1", "pullback"),
+		}
+		out := CapMerit(in, MeritCaps{
+			Max: 3, PerIndex: 5, Reserve: 2, ReserveMinMerit: 0.5,
+			ReservePredicate: notContinuation,
+			Score:            func(c model.Candidate) float64 { return scores[c.Ticker] },
+		})
+		if got, want := tickers(out), []string{"C1", "C2", "C3"}; !equal(got, want) {
+			t.Errorf("got %v, want %v — P1 is below the merit floor and must not take a reserved slot", got, want)
+		}
+	})
+
+	t.Run("reserve does not override the per-index cap", func(t *testing.T) {
+		scores := map[string]float64{"C1": 3.0, "P1": 2.0, "P2": 1.9}
+		in := []model.Candidate{
+			{Ticker: "C1", Index: "sp500", Setup: "continuation"},
+			{Ticker: "P1", Index: "eu50", Setup: "pullback"},
+			{Ticker: "P2", Index: "eu50", Setup: "pullback"},
+		}
+		out := CapMerit(in, MeritCaps{
+			Max: 3, PerIndex: 1, Reserve: 2, ReserveMinMerit: 0.5,
+			ReservePredicate: notContinuation,
+			Score:            func(c model.Candidate) float64 { return scores[c.Ticker] },
+		})
+		// P2 is a second eu50 name; the reserve may not smuggle it past PerIndex
+		// on the first pass, though the ordinary backfill still rescues it.
+		if got, want := tickers(out), []string{"C1", "P1", "P2"}; !equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("nil predicate disables the reserve", func(t *testing.T) {
+		scores := map[string]float64{"C1": 3.0, "P1": 1.0}
+		in := []model.Candidate{mk("C1", "continuation"), mk("P1", "pullback")}
+		out := CapMerit(in, MeritCaps{
+			Max: 1, PerIndex: 5, Reserve: 2, ReserveMinMerit: 0.5,
+			Score: func(c model.Candidate) float64 { return scores[c.Ticker] },
+		})
+		if got, want := tickers(out), []string{"C1"}; !equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+}

@@ -104,8 +104,12 @@ func (p *Pack) CompactLine(ticker string) string {
 	if !ok {
 		return ""
 	}
-	line := fmt.Sprintf("%s: close %.2f (%s), 5d %s, 21d %s, mom12-1 %s, p/52wH %.2f, vol20d %.0f%% (volTrend %.2f), VR5 %.2f (%s), σ_daily %.2f%%",
-		m.Symbol, m.LastClose, m.AsOf, pct(m.Ret5d), pct(m.Ret21d), pct(m.Mom12_1),
+	// str21 sits next to p/52wH deliberately: together they are the chasing
+	// test, and neither answers it alone. A name can be at 1.00 of its high
+	// having crept there over six months, and a name can be 12% below one
+	// having gone vertical for a fortnight.
+	line := fmt.Sprintf("%s: close %.2f (%s), 5d %s, 21d %s, str21 %+.2f, mom12-1 %s, p/52wH %.2f, vol20d %.0f%% (volTrend %.2f), VR5 %.2f (%s), σ_daily %.2f%%",
+		m.Symbol, m.LastClose, m.AsOf, pct(m.Ret5d), pct(m.Ret21d), m.Stretch21(), pct(m.Mom12_1),
 		m.PriceTo52wHigh, m.VolYZ20*100, m.VolTrend, m.VR5, m.Regime, m.SigmaDaily*100)
 	if m.Benchmark != "" {
 		line += fmt.Sprintf(", beta %.2f, corr %.2f", m.Beta, m.Corr)

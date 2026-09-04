@@ -95,6 +95,13 @@ type Candidate struct {
 	Reason string `json:"reason"`
 	Sector string `json:"sector,omitempty"` // from the universe row (set by the orchestrator)
 	Index  string `json:"index,omitempty"`  // source index key (set by the orchestrator)
+	// Setup is the pre-screen archetype this name was ranked under —
+	// "continuation", "pullback" or "base". Set by the orchestrator from the
+	// candidate's own pre-screen row, never read from the scout's JSON: the
+	// scout chooses which table to nominate from, but the label is the
+	// classifier's to assign, and a scout that mislabels a name would otherwise
+	// win itself a reserved shortlist slot.
+	Setup string `json:"setup,omitempty"`
 
 	// Nominations is how many scouts put this name forward in the same
 	// direction, filled in by universe.Dedupe when it merges their lists. One is
@@ -160,6 +167,12 @@ type TradeIdea struct {
 	Direction  Direction `json:"direction"`  // BUY | SELL
 	Confidence int       `json:"confidence"` // 0-100
 	Why        string    `json:"why"`
+	// Setup carries the pre-screen archetype through to the run artifact, so
+	// the record can eventually answer whether pullback entries outperform
+	// continuation ones. It is recorded, not yet scored on:
+	// scoreboard.setupKey deliberately stays coarse until the closed-trade
+	// count can fill the finer cells.
+	Setup string `json:"setup,omitempty"`
 
 	Entry         float64 `json:"entry,omitempty"`          // suggested entry price
 	Stop          float64 `json:"stop,omitempty"`           // protective stop
@@ -234,6 +247,19 @@ type RiskConfig struct {
 	StopSigmaMax float64 `json:"stop_sigma_max"`
 	// TargetSigmaMax bounds how far a target may sit from entry in the same units.
 	TargetSigmaMax float64 `json:"target_sigma_max"`
+	// EntryPatienceSigma bounds a limit entry placed on the *waiting* side of
+	// the last close — a long bidding below it, a short offering above — in
+	// units of sigma_daily x sqrt(5). An entry on the other side is chasing and
+	// keeps the tighter EntryChaseSigma.
+	//
+	// The two used to be one number, and one number could only be set to the
+	// chasing width, since that is the side with a real cost. That is how the
+	// 2026-09-04 run came to bid 442 for a stock at 444.12 sitting on its
+	// 52-week high: waiting for a genuine pullback was not expressible.
+	EntryPatienceSigma float64 `json:"entry_patience_sigma"`
+	// EntryChaseSigma bounds a limit entry placed on the side the position is
+	// already moving toward. Kept tight on purpose.
+	EntryChaseSigma float64 `json:"entry_chase_sigma"`
 	// ADVMinUSD is the 20-day average dollar volume below which a name is not
 	// tradeable in size. It gates both the pre-screen and the final ideas.
 	ADVMinUSD float64 `json:"adv_min_usd"`
