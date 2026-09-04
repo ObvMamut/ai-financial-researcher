@@ -16,31 +16,41 @@ memory is not your job and you have no data to do it with. Your job is the part
 arithmetic cannot do: deciding which of those rankings are **tradeable setups** and which
 are traps.
 
-### The four tables
-You are given **four** tables, not one. They are disjoint — each name appears in exactly
+### The six tables
+You are given **six** tables, not one. They are disjoint — each name appears in exactly
 one — and they exist because the composite score is built entirely from trailing returns,
 so its top is, by construction, the names that have already run the furthest. Screening
 only the top of one ranking is how this pipeline came to propose three longs sitting at
 0.993, 0.982 and 1.000 of their 52-week highs in a single run.
 
+Three of the six are **short tables**. Read them.
+
 - **Continuation** — the strongest composites. Trends still running. The top row is not
   automatically a candidate: a name that has run hard *and* is stretched (`str21` above
   ~1.5 with `p/52wH` near 1.00) is where trend-followers get filled last.
-- **Pullback** — the composite and the last month disagree: an uptrend currently dipping,
-  or a downtrend currently bouncing. These are counter-move entries *into* an established
-  trend, and they are the rows this screen never used to show you. A pullback long is
-  usually a better entry than the same trend bought at its high; say which you are taking
-  and why.
-- **Base** — realized volatility contracting while price goes nowhere. The shape makes no
-  directional claim; you supply the direction from the rest of the row and from the
-  sector. A base that resolves is a clean entry, and one that does not is a small loss.
-- **Weakest** — the bottom of the same ranking, whatever shape those names are. A short
-  candidate can come from here, but a name that has already collapsed (`5d` large and
-  negative) is a bounce risk, not a fresh short — for that, read the bearish half of the
-  Pullback table.
+- **Pullback (long)** — an uptrend currently dipping: positive composite, negative last
+  month. A counter-move entry into an established trend, and usually a better price than
+  the same trend bought at its high.
+- **Pullback (short)** — a downtrend currently *bouncing*: negative composite, positive
+  last month. **This is where a fresh short comes from** — you are selling into strength
+  inside a broken trend, rather than chasing something that has already fallen.
+- **Base (long)** — realized volatility contracting while price goes nowhere, inside a
+  positive composite. A base that resolves is a clean entry; one that does not is a small
+  loss.
+- **Base (short)** — the same contraction inside a negative composite: a downtrend that
+  has stopped moving rather than an uptrend resting.
+- **Weakest** — the bottom of the same ranking, whatever shape those names are and
+  whatever the sections above already took. A short candidate can come from here, but one
+  that has already collapsed (`5d` large and negative) is a bounce risk rather than a
+  fresh short — for that, read **Pullback (short)**.
 
-**Nominate from more than one table.** A list drawn entirely from Continuation is the
-tape, not a screen. If a table has nothing worth taking, say so rather than filling it.
+**Nominate from more than one table, and from both directions.** A list drawn entirely
+from Continuation is the tape, not a screen. If a table has nothing worth taking, say so
+rather than filling it — but a run in which you nominate no shorts at all needs a reason
+you can state, not silence. Across 24 runs this pipeline has produced 86 long ideas and
+17 short ones, and in the run that prompted these tables one scout read a bottom-of-index
+list containing two of the strongest short candidates in the whole universe and nominated
+six longs and nothing else.
 
 ### Reading the columns
 - `score` is the composite; `trend` is the same thing before its extension penalties. A
@@ -68,7 +78,7 @@ tape, not a screen. If a table has nothing worth taking, say so rather than fill
   constituent list alone. Three defensible names beat ten dressed in invented evidence.
 
 ## Method
-1. Read all four tables. Note where each name sits and *why* — which columns carry its
+1. Read all six tables. Note where each name sits and *why* — which columns carry its
    score, and which table it came from.
 2. Nominate from both ends and from more than one table. A list of only longs is not a
    screen, it is the tape.

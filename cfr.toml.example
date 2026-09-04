@@ -37,11 +37,11 @@
 # How many of each index's highest-composite names the scout's Continuation table
 # shows. The five weakest are always appended as a Weakest section.
 #
-# The scout reads four tables, not one, because the composite is built entirely
+# The scout reads six tables, not one, because the composite is built entirely
 # from trailing returns and its top is therefore, by construction, the names that
 # have already run the furthest. Screening only that top is how a single run came
 # to propose three longs sitting at 0.993, 0.982 and 1.000 of their 52-week
-# highs. Alongside Continuation the pre-screen now classifies and shows:
+# highs. Alongside Continuation the pre-screen classifies and shows:
 #
 #   pullback — the composite and the last month disagree: an uptrend currently
 #              dipping (0.80-0.95 of the 52-week high, vol not expanding), or a
@@ -51,9 +51,18 @@
 #
 # The archetypes are disjoint filters, first match wins, and each is ranked by
 # the same trend composite so the merge can compare across them.
+#
+# The two counter-trend archetypes are rendered as a long half and a short half,
+# and these keys count rows **per half** (so 5 means up to ten pullback rows).
+# One section ranked by the composite is a long-only section whatever the
+# classifier found, because the composite's sign *is* the direction: a bearish
+# candidate's merit is -score, so the best shorts carry the most negative scores
+# and sit at the far end of a best-first walk. Before the split, 32 bearish
+# pullbacks existed across four indices and 8 were shown; sp500 showed 0 of its
+# 11 and its scout nominated six longs and no shorts.
 #prescreen_top_per_index = 15
-#prescreen_pullback_per_index = 8
-#prescreen_base_per_index = 5
+#prescreen_pullback_per_index = 5
+#prescreen_base_per_index = 3
 
 # Cap on the merged shortlist that reaches the specialists, and on how many of
 # those names one index may contribute before the merit backfill.

@@ -135,7 +135,7 @@ Stage 1.5 reads back the dozen it needs for free.
 ## Stage 1 — Screening (Scouts)
 
 - One **Scout** subprocess per index: SP500, NQ100, EU50, Asia100 (4 parallel).
-- Each scout receives the **pre-screen tables** for its index — four disjoint sections,
+- Each scout receives the **pre-screen tables** for its index — six disjoint sections,
   every measured column — followed by the full constituent list. It returns **~5–10
   nominations** with a one-line reason and a bias, each reason citing a column from the
   tables. Names in none of the sections may be nominated only on reasoning that does not
@@ -144,9 +144,26 @@ Stage 1.5 reads back the dozen it needs for free.
   | Section | Rows | Contents |
   |---|---|---|
   | Continuation | `prescreen_top_per_index` (15) | highest composites — trends still running |
-  | Pullback | `prescreen_pullback_per_index` (8) | the composite and the last month disagree |
-  | Base | `prescreen_base_per_index` (5) | realized vol contracting while price goes nowhere |
+  | Pullback (long) | `prescreen_pullback_per_index` (5) | positive composite, negative last month — an uptrend dipping |
+  | Pullback (short) | same, per half (5) | negative composite, positive last month — a downtrend bouncing |
+  | Base (long) | `prescreen_base_per_index` (3) | contraction inside a positive composite |
+  | Base (short) | same, per half (3) | contraction inside a negative composite |
   | Weakest | `bottom 5` | the bottom of the same ranking, whatever shape |
+
+  **The counter-trend archetypes are split by direction, and the split is load-bearing.**
+  A section ranked by the composite is a long-only section whatever the classifier found,
+  because the composite is a *signed long ranking* and the sign is the direction: a
+  bearish candidate's merit is `−score`, so the best shorts carry the most negative scores
+  and sit at the far end of a best-first walk. Taking the first N of an archetype
+  therefore returned its bullish half and nothing else. On 2026-09-04, **32 bearish
+  pullbacks existed across the four indices and 8 were shown — sp500 showed 0 of its 11**,
+  while the `Weakest` blurb told the scout to look for fresh shorts in "the bearish half of
+  the Pullback table" that did not exist. That scout nominated six longs and no shorts, and
+  ORCL (`−2.84`) and QCOM (`−2.55`) — which as shorts would have carried merit `+2.84` and
+  `+2.55`, the two highest in the entire run — were never put in front of it. The bearish
+  half is read from the bottom of the ranking so its strongest candidate leads it, exactly
+  as the strongest long leads the other. A row at exactly zero trend belongs to neither
+  half.
 
   There used to be one table — the top 15 and the bottom 5 — and everything between them
   was printed as `(N mid-ranked names omitted)`. That is the funnel's central defect,
@@ -173,7 +190,8 @@ An excluded row carries no setup — it is not a candidate in any shape.
 
 The bearish half of `pullback` is a bounce in a downtrend, which is the fresh short the
 scout persona already asks for and the direct lever on a book that has run 86 longs to 17
-shorts across 24 runs. There is no "already collapsed" test on it because the archetype's
+shorts across 24 runs — but only once it is *rendered*, which is what the directional
+split above exists to guarantee. There is no "already collapsed" test on it because the archetype's
 own counter-trend condition is one: a bearish pullback requires a *positive* 21-day return.
 
 The `base` filter is stated against `volTrend` rather than a price range because

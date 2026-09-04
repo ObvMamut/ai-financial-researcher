@@ -137,9 +137,12 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    short-history names are excluded, against turnover **converted to USD**
    (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price series stay in the
    data cache.
-1. **Scouts (cheap engine):** one call per index, each screening *four disjoint ranked
-   tables* — continuation, pullback, base, and the bottom of the ranking — → ~5–10
-   nominations each. Nominations outside the index's constituent list are
+1. **Scouts (cheap engine):** one call per index, each screening *six disjoint ranked
+   tables* — continuation, pullback and base each split into a long and a short half, plus
+   the bottom of the ranking — → ~5–10 nominations each. The counter-trend archetypes are
+   split by direction because the composite is a signed long ranking, so a section ranked
+   by it is long-only whatever the classifier found: the best shorts carry the most
+   negative scores and sit at the far end of a best-first walk. Nominations outside the index's constituent list are
    dropped. Orchestrator merges/dedupes (incl. cross-listings) and trims to
    `max_shortlist` by merit — the pre-screen composite aligned with the nominated
    direction, plus a bonus per agreeing scout and a penalty when another scout nominated

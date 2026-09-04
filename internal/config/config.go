@@ -40,9 +40,10 @@ type Settings struct {
 	// ground less than 60% of the domain weight for. Zero means the
 	// orchestrator's defaults (15 / 12 / 5 / 4).
 	PrescreenTopPerIndex int
-	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the two setup
-	// archetype sections the scout table carries alongside the top-of-ranking
-	// one. Zero means the orchestrator's defaults (8 / 5).
+	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the archetype
+	// sections the scout table carries alongside the top-of-ranking one, **per
+	// direction**: each is rendered as a long half and a short half, so these
+	// count rows per half. Zero means the orchestrator's defaults (5 / 3).
 	PrescreenPullbackPerIndex int
 	PrescreenBasePerIndex     int
 	MaxShortlist              int

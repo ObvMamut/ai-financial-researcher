@@ -96,9 +96,10 @@ type Config struct {
 	// prescreenBottomPerIndex are always appended as short candidates). Zero
 	// means 15.
 	PrescreenTopPerIndex int
-	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the two setup
-	// archetype sections the scout table carries alongside the top-of-ranking
-	// one. Zero means 8 and 5.
+	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the archetype
+	// sections the scout table carries alongside the top-of-ranking one, **per
+	// direction** — each is rendered as a long half and a short half. Zero
+	// means 5 and 3, so ten and six rows.
 	PrescreenPullbackPerIndex int
 	PrescreenBasePerIndex     int
 	// MaxShortlist caps the merged shortlist that reaches the specialists. Zero

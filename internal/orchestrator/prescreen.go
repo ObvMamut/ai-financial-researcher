@@ -30,10 +30,11 @@ import (
 // the rows so a run's ranking can be reproduced from its own artifact.
 type PrescreenParams struct {
 	TopPerIndex int `json:"top_per_index"`
-	// PullbackPerIndex and BasePerIndex size the two archetype sections the
-	// scout table gained alongside the top-of-ranking one. They are separate
-	// knobs because the sections answer different questions and a run may want
-	// more of one than the other.
+	// PullbackPerIndex and BasePerIndex size the archetype sections, **per
+	// direction**: each archetype is rendered as a long half and a short half,
+	// so a value of 5 yields up to ten rows. They are separate knobs because
+	// the sections answer different questions and a run may want more of one
+	// than the other.
 	PullbackPerIndex int     `json:"pullback_per_index"`
 	BasePerIndex     int     `json:"base_per_index"`
 	BottomPerIndex   int     `json:"bottom_per_index"`
@@ -49,13 +50,14 @@ const (
 	// entirely long; the bottom of the ranking is where a defensible short comes
 	// from, and it costs nothing to show.
 	prescreenBottomPerIndex = 5
-	// prescreenPullbackPerIndex and prescreenBasePerIndex size the two new
-	// archetype sections. Smaller than the continuation table because both are
-	// filtered shapes: an index rarely holds fifteen genuine pullbacks, and
-	// padding the section with rows that only just clear the filter would undo
-	// the point of having one.
-	prescreenPullbackPerIndex = 8
-	prescreenBasePerIndex     = 5
+	// prescreenPullbackPerIndex and prescreenBasePerIndex size the archetype
+	// sections **per direction**: each is rendered as a long half and a short
+	// half, so these are 5+5 and 3+3 rows rather than 5 and 3. Smaller than the
+	// continuation table because both are filtered shapes — an index rarely
+	// holds fifteen genuine pullbacks on one side, and padding a section with
+	// rows that only just clear the filter would undo the point of having one.
+	prescreenPullbackPerIndex = 5
+	prescreenBasePerIndex     = 3
 	// prescreenMinBars is the shortest history that still supports the 12-1
 	// momentum term at all. Below it the composite is noise.
 	prescreenMinBars = 60
@@ -270,13 +272,38 @@ func (p *Prescreen) Table(index string, params PrescreenParams) string {
 	}
 
 	shown := map[string]bool{}
-	pick := func(setup string, n int) []PrescreenRow {
+	// pick walks the ranking from one end and takes the first n rows of one
+	// setup on one side of neutral.
+	//
+	// The side is the whole point. `ranked` is sorted by the composite, which is
+	// a *signed long ranking*, so walking it best-first and taking the first n
+	// of an archetype returns only that archetype's bullish half — a bearish
+	// candidate's merit is −score, so the best shorts carry the most negative
+	// scores and sit at the far end of that walk. The 2026-09-04 run is what
+	// that cost: 32 bearish pullbacks existed across the four indices and 8 were
+	// shown, sp500 showing 0 of its 11. Its scout nominated six longs and no
+	// shorts while ORCL (−2.84) and QCOM (−2.55) — which as shorts would have
+	// been the two highest-merit names in the entire run — sat outside the
+	// section that was supposed to carry them.
+	//
+	// A row at exactly zero trend belongs to neither side: it has no direction
+	// to pull back from or base within, and nothing to nominate it as.
+	pick := func(setup string, n int, bullish bool) []PrescreenRow {
 		var out []PrescreenRow
-		for _, r := range ranked {
+		for i := range ranked {
+			// Bearish halves are read from the bottom, so the strongest short
+			// leads its section exactly as the strongest long leads its own.
+			r := ranked[i]
+			if !bullish {
+				r = ranked[len(ranked)-1-i]
+			}
 			if len(out) == n {
 				break
 			}
 			if r.Setup != setup || shown[r.Ticker] {
+				continue
+			}
+			if bullish != (r.Trend > 0) || r.Trend == 0 {
 				continue
 			}
 			shown[r.Ticker] = true
@@ -308,11 +335,19 @@ func (p *Prescreen) Table(index string, params PrescreenParams) string {
 	}
 
 	section("Continuation", "strongest composites in the index — trends that are still running. `str21` is how many 21-day sigmas of that run are already behind it; a high `p/52wH` with a high `str21` is where trend-followers get filled last",
-		pick(SetupContinuation, positiveOr(params.TopPerIndex, 1)))
-	section("Pullback", "the composite and the last month disagree: an uptrend currently dipping, or a downtrend currently bouncing. These are counter-move entries into an established trend, and they are the rows the old single table never showed you",
-		pick(SetupPullback, params.PullbackPerIndex))
-	section("Base", "volatility contracting (`volTrend` below 0.9) while price goes nowhere. No directional claim — the shape says a range is tightening, and you supply the direction from the rest of the row",
-		pick(SetupBase, params.BasePerIndex))
+		pick(SetupContinuation, positiveOr(params.TopPerIndex, 1), true))
+
+	// Both counter-trend archetypes are rendered as two halves. One section
+	// ranked by the composite is a long-only section whatever the classifier
+	// found, because the composite's sign *is* the direction.
+	section("Pullback (long)", "an uptrend currently dipping — the composite is positive and the last month is negative. A counter-move entry into an established trend, and usually a better price than the same trend bought at its high",
+		pick(SetupPullback, params.PullbackPerIndex, true))
+	section("Pullback (short)", "a downtrend currently *bouncing* — the composite is negative and the last month is positive. This is the fresh short: you are selling into strength inside a broken trend, rather than chasing something that has already collapsed",
+		pick(SetupPullback, params.PullbackPerIndex, false))
+	section("Base (long)", "volatility contracting (`volTrend` below 0.9) while price goes nowhere, inside a positive composite. The shape says a range is tightening; the composite says which way it has been leaning",
+		pick(SetupBase, params.BasePerIndex, true))
+	section("Base (short)", "the same contraction inside a *negative* composite — a downtrend that has stopped moving rather than an uptrend resting. A resolution downward from here is a short with a tight initial risk",
+		pick(SetupBase, params.BasePerIndex, false))
 
 	// The weakest composites in the index, whatever shape they are. This is a
 	// different question from the archetypes above — not "what setup is this"
@@ -331,7 +366,7 @@ func (p *Prescreen) Table(index string, params PrescreenParams) string {
 		for i, j := 0, len(tail)-1; i < j; i, j = i+1, j-1 {
 			tail[i], tail[j] = tail[j], tail[i]
 		}
-		section("Weakest", fmt.Sprintf("the bottom of the same %d-name ranking. A short candidate comes from here, but a name that has already collapsed (`5d` large and negative) is a bounce risk, not a fresh short — for that, read the bearish half of the Pullback table", len(ranked)), tail)
+		section("Weakest", fmt.Sprintf("the bottom of the same %d-name ranking, whatever shape these names are and whatever the sections above already took. A short candidate can come from here, but one that has already collapsed (`5d` large and negative) is a bounce risk rather than a fresh short — for that, read **Pullback (short)** above", len(ranked)), tail)
 	}
 
 	if sb.Len() == 0 {

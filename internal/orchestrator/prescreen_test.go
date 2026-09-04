@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -622,7 +623,6 @@ func TestStretch21SeesExtensionTheFiveDayTermMisses(t *testing.T) {
 // 2026-09-04 that was 187 of 267 names, median 0.78-0.89 of their highs.
 func TestPrescreenTableRendersEachArchetypeSection(t *testing.T) {
 	rows := []PrescreenRow{
-		row("ANCHOR_LO", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -1.00; r.Ret63d = -0.50 }),
 		row("RUNNER", "sp500", func(r *PrescreenRow) {
 			r.Mom12_1, r.Ret63d, r.PriceTo52wHigh, r.VolTrend = 0.60, 0.30, 0.99, 1.10
 		}),
@@ -634,17 +634,33 @@ func TestPrescreenTableRendersEachArchetypeSection(t *testing.T) {
 			r.Mom12_1, r.Ret63d = 0.30, 0.10
 			r.Ret21d, r.Stretch21, r.PriceTo52wHigh, r.VolTrend = 0.004, 0.10, 0.92, 0.80
 		}),
+		// The counter-trend halves. BOUNCER is a downtrend that has just rallied
+		// — the fresh short — and SETTLED is a downtrend that has stopped moving.
+		row("BOUNCER", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = -0.45, -0.25
+			r.Ret21d, r.PriceTo52wHigh, r.VolTrend = 0.07, 0.62, 1.05
+		}),
+		row("SETTLED", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = -0.30, -0.12
+			r.Ret21d, r.Stretch21, r.PriceTo52wHigh, r.VolTrend = -0.004, -0.10, 0.80, 0.80
+		}),
+		row("SINKER", "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d, r.PriceTo52wHigh, r.VolTrend = -0.70, -0.45, 0.40, 1.10
+		}),
 	}
 	scorePrescreen(rows)
 	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
-	// Sized to the fixture: at four names a 15-deep Continuation section would
-	// swallow the weakest row too and leave the last section nothing to show,
-	// which is not what happens against an index of fifty-odd.
+	// Sized to the fixture: at six names a 15-deep Continuation section would
+	// swallow rows the later sections need, which is not what happens against an
+	// index of fifty-odd.
 	table := ps.Table("sp500", PrescreenParams{
-		TopPerIndex: 1, PullbackPerIndex: 8, BasePerIndex: 5, BottomPerIndex: 2,
+		TopPerIndex: 1, PullbackPerIndex: 5, BasePerIndex: 3, BottomPerIndex: 1,
 	})
 
-	for _, want := range []string{"**Continuation**", "**Pullback**", "**Base**", "**Weakest**"} {
+	for _, want := range []string{
+		"**Continuation**", "**Pullback (long)**", "**Pullback (short)**",
+		"**Base (long)**", "**Base (short)**", "**Weakest**",
+	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("table missing %s section:\n%s", want, table)
 		}
@@ -654,11 +670,114 @@ func TestPrescreenTableRendersEachArchetypeSection(t *testing.T) {
 		t.Errorf("table omits the str21 column:\n%s", table)
 	}
 	// Sections are disjoint: a name appears once, under its own archetype.
-	for _, tk := range []string{"RUNNER", "DIPPER", "COILED", "ANCHOR_LO"} {
+	for _, tk := range []string{"RUNNER", "DIPPER", "COILED", "BOUNCER", "SETTLED", "SINKER"} {
 		if n := strings.Count(table, "| "+tk+" |"); n != 1 {
 			t.Errorf("%s appears %d times, want exactly 1:\n%s", tk, n, table)
 		}
 	}
+	// And each counter-trend name is under the half that matches its direction.
+	for _, c := range []struct{ ticker, section string }{
+		{"DIPPER", "Pullback (long)"}, {"BOUNCER", "Pullback (short)"},
+		{"COILED", "Base (long)"}, {"SETTLED", "Base (short)"},
+	} {
+		if !inSection(table, c.section, c.ticker) {
+			t.Errorf("%s is not under %s:\n%s", c.ticker, c.section, table)
+		}
+	}
+}
+
+// inSection reports whether ticker's row falls under the given section heading.
+func inSection(table, heading, ticker string) bool {
+	rest := table
+	if i := strings.Index(rest, "**"+heading+"**"); i >= 0 {
+		rest = rest[i+len(heading)+4:]
+	} else {
+		return false
+	}
+	if j := strings.Index(rest, "\n**"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.Contains(rest, "| "+ticker+" |")
+}
+
+// A section ranked by the composite is a long-only section, because the
+// composite's sign *is* the direction: a bearish candidate's merit is -score,
+// so the best shorts carry the most negative scores and sit at the far end of a
+// best-first walk. Taking the first N of an archetype therefore returned its
+// bullish half and nothing else. On 2026-09-04, 32 bearish pullbacks existed
+// across the four indices and 8 were shown; sp500 showed 0 of its 11, its scout
+// nominated six longs and no shorts, and ORCL (-2.84) and QCOM (-2.55) -- which
+// as shorts would have been the two highest-merit names in the whole run -- were
+// never put in front of it.
+func TestPrescreenTableShowsBothSidesOfEachCounterTrendArchetype(t *testing.T) {
+	var rows []PrescreenRow
+	// Enough bullish pullbacks to fill the section on their own, which is what
+	// used to crowd the bearish ones out entirely.
+	for i, mom := range []float64{0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50} {
+		rows = append(rows, row(fmt.Sprintf("UP%d", i), "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = mom, mom/2
+			r.Ret21d, r.PriceTo52wHigh, r.VolTrend = -0.05, 0.88, 1.05
+		}))
+	}
+	for i, mom := range []float64{-0.80, -0.60} {
+		rows = append(rows, row(fmt.Sprintf("DOWN%d", i), "sp500", func(r *PrescreenRow) {
+			r.Mom12_1, r.Ret63d = mom, mom/2
+			r.Ret21d, r.PriceTo52wHigh, r.VolTrend = 0.06, 0.55, 1.05
+		}))
+	}
+	scorePrescreen(rows)
+	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
+	table := ps.Table("sp500", PrescreenParams{
+		TopPerIndex: 1, PullbackPerIndex: 3, BasePerIndex: 3, BottomPerIndex: 0,
+	})
+
+	for _, tk := range []string{"DOWN0", "DOWN1"} {
+		if !inSection(table, "Pullback (short)", tk) {
+			t.Errorf("%s is a bearish pullback but is not in the short half:\n%s", tk, table)
+		}
+	}
+	// The strongest short leads its own section, exactly as the strongest long
+	// leads the other -- the bearish half is read from the bottom of the
+	// ranking, so its trends run most-negative-first.
+	prev := math.Inf(-1)
+	for _, tr := range sectionTrends(table, "Pullback (short)") {
+		if prev != math.Inf(-1) && tr < prev {
+			t.Errorf("short half is not ordered strongest-first: %+.2f follows %+.2f\n%s", tr, prev, table)
+		}
+		prev = tr
+	}
+	// And the long half is still capped at its own size rather than borrowing
+	// the short half's slots.
+	if n := len(sectionTrends(table, "Pullback (long)")); n != 3 {
+		t.Errorf("long half rendered %d rows, want 3:\n%s", n, table)
+	}
+}
+
+// sectionTrends reads the trend column out of one section's rows, in order.
+func sectionTrends(table, heading string) []float64 {
+	i := strings.Index(table, "**"+heading+"**")
+	if i < 0 {
+		return nil
+	}
+	rest := table[i+len(heading)+4:]
+	if j := strings.Index(rest, "\n**"); j >= 0 {
+		rest = rest[:j]
+	}
+	var out []float64
+	for _, ln := range strings.Split(rest, "\n") {
+		if !strings.HasPrefix(ln, "| ") || strings.Contains(ln, "ticker |") || strings.Contains(ln, "---") {
+			continue
+		}
+		f := strings.Split(ln, "|")
+		if len(f) < 8 {
+			continue
+		}
+		var v float64
+		if _, err := fmt.Sscanf(strings.TrimSpace(f[7]), "%f", &v); err == nil {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // The extension penalties are symmetric — a crashed name is a poor short for
