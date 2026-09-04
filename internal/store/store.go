@@ -129,6 +129,29 @@ func ReadQuantPack(runDir string, out any) (bool, error) {
 	return true, nil
 }
 
+// ReadPrescreen loads prescreen.json into out; false when absent (older runs,
+// and every run generated before Stage 0.5 existed).
+//
+// It is the counterpart of WritePrescreen, and it exists so the scoreboard can
+// replay what the *ranking alone* would have picked, with no model involved, as
+// a control against what the pipeline actually shipped. The scoreboard cannot
+// import the orchestrator's Prescreen type — the orchestrator imports the
+// scoreboard — so it decodes the fields it needs from the artifact directly, and
+// the artifact's JSON shape is the contract between them.
+func ReadPrescreen(runDir string, out any) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(runDir, "prescreen.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // WriteDataPack serialises a market data pack to data/<domain>.json.
 func (r *Run) WriteDataPack(domain string, pack any) error {
 	dir := filepath.Join(r.Dir, "data")

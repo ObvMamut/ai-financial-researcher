@@ -68,6 +68,112 @@ From the fill bar forward, up to `timeframe_days` bars (default 10):
   a 4% decline is 4% of the result the market handed you. A long that made 4%
   while its index made 6% did not work.
 
+## The horizon measurement: was the *call* right?
+
+The replay above answers a trader's question — which barrier was touched first. It cannot
+answer this project's question, which is whether the name moved the way the idea said over
+the next two to three weeks. The two come apart in both directions: an idea can be right
+about the fortnight and still be stopped out by noise on day two, and an idea can be flatly
+wrong and expire having touched neither barrier. Three of the first five closed trades
+expired exactly that way, and the record had no way to say whether any of them had been
+right.
+
+So every replayed idea also carries a **horizon read**, computed in `horizon.go` over the
+idea's own `timeframe_days`:
+
+| figure | anchored at | who it exists for |
+| --- | --- | --- |
+| **the call** | the close the idea was generated off | every idea, *including the ones whose limit never traded* |
+| **the trade** | the fill | ideas that filled |
+
+The call is the directional claim with the entry-limit lottery removed: an idea whose limit
+never traded still said the stock would fall, and was still either right or wrong about
+that. Scoring the pipeline only on the calls that happened to get a fill measures the
+limits, not the reads.
+
+Both are also reported net of the name's own index benchmark, because *"the long was right"*
+and *"the market went up"* are not the same finding. The gap between `right` and
+`beat bench` is how much of the record is the market.
+
+A window that has not elapsed yet is **not** a miss. It is excluded, and the count of
+excluded ones is printed, so a recent idea can never read as a flat result.
+
+## Independence: bets, not tickets
+
+A count of ideas is not a count of observations. Five runs were fired on 2026-09-01 and
+three on 2026-08-29; September's 41 ideas are 22 distinct calls; STLAM.MI SELL and AMGN BUY
+each appear five times. Re-proposing the same name in the same direction the same afternoon
+does not produce a second data point about whether that call was right — it produces the
+same data point again, and a win rate counting tickets reads it as five.
+
+This defeats the thresholds that exist to stop a thin sample being read as a finding:
+`MinClosedForFeedback` gates whether the Chief is shown a track record at all, and
+`MinClosedForEdge` swaps the risk gate's assumed edge for a measured one. A duplicated
+sample reaches both without ever reaching the evidence.
+
+So **every cell is counted over deduplicated entries**: one observation per
+(ticker, direction) inside `DefaultDedupeWindowDays` (**7 calendar days**, which is five
+sessions), keeping the earliest — a re-proposal must not be scored off a better later price
+than the one originally published. Nothing is hidden: the rows still list every idea and the
+dropped count is printed above them.
+
+Two deliberate exceptions:
+
+- the **outcome tally** (`Outcomes: target 1 · stop 1 · …`) is a census of what happened to
+  every idea, so it counts all of them;
+- the **fill record** counts all of them too, because a re-proposal carries its *own* limit
+  at its own price. It is a genuine second observation of whether a limit that far out
+  fills, while being the same observation of whether the call was right.
+
+An entry with no parseable timestamp is kept. A missing date is not evidence of duplication,
+and dropping on it would quietly delete the oldest runs.
+
+## Control arms: does the model stack beat its own arithmetic?
+
+`cfr scoreboard --control`.
+
+The pipeline is a funnel. Stage 0.5 ranks the universe on a computed composite whose *sign
+is a direction*; the scouts screen that ranking, the specialists analyse the twelve names it
+passed, and the Chief picks five. Every stage above the pre-screen can re-rank the funnel's
+output; none can reach a name the funnel did not pass. That makes one question decide
+whether the model stages earn their cost, and nothing else in this repository can answer it:
+**would taking the top of the ranking, with no model called at all, have done as well?**
+
+Three sets of calls are scored through one identical procedure — same anchor, same horizon,
+same benchmark arithmetic:
+
+| arm | what it is |
+| --- | --- |
+| `composite` | the pre-screen's own strongest rows, direction = the sign of its score. No model involved at any point. |
+| `shortlist` | the twelve names the funnel passed, at the bias the scouts gave them. Scouts and merge included; specialists and Chief not. |
+| `shipped` | what `ideas.json` actually contains. |
+
+Read it as a chain: **shipped over composite** is what the whole model stack adds, and
+**shipped over shortlist** is what the specialists and the Chief add on top of the screening
+they were handed.
+
+The composite arm takes rows from **both ends** of the ranking. The composite is a signed
+long ranking, so its strongest calls sit at both extremes — `|score|` is the conviction and
+its sign is the direction — and taking the top *n* would produce a long-only arm that
+measures a bull market rather than the ranking. It is the same defect the scout tables were
+split by direction to fix.
+
+Deliberately absent: entries, stops, targets and fills. A control arm has no levels — the
+pre-screen never proposed any — so comparing on barrier outcomes would be comparing a trade
+against a call. Everything here is the call.
+
+Every arm is scored over one fixed horizon (`--horizon`, default **15** sessions) rather
+than each idea's own `timeframe_days`: the control arms cannot state a holding period, and a
+comparison in which one arm picks its own window is not a comparison.
+
+`MinArmN` (**30**) is the count below which the report prints its two differences and then
+says in as many words that they are noise. That refusal is the important half — three arms
+of five calls will differ by twenty points on chance alone.
+
+Runs generated before Stage 0.5 existed carry no `prescreen.json`, so the composite arm
+skips them and says how many. The shortlist arm does not need one: when a row is missing it
+takes its anchor from the name's own bars, at the last close on or before the run.
+
 ## Win rate is over closed trades only
 
 `closed` = `target` + `stop` + `expired`. `open` and `unfilled` rows are not
@@ -233,10 +339,15 @@ Configure via `keep_runs` in `cfr.toml` or `CFR_KEEP_RUNS`.
   closing, so it produces none of them).
 - **`cfr scoreboard --json`**: the full `scoreboard.Summary`
   (`entries[]`, `replay`, `scored`, `closed`, `wins`, `losses`, `win_rate`,
-  `avg_pnl_pct`, `avg_r`, `avg_excess_pnl_pct`, `by_outcome`, `by_direction`,
-  `by_index`, `by_confidence`, `by_domain`, `skipped`, `run_count`).
+  `avg_pnl_pct`, `avg_r`, `avg_excess_pnl_pct`, `horizon`, `horizon_trade`,
+  `duplicates`, `by_outcome`, `by_direction`, `by_index`, `by_confidence`,
+  `by_domain`, `skipped`, `run_count`).
 - **`cfr scoreboard --legacy`**: the old mark-to-current-price numbers, for
   comparison against the replay on the same runs.
+- **`cfr scoreboard --control`**: the three arms above, with `--horizon` to set the
+  window they are all scored over. `--json` emits a `scoreboard.ControlReport`.
+  It is never folded into the stored track record: it answers a question about
+  the pipeline's construction, not about its trades.
 - **`cfr postmortem`**: the attribution table computed fresh, plus whatever
   lessons are stored in `.data/postmortem.json`. `--min-n` lowers the cell floor
   for reading (it does not lower what a lesson may be written about);
@@ -248,9 +359,11 @@ Configure via `keep_runs` in `cfr.toml` or `CFR_KEEP_RUNS`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `[scoreboard] fill_window_days` | `3` | sessions a limit entry stays live (`CFR_FILL_WINDOW_DAYS`, `--fill-window`) |
+| `--horizon` | `15` | sessions each control arm is scored over (`cfr scoreboard --control` only) |
 | `keep_runs` | `100` | run directories retained, i.e. how much history there is to score |
 
 Two thresholds are constants rather than settings, because they are statements about when a
 number becomes readable rather than preferences: `MinClosedForPostMortem` (**10** closed
 trades before any lesson is drawn) and `MinCellN` (**5** closed trades before a cell may be
-shown or written about).
+shown or written about). `DefaultDedupeWindowDays` (**7**) and `MinArmN` (**30**) are
+constants for the same reason: they say when a count is a sample, not what anyone prefers.

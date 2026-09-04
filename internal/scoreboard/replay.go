@@ -148,6 +148,17 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 	genDate := dateOf(generatedAt)
 	bars := barsAfter(s, genDate)
 
+	// The call: the directional claim measured from the close it was priced off,
+	// over the idea's own holding period. Computed before the fill simulation
+	// because it must survive every early return below — an idea whose limit
+	// never traded still said which way the stock would go.
+	bench := benchmarkFor(idea.Index, idea.Ticker)
+	if call := measureHorizon(ctx, cache, bars, idea.PriceAtGeneration,
+		idea.Direction, e.TimeframeDays, bench, genDate); call.complete {
+		e.CallDone = true
+		e.CallPnLPct, e.CallBenchPct, e.CallExcessPct, e.CallEndDate = call.pct, call.bench, call.excess, call.endDate
+	}
+
 	entry := idea.Entry
 	if entry <= 0 {
 		entry = idea.PriceAtGeneration
@@ -169,6 +180,15 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 	}
 	e.EntryFilled = round2(fillPrice)
 	e.EntryDate = bars[fillIdx].Date
+
+	// The trade: the same window anchored at the fill rather than at generation.
+	// It answers what the account saw, where the call answers whether the read
+	// was right, and the two differ by exactly the entry limit.
+	if trade := measureHorizon(ctx, cache, bars[fillIdx+1:], fillPrice,
+		idea.Direction, e.TimeframeDays, bench, e.EntryDate); trade.complete {
+		e.TradeDone = true
+		e.TradePnLPct, e.TradeExcessPct = trade.pct, trade.excess
+	}
 
 	exit := walkToExit(bars[fillIdx:], idea, e.TimeframeDays)
 	e.Outcome = exit.outcome

@@ -107,9 +107,17 @@ internal/
   config/       settings: defaults → ~/.config/cfr/config.toml → ./cfr.toml → env
   scoreboard/   past-idea performance: each idea replayed through its own daily
                 bars (fill, then first barrier touched); `--legacy` keeps the old
-                mark-to-current-price math; attribution.go counts the record by
-                setup/coverage/consensus/sector/fill and postmortem.go enforces the
-                lessons an agent draws from it against those counts
+                mark-to-current-price math; horizon.go asks the different question
+                of whether the *call* was right over the idea's own holding period
+                (anchored at generation, so an unfilled idea still counts) net of
+                its benchmark; dedupe.go counts bets rather than tickets, one per
+                (ticker, direction) per week, so five runs in one afternoon are one
+                observation; control.go (`--control`) scores what shipped against
+                the pre-screen composite alone and against the funnel's shortlist,
+                to answer whether the model stages beat their own arithmetic;
+                attribution.go counts the record by setup/coverage/consensus/sector/
+                fill and postmortem.go enforces the lessons an agent draws from it
+                against those counts
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -217,6 +225,7 @@ go test ./...         # unit tests
 go run ./cmd/cfr      # launch the TUI
 go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3 degraded)
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
+go run ./cmd/cfr scoreboard --control              # shipped vs the composite alone vs the shortlist
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
 ```
 

@@ -67,6 +67,28 @@ type Entry struct {
 	BenchmarkPnLPct float64 `json:"benchmark_pnl_pct,omitempty"`
 	ExcessPnLPct    float64 `json:"excess_pnl_pct,omitempty"`
 
+	// The horizon measurement (horizon.go): did the name move the way this idea
+	// said it would, over the idea's own holding period? It is independent of
+	// the barrier outcome above — an idea can be stopped out and still have been
+	// directionally right, and can expire untouched having been wrong.
+	//
+	// Call* is anchored at the generation close, so it scores the directional
+	// claim with the entry-limit lottery removed and exists for every idea
+	// including the ones that never filled. Trade* is anchored at the fill and
+	// exists only for ideas that filled.
+	//
+	// The Done flags say the window has actually elapsed. A recent idea has
+	// neither, and reading a zero there as a flat result is the mistake this
+	// pair of booleans exists to prevent.
+	CallDone       bool    `json:"call_done,omitempty"`
+	CallPnLPct     float64 `json:"call_pnl_pct,omitempty"`
+	CallBenchPct   float64 `json:"call_bench_pct,omitempty"`
+	CallExcessPct  float64 `json:"call_excess_pct,omitempty"`
+	CallEndDate    string  `json:"call_end_date,omitempty"`
+	TradeDone      bool    `json:"trade_done,omitempty"`
+	TradePnLPct    float64 `json:"trade_pnl_pct,omitempty"`
+	TradeExcessPct float64 `json:"trade_excess_pct,omitempty"`
+
 	// DomainScores is the signed per-domain strength recorded at generation, so
 	// the scoreboard can ask which domains were right rather than only whether
 	// the trade worked.
@@ -141,8 +163,22 @@ type Summary struct {
 	AvgPnL    float64 `json:"avg_pnl_pct"`
 	AvgR      float64 `json:"avg_r,omitempty"`
 	AvgExcess float64 `json:"avg_excess_pnl_pct,omitempty"`
-	Skipped   int     `json:"skipped"` // ideas without a baseline price (old runs)
-	RunCount  int     `json:"run_count"`
+
+	// The horizon record: how often the direction was right over the idea's own
+	// holding period, which is the question this pipeline exists to answer. It
+	// is computed over every idea whose window has elapsed — filled or not,
+	// stopped or not — so its denominator is larger than Closed and its answer
+	// is about the call rather than about the trade.
+	Horizon      HorizonRecord `json:"horizon,omitempty"`
+	HorizonTrade HorizonRecord `json:"horizon_trade,omitempty"`
+	Skipped      int           `json:"skipped"` // ideas without a baseline price (old runs)
+	RunCount     int           `json:"run_count"`
+	// Duplicates is how many ideas were re-proposals of a call already counted —
+	// the same ticker in the same direction inside DefaultDedupeWindowDays. They
+	// are still listed in the rows below but excluded from every cell, because
+	// five runs proposing one short in one afternoon are one bet and not five.
+	// See dedupe.go.
+	Duplicates int `json:"duplicates,omitempty"`
 
 	ByOutcome    map[Outcome]int   `json:"by_outcome,omitempty"`
 	ByDirection  map[string]Bucket `json:"by_direction,omitempty"`
@@ -155,6 +191,51 @@ type Summary struct {
 	// ByPersona is the same record split by the prompt set that produced the
 	// ideas — the A/B arms.
 	ByPersona map[string]Bucket `json:"by_persona,omitempty"`
+}
+
+// HorizonRecord is the directional record over completed holding periods.
+// Hits counts the windows that moved the way the idea said; N counts the windows
+// that have elapsed at all.
+type HorizonRecord struct {
+	N         int     `json:"n"`
+	Hits      int     `json:"hits"`
+	HitRate   float64 `json:"hit_rate"`
+	AvgPnL    float64 `json:"avg_pnl_pct"`
+	AvgExcess float64 `json:"avg_excess_pct"`
+	// ExcessHits counts the windows that beat their own benchmark. A long that
+	// rose 2% in a market that rose 4% is a hit on HitRate and a miss here, and
+	// the gap between the two figures is how much of the record is the market.
+	ExcessHits    int     `json:"excess_hits"`
+	ExcessHitRate float64 `json:"excess_hit_rate"`
+}
+
+// horizonAcc accumulates one horizon record before it is averaged.
+type horizonAcc struct {
+	n, hits, excessHits int
+	pnl, excess         float64
+}
+
+func (a *horizonAcc) add(pct, excess float64) {
+	a.n++
+	if pct > 0 {
+		a.hits++
+	}
+	if excess > 0 {
+		a.excessHits++
+	}
+	a.pnl += pct
+	a.excess += excess
+}
+
+func (a *horizonAcc) record() HorizonRecord {
+	r := HorizonRecord{N: a.n, Hits: a.hits, ExcessHits: a.excessHits}
+	if a.n > 0 {
+		r.HitRate = float64(a.hits) / float64(a.n)
+		r.ExcessHitRate = float64(a.excessHits) / float64(a.n)
+		r.AvgPnL = round2(a.pnl / float64(a.n))
+		r.AvgExcess = round2(a.excess / float64(a.n))
+	}
+	return r
 }
 
 // MinClosedPerArm is the number of closed trades an A/B arm needs before its
@@ -287,13 +368,33 @@ func (s *Summary) aggregate() {
 	dir, idx, conf, dom, per := accs{}, accs{}, accs{}, accs{}, accs{}
 	var excess float64
 	var excessN int
+	hCall, hTrade := &horizonAcc{}, &horizonAcc{}
 
+	// The outcome tally is a census of what happened to every idea, so it counts
+	// all of them. Everything after it is the *record*, and a record counts bets
+	// rather than tickets — see dedupe.go.
 	for _, e := range s.Entries {
 		s.ByOutcome[e.Outcome]++
 		// A position that never filled carries no P&L, whether because its
 		// window ran out or because it has not opened yet.
 		if e.Outcome.closed() || (e.Outcome == OutcomeOpen && e.EntryFilled > 0) {
 			s.Scored++
+		}
+	}
+
+	independent, duplicates := Dedupe(s.Entries, DefaultDedupeWindowDays)
+	s.Duplicates = duplicates
+
+	for _, e := range independent {
+		// The horizon record is accumulated before the closed-trade filter
+		// below, on purpose: an idea whose limit never traded still made a
+		// directional claim, and excluding it would score the pipeline only on
+		// the calls that happened to get a fill.
+		if e.CallDone {
+			hCall.add(e.CallPnLPct, e.CallExcessPct)
+		}
+		if e.TradeDone {
+			hTrade.add(e.TradePnLPct, e.TradeExcessPct)
 		}
 		if !e.Outcome.closed() {
 			continue
@@ -326,6 +427,7 @@ func (s *Summary) aggregate() {
 	}
 	s.ByDirection, s.ByIndex, s.ByConfidence, s.ByDomain = dir.buckets(), idx.buckets(), conf.buckets(), dom.buckets()
 	s.ByPersona = per.buckets()
+	s.Horizon, s.HorizonTrade = hCall.record(), hTrade.record()
 }
 
 // Build walks runsDir and marks every scorable idea to the latest close. This
@@ -438,6 +540,9 @@ func (s *Summary) formatReplay() string {
 		fmt.Fprintf(&sb, " (%d skipped: no baseline price)", s.Skipped)
 	}
 	sb.WriteString("\n")
+	if s.Duplicates > 0 {
+		fmt.Fprintf(&sb, "%d re-proposal(s) of a call already counted are listed below but excluded from every cell.\n", s.Duplicates)
+	}
 	if s.Closed > 0 {
 		fmt.Fprintf(&sb, "Closed %d · win rate %.0f%% (%dW/%dL) · avg P&L %+.2f%% · avg R %+.2f",
 			s.Closed, s.WinRate*100, s.Wins, s.Losses, s.AvgPnL, s.AvgR)
@@ -451,6 +556,7 @@ func (s *Summary) formatReplay() string {
 	if line := outcomeLine(s.ByOutcome); line != "" {
 		fmt.Fprintf(&sb, "Outcomes: %s\n", line)
 	}
+	sb.WriteString(horizonSection(s.Horizon, s.HorizonTrade))
 	sb.WriteString("\n")
 
 	for _, e := range s.Entries {
@@ -459,21 +565,21 @@ func (s *Summary) formatReplay() string {
 			fmt.Fprintf(&sb, "  %-21s %-8s %-4s  error: %s\n", e.RunName, e.Ticker, e.Direction, e.Err)
 			continue
 		case OutcomeUnfilled:
-			fmt.Fprintf(&sb, "  %-21s %-8s %-4s  limit %.2f never traded within the fill window\n",
-				e.RunName, e.Ticker, e.Direction, e.EntryPlanned)
+			fmt.Fprintf(&sb, "  %-21s %-8s %-4s  limit %.2f never traded within the fill window%s\n",
+				e.RunName, e.Ticker, e.Direction, e.EntryPlanned, callTag(e))
 			continue
 		}
 		if e.Outcome == OutcomeOpen && e.EntryFilled == 0 {
-			fmt.Fprintf(&sb, "  %-21s %-8s %-4s  waiting on the %.2f entry (%s)\n",
-				e.RunName, e.Ticker, e.Direction, e.EntryPlanned, sessionsSoFar(e.BarsHeld))
+			fmt.Fprintf(&sb, "  %-21s %-8s %-4s  waiting on the %.2f entry (%s)%s\n",
+				e.RunName, e.Ticker, e.Direction, e.EntryPlanned, sessionsSoFar(e.BarsHeld), callTag(e))
 			continue
 		}
 		r := ""
 		if e.hasR() {
 			r = fmt.Sprintf(" %+5.2fR", e.RiskAdjPnL)
 		}
-		fmt.Fprintf(&sb, "  %-21s %-8s %-4s  %8.2f → %8.2f  %+7.2f%%%s  %s (%dd)\n",
-			e.RunName, e.Ticker, e.Direction, e.EntryFilled, e.ExitPrice, e.PnLPct, r, e.Outcome, e.BarsHeld)
+		fmt.Fprintf(&sb, "  %-21s %-8s %-4s  %8.2f → %8.2f  %+7.2f%%%s  %s (%dd)%s\n",
+			e.RunName, e.Ticker, e.Direction, e.EntryFilled, e.ExitPrice, e.PnLPct, r, e.Outcome, e.BarsHeld, callTag(e))
 	}
 
 	if s.Closed > 0 {
@@ -538,6 +644,45 @@ func sessionsSoFar(n int) string {
 		return "1 session so far"
 	}
 	return fmt.Sprintf("%d sessions so far", n)
+}
+
+// callTag renders one idea's directional verdict for the end of its row. It is
+// deliberately attached to the unfilled and still-waiting rows too: those are
+// exactly the ideas the barrier replay has nothing to say about, and they made a
+// directional claim like any other.
+func callTag(e Entry) string {
+	if !e.CallDone {
+		return ""
+	}
+	verdict := "wrong"
+	if e.CallPnLPct > 0 {
+		verdict = "right"
+	}
+	return fmt.Sprintf("  [call %s %+.2f%%]", verdict, e.CallPnLPct)
+}
+
+// horizonSection renders the directional record over completed holding periods.
+//
+// It is printed directly under the barrier outcomes because the two answer
+// different questions about the same ideas and the difference between them is
+// the point: the barrier line says what the trade did, this one says whether the
+// call was right. `beat bench` is the same count net of the name's own index,
+// and where it sits well under `right` the record is mostly the market.
+func horizonSection(call, trade HorizonRecord) string {
+	if call.N == 0 && trade.N == 0 {
+		return "Horizon: no idea has completed its holding period yet.\n"
+	}
+	var sb strings.Builder
+	line := func(label string, r HorizonRecord) {
+		if r.N == 0 {
+			return
+		}
+		fmt.Fprintf(&sb, "%-24s n=%-3d right %3.0f%% (%d/%d) · beat bench %3.0f%% · avg %+.2f%% · avg excess %+.2f%%\n",
+			label, r.N, r.HitRate*100, r.Hits, r.N, r.ExcessHitRate*100, r.AvgPnL, r.AvgExcess)
+	}
+	line("Horizon (the call):", call)
+	line("Horizon (the trade):", trade)
+	return sb.String()
 }
 
 // outcomeOrder keeps the outcome tally readable: results first, non-results last.

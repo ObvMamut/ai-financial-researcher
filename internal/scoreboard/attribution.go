@@ -89,7 +89,14 @@ func Attribute(s *Summary) *Attribution {
 	setup, coverage, consensus, sector := accs{}, accs{}, accs{}, accs{}
 	offsets := map[string]*fillAcc{}
 
-	for _, e := range s.Entries {
+	// The fill census counts every idea; the outcome cells count independent
+	// ones. The asymmetry is deliberate, and it is not a compromise: a
+	// re-proposal of the same name carries its *own* limit at its own price, so
+	// it is a genuine second observation of whether a limit that far away
+	// fills — while being the same observation of whether the call was right.
+	independent, _ := DedupeMask(s.Entries, DefaultDedupeWindowDays)
+
+	for i, e := range s.Entries {
 		a.Fills.Replayable++
 		switch {
 		case e.Outcome == OutcomeError:
@@ -113,7 +120,7 @@ func Attribute(s *Summary) *Attribution {
 			f.add(e)
 		}
 
-		if !e.Outcome.closed() {
+		if !e.Outcome.closed() || !independent[i] {
 			continue
 		}
 		setup.add(setupKey(e), e)
