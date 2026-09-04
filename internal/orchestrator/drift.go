@@ -1,10 +1,13 @@
 package orchestrator
 
 import (
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
 
@@ -193,3 +196,64 @@ func isDrift(r PrescreenRow) bool {
 // missed is exactly the case, and it is a short standing at the top of the
 // ranking.
 func driftDirection(r PrescreenRow) float64 { return r.Drift }
+
+// driftBlock renders the verified earnings reactions for the shortlisted names
+// that have one, for the Chief Analyst's prompt.
+//
+// It exists because the drift leg was, until this block, invisible above the
+// funnel. The signal selected a name — on 2026-09-04 it put CRM at the top of
+// the shortlist on a reaction its trailing composite valued at a third as much,
+// and SNPS on it at all — and then nothing downstream could see the event. The
+// Chief was handed the archetype label "drift" and no magnitude, no date, and no
+// read on whether the move was still standing.
+//
+// The specialists are deliberately *not* given this. Their independence is the
+// point of blinding them (agents.blindToDirection), and handing the quant
+// analyst the reason a name was selected is the exact circularity that blinding
+// removed. The Chief is the one reader whose job is to weigh the funnel's
+// reasoning against the domains' — on the same run, that is precisely what it
+// did with SNPS, whose bullish drift nomination the blinded quant analyst read
+// bearish at strength 5.
+//
+// `since` is the honest column here. A reaction two thirds given back is a
+// different proposition from one still standing, and the classifier's own test
+// is deliberately coarse — it only asks whether the whole move has gone.
+func driftBlock(ps *Prescreen, shortlist []model.Candidate) string {
+	if ps == nil {
+		return ""
+	}
+	type line struct {
+		ticker string
+		row    PrescreenRow
+	}
+	var lines []line
+	for _, c := range shortlist {
+		r, ok := ps.Row(c.Index, c.Ticker)
+		if !ok || r.ReportDate == "" || r.GapZ == 0 {
+			continue
+		}
+		lines = append(lines, line{strings.ToUpper(c.Ticker), r})
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	sort.SliceStable(lines, func(i, j int) bool {
+		return math.Abs(lines[i].row.Drift) > math.Abs(lines[j].row.Drift)
+	})
+
+	var sb strings.Builder
+	sb.WriteString("\n### Verified earnings reactions (computed)\n\n")
+	sb.WriteString("The last 10-Q/10-K each name filed, from SEC's daily index, and how the market took it. ")
+	sb.WriteString("`gap` is the abnormal return over the filing session and the one after it — net of the name's own index, ")
+	sb.WriteString("in units of its daily volatility — and `since` is the move from the end of that window to the last close, same units. ")
+	sb.WriteString("`drift` is the gap decayed toward the end of a 25-session window; it is what the funnel ranked a `drift` candidate on.\n\n")
+	sb.WriteString("Prices continue in the direction of an earnings surprise for weeks, which is this system's horizon — but a `since` ")
+	sb.WriteString("that opposes `gap` and approaches it in size is the market taking the reaction back, and the classifier only ")
+	sb.WriteString("refuses the name once the *whole* move has gone. Read the two columns together.\n\n")
+	sb.WriteString("| ticker | reported | sessions since | gap | since | drift |\n|---|---|---:|---:|---:|---:|\n")
+	for _, l := range lines {
+		fmt.Fprintf(&sb, "| %s | %s | %d | %+.2fσ | %+.2fσ | %+.2f |\n",
+			l.ticker, l.row.ReportDate, l.row.DriftSessions, l.row.GapZ, l.row.PostZ, l.row.Drift)
+	}
+	return sb.String()
+}

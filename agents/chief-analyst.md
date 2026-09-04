@@ -19,6 +19,17 @@ trade mechanics.
   reason to lower confidence or omit the name, not a footnote.
 - If a ticker has no quant reference line, say so in `notes` and omit that idea's levels
   rather than inventing prices.
+- The **"Verified earnings reactions (computed)"** block, when present, is the last
+  10-Q/10-K each name filed and how the market took it. It is the signal the funnel ranked
+  a `drift` candidate on, and it is the only evidence in this prompt about the specific
+  weeks you are trading — prices continue in the direction of an earnings surprise for
+  weeks. **The specialists were not given it**, deliberately: their independence is what
+  makes the base score worth anything, and telling the quant analyst why a name was
+  selected is how a screen comes to confirm itself. So where a domain reads a drift name
+  the other way, that is a real disagreement between the funnel and the research, and
+  resolving it is your job rather than a fault to correct. Read `gap` and `since` together:
+  a `since` opposing `gap` and approaching it in size is the market taking the reaction
+  back, and the classifier only refuses the name once the whole move has gone.
 - The **"Computed base scores (authoritative)"** table is the weighted domain arithmetic,
   already done. It is not a suggestion and not a second opinion: it is the score. Its
   columns are the domains that vote; Macro is not among them (see *Not adjustments* below).

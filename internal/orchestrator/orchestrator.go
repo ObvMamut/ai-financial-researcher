@@ -716,7 +716,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 					held++
 				}
 			}
-			log(ch, fmt.Sprintf("shortlist setups: %d of %d are pullback or base (reserve %d at merit ≥ %+.2f)",
+			log(ch, fmt.Sprintf("shortlist setups: %d of %d are drift, pullback or base (reserve %d at merit ≥ %+.2f)",
 				held, len(shortlist), cfg.ShortlistReserve, cfg.ShortlistReserveMinMerit))
 		}
 		for _, c := range shortlist {
@@ -1105,7 +1105,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		Reports:          specReports,
 		Missing:          missingDomains,
 		Weights:          cfg.Weights,
-		QuantBlock:       quantPack.CompactBlock() + regimeSuffix(quantPack),
+		QuantBlock:       quantPack.CompactBlock() + driftBlock(prescreen, shortlist) + regimeSuffix(quantPack),
 		BaseScoreBlock:   baseScoreBlock(bases, cfg.ChiefAdjustBand),
 		TrackRecordBlock: cal.Block(),
 		PostMortemBlock:  pmRes.PM.Block(),

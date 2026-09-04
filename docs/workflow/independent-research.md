@@ -242,6 +242,17 @@ surprise for weeks after the report, which is the window every idea here is writ
   archetype before `shortlist_reserve` was added. Both figures are in σ units, so the
   substitution keeps every candidate on one comparable scale.
 
+**The Chief sees the event; the specialists do not.** A "Verified earnings reactions
+(computed)" block carries the filing date, the abnormal reaction (`gap`), the move since
+(`since`) and the decayed `drift` for every shortlisted name that reported. The specialists
+are deliberately excluded: their independence is the point of blinding the price-derived
+domains (`docs/workflow/scoring.md`), and handing the quant analyst the reason a name was
+selected is the circularity that blinding removed. The Chief is the one reader whose job is
+to weigh the funnel's reasoning against the domains'. On 2026-09-04 that is exactly what
+happened — SNPS was nominated bullish on a `+3.28σ` drift and the blinded quant analyst
+read it bearish at strength 5, which the Chief named in its own reasoning and resolved
+against the nomination.
+
 **It is deliberately not a term in the composite.** As its own column and its own table it
 is visible and attributable, and `cfr scoreboard --control` can score a ranking carrying it
 against the same ranking without it. Folded in, it would be neither.

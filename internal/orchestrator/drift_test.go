@@ -235,3 +235,47 @@ func TestIsDriftReleasesANameOnceItsReportIsHistory(t *testing.T) {
 		t.Errorf("a 9σ reaction 15 sessions old was released (decayed score %+.2f)", big.Drift)
 	}
 }
+
+func TestDriftBlockGivesTheChiefTheEventItCouldNotOtherwiseSee(t *testing.T) {
+	// Until this block the drift leg was invisible above the funnel: it selected
+	// a name and the Chief was handed the archetype label with no magnitude, no
+	// date and no read on whether the move was still standing.
+	ps := &Prescreen{Rows: []PrescreenRow{
+		{Ticker: "CRM", Index: "sp500", Setup: SetupDrift, ReportDate: "2026-08-27",
+			GapZ: 4.49, PostZ: 0.20, DriftSessions: 5, Drift: 3.59},
+		{Ticker: "SNPS", Index: "nq100", Setup: SetupDrift, ReportDate: "2026-08-26",
+			GapZ: 3.28, PostZ: -2.27, DriftSessions: 6, Drift: 2.50},
+		{Ticker: "MU", Index: "nq100", Setup: SetupContinuation, Score: 1.65},
+	}}
+	shortlist := []model.Candidate{
+		{Ticker: "MU", Index: "nq100"},
+		{Ticker: "SNPS", Index: "nq100"},
+		{Ticker: "CRM", Index: "sp500"},
+	}
+
+	got := driftBlock(ps, shortlist)
+	if !strings.Contains(got, "CRM") || !strings.Contains(got, "2026-08-27") || !strings.Contains(got, "+4.49") {
+		t.Errorf("the event's magnitude and date are missing:\n%s", got)
+	}
+	// The give-back has to be visible: a reaction two thirds returned is a
+	// different proposition from one still standing, and the classifier's own
+	// test only asks whether the *whole* move has gone.
+	if !strings.Contains(got, "-2.27") {
+		t.Errorf("SNPS's give-back is not shown:\n%s", got)
+	}
+	// A name that did not report carries no row rather than a row of zeroes.
+	if strings.Contains(got, "MU") {
+		t.Errorf("a name with no report date was given a line:\n%s", got)
+	}
+	// Ordered by the size of the live signal, so the strongest event leads.
+	if strings.Index(got, "CRM") > strings.Index(got, "SNPS") {
+		t.Errorf("rows are not ordered by |drift|:\n%s", got)
+	}
+}
+
+func TestDriftBlockIsEmptyWithoutAPrescreen(t *testing.T) {
+	// Single-stock mode skips Stage 0.5 entirely.
+	if got := driftBlock(nil, []model.Candidate{{Ticker: "AAA"}}); got != "" {
+		t.Errorf("got %q, want nothing without a pre-screen", got)
+	}
+}
