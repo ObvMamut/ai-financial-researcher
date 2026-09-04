@@ -155,7 +155,7 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 		sb.WriteString("```\n")
 
 	case "chief-analyst":
-		sb.WriteString(shortlistSection(p.Shortlist))
+		sb.WriteString(shortlistSection(p.Shortlist, false))
 		if p.Mode == model.ModeSingle {
 			sb.WriteString(fmt.Sprintf("- **Ticker:** %s\n", p.Ticker))
 			sb.WriteString("- **topN:** 1\n")
@@ -163,13 +163,23 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 			sb.WriteString("- **topN:** 5\n")
 		}
 
-		// Inject structured weights
+		// Inject structured weights. A zero is rendered with the reason attached:
+		// "Macro: 0%" on its own reads as a domain that failed rather than as one
+		// that deliberately does not vote, and the difference decides whether the
+		// Chief treats its report as evidence or as backdrop.
 		sb.WriteString("\n### Authoritative Scoring Weights\n\n")
-		sb.WriteString(fmt.Sprintf("- **Fundamentals:** %.0f%%\n", p.Weights.Fundamentals*100))
-		sb.WriteString(fmt.Sprintf("- **Quant:** %.0f%%\n", p.Weights.Quant*100))
-		sb.WriteString(fmt.Sprintf("- **News:** %.0f%%\n", p.Weights.News*100))
-		sb.WriteString(fmt.Sprintf("- **Macro:** %.0f%%\n", p.Weights.Macro*100))
-		sb.WriteString(fmt.Sprintf("- **Sentiment:** %.0f%%\n", p.Weights.Sentiment*100))
+		weight := func(label string, w float64) {
+			if w <= 0 {
+				sb.WriteString(fmt.Sprintf("- **%s:** 0%% — reported but not scored; read it as context, never as a reason to move a number\n", label))
+				return
+			}
+			sb.WriteString(fmt.Sprintf("- **%s:** %.0f%%\n", label, w*100))
+		}
+		weight("Fundamentals", p.Weights.Fundamentals)
+		weight("Quant", p.Weights.Quant)
+		weight("News", p.Weights.News)
+		weight("Macro", p.Weights.Macro)
+		weight("Sentiment", p.Weights.Sentiment)
 
 		// The computed scores come before the reports they summarise: the Chief
 		// starts from the arithmetic and reads the prose to adjust it, not the
@@ -225,7 +235,7 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 		}
 
 	default: // specialists: news, fundamentals, quant, sentiment, macro
-		sb.WriteString(shortlistSection(p.Shortlist))
+		sb.WriteString(shortlistSection(p.Shortlist, blindToDirection(p.Role)))
 		if p.Mode == model.ModeSingle {
 			sb.WriteString(fmt.Sprintf("- **Ticker:** %s (single-stock mode — provide richer depth)\n", p.Ticker))
 		}
@@ -282,6 +292,45 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// blindToDirection reports whether a role must be handed the shortlist without
+// the direction the scout nominated in.
+//
+// The domains it covers are the ones whose evidence is *derived from the same
+// prices the nomination is*. Stage 0.5 computes a composite from trailing
+// returns and its sign is the direction; the scout nominates in that direction
+// and states the composite's own figures as its reason; the shortlist line then
+// carried both into every specialist prompt. A quant analyst reading the same
+// daily bars, and a regime analyst asked to judge that market, were being handed
+// the answer before they looked.
+//
+// What that cost is measurable in the stored runs. Since the pre-screen was
+// introduced the quant domain has agreed with the nominated direction on 11 or
+// 12 of 12 names in every single run, and macro on all 12 in each of the last
+// three, with the two domains' signed scores correlating 0.85 to 0.99. Before
+// the pre-screen existed quant agreed 3/3, 1/2, 5/9 and 0/5 — genuinely noisy,
+// which is what an independent domain looks like. Together they are 45% of the
+// domain weight, and it is the 45% that covers every name, so a base score was
+// substantially the composite restated three times and the `agree` column the
+// Chief reads as unanimity was measuring an echo.
+//
+// News, fundamentals and sentiment keep the scout's line. Their evidence —
+// headlines, filings, positioning — is not derivable from the price series, so
+// a stated thesis is something they can genuinely confirm or contradict, and
+// they do: fundamentals dissents on 40% of names and sentiment on 29%.
+//
+// Blinding removes the anchoring, not the shared input: quant still reads bars
+// the composite was computed from. If its agreement stays at 12/12 after this,
+// the redundancy is the input rather than the prompt, and the answer is to let
+// the composite into the base score as its own named term instead of laundering
+// it through a domain.
+func blindToDirection(role string) bool {
+	switch role {
+	case "quant", "macro":
+		return true
+	}
+	return false
+}
+
 // shortlistSection renders the shortlist as its own block, one line per name.
 //
 // It replaces a bare comma-separated ticker list. That list told a specialist
@@ -290,20 +339,28 @@ func capitalize(s string) string {
 // survived screening, was thrown away between Stage 1 and Stage 2. Carrying it
 // through means a specialist can confirm or contradict a stated thesis, and the
 // Chief can see which nominations its domains agreed with.
-func shortlistSection(cs []model.Candidate) string {
+//
+// blind drops the direction and the reason for the roles that must not be told
+// them; see blindToDirection.
+func shortlistSection(cs []model.Candidate, blind bool) string {
 	if len(cs) == 0 {
 		return "- **Shortlist:** (empty)\n"
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("\n### Shortlist (%d names)\n\n", len(cs)))
-	sb.WriteString("Each line is the name, its sector and source index, the setup archetype the pre-screen classified it as, and the direction and reason a scout nominated it for. The archetype is computed from price data and is verified; the scout's reason is a hypothesis to test, not a verified fact.\n\n")
-	sb.WriteString(shortlistBlock(cs))
+	if blind {
+		sb.WriteString("Each line is the name, its sector and source index, and the setup archetype the pre-screen classified it as. The archetype is computed from price data and is verified.\n\n")
+		sb.WriteString("**No direction is given for these names, and that is deliberate.** They were nominated in a direction, by a screen built from the same price history your own evidence comes from. Telling you which way would not be information; it would be your own input handed back to you, and a score that agreed with it would be counted as independent confirmation when it is nothing of the kind. Read each name on its evidence and say which way *that* points, including where it points the other way from whatever put the name here.\n\n")
+	} else {
+		sb.WriteString("Each line is the name, its sector and source index, the setup archetype the pre-screen classified it as, and the direction and reason a scout nominated it for. The archetype is computed from price data and is verified; the scout's reason is a hypothesis to test, not a verified fact.\n\n")
+	}
+	sb.WriteString(shortlistBlock(cs, blind))
 	sb.WriteString("\n")
 	return sb.String()
 }
 
 // shortlistBlock is the bare list of shortlist lines.
-func shortlistBlock(cs []model.Candidate) string {
+func shortlistBlock(cs []model.Candidate, blind bool) string {
 	var sb strings.Builder
 	for _, c := range cs {
 		sb.WriteString("- ")
@@ -322,13 +379,18 @@ func shortlistBlock(cs []model.Candidate) string {
 		// is what the chasing adjustment and the entry band both key off: a
 		// pullback is defined by not being extended, and charging it for
 		// extension double-counts the thing that made it a candidate.
+		//
+		// It survives blinding because it is a shape, not a side: "pullback"
+		// describes a trend resting against itself and is carried by names in
+		// both directions, so it says what kind of setup to look at without
+		// saying which way to look.
 		if c.Setup != "" {
 			meta = append(meta, "setup: "+c.Setup)
 		}
 		if len(meta) > 0 {
 			sb.WriteString(" (" + strings.Join(meta, ", ") + ")")
 		}
-		if c.Bias != "" {
+		if c.Bias != "" && !blind {
 			sb.WriteString(" — scout: " + string(c.Bias))
 			if c.Reason != "" {
 				sb.WriteString(fmt.Sprintf(", %q", c.Reason))

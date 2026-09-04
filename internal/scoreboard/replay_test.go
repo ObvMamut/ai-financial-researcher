@@ -379,16 +379,21 @@ func TestAggregateScoresDomainsOnTheTradesTheyBacked(t *testing.T) {
 	}
 	// Buckets are read off the recorded domain scores, not off the stated
 	// Confidence. The 85 on the short was a number a model asserted on a scale
-	// this build no longer uses; its evidence (macro −7 against quant +2) nets to
-	// no conviction at all, and that is what gets scored.
-	//   long 1: .35·.6 − .10·.3        = 0.18 → /0.77 → 23  → "<25"
-	//   long 2: .35·.4 + .10·.5        = 0.19 → /0.77 → 25  → "25-39"
-	//   short : −.10·.7 + .35·.2       = 0.00 →           0 → "<25"
-	if got := s.ByConfidence["<25"]; got.N != 2 {
-		t.Errorf("<25 bucket = %+v, want the winning long and the short", got)
+	// this build no longer uses.
+	//
+	// Macro's scores are still *recorded* on a past idea and still answer "was
+	// macro right", which is what ByDomain above measures. They no longer carry
+	// weight, so they no longer move a confidence: the short's 85 rested on a
+	// macro −7 that a quant +2 half-cancelled, and what is left of it is the
+	// quant read alone.
+	//   long 1: .35·.6              = 0.21 → /0.80 → 26 → "25-39"
+	//   long 2: .35·.4              = 0.14 → /0.80 → 18 → "<25"
+	//   short : .35·.2              = 0.07 → /0.80 →  9 → "<25"
+	if got := s.ByConfidence["<25"]; got.N != 2 || got.Wins != 1 {
+		t.Errorf("<25 bucket = %+v, want the losing long and the winning short", got)
 	}
-	if got := s.ByConfidence["25-39"]; got.N != 1 || got.Wins != 0 {
-		t.Errorf("25-39 bucket = %+v, want the losing long", got)
+	if got := s.ByConfidence["25-39"]; got.N != 1 || got.Wins != 1 {
+		t.Errorf("25-39 bucket = %+v, want the winning long", got)
 	}
 	if got, ok := s.ByConfidence["80+"]; ok {
 		t.Errorf("a bucket from the old scale was populated: %+v", got)

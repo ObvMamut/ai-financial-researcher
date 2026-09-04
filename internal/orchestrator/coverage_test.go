@@ -336,14 +336,21 @@ func TestExpectedCoverageCountsTheDomainsThatCanReachAName(t *testing.T) {
 	if got := expectedCoverage(w, "2330.TW"); got != 1 {
 		t.Errorf("expectedCoverage(2330.TW) = %.2f, want 1", got)
 	}
-	// One without a US line keeps quant (.35) and macro (.10), the two computed
-	// from its own bars, and loses fundamentals, sentiment and news. News used
-	// to be counted here on the strength of a keyless headline search that takes
-	// the local symbol — but on 2026-09-03 that search answered all five such
-	// names with the same eight untagged stories, the domain recorded every one
-	// as missing, and 0.70 had already put them above the thin-coverage floor.
-	if got := expectedCoverage(w, "AIR.PA"); math.Abs(got-0.45) > 1e-9 {
-		t.Errorf("expectedCoverage(AIR.PA) = %.2f, want 0.45", got)
+	// One without a US line keeps quant alone (.35) and loses fundamentals,
+	// sentiment and news. News used to be counted here on the strength of a
+	// keyless headline search that takes the local symbol — but on 2026-09-03
+	// that search answered all five such names with the same eight untagged
+	// stories, the domain recorded every one as missing, and 0.70 had already
+	// put them above the thin-coverage floor.
+	//
+	// It was 0.45 until macro's weight went to zero. Macro reached every name by
+	// construction — a regime read needs no filing and no option chain — so
+	// while it voted, a listing three domains could not see still cleared 0.45,
+	// and the whole of that margin was one number that had agreed with the
+	// nomination on every name of every recent run. A name only the price series
+	// can reach now says so.
+	if got := expectedCoverage(w, "AIR.PA"); math.Abs(got-0.35) > 1e-9 {
+		t.Errorf("expectedCoverage(AIR.PA) = %.2f, want 0.35", got)
 	}
 }
 

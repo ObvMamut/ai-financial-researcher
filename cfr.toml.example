@@ -137,12 +137,34 @@
 # because it is the only fully-covered, computed, horizon-matched domain, and
 # fundamentals is demoted because a multiple says little about three weeks and is
 # the worst-covered domain (US filers only, quarterly, often stale).
+#
+# Macro defaults to **zero**, and that is not the same as switching it off. It
+# still runs, and its regime read still reaches the Chief Analyst; it just does
+# not vote.
+#
+# A regime is one fact about a market shared by every name that trades in it, and
+# this prompt asks about a dozen names from three or four markets. Scored per
+# name, one fact became twelve, and the arithmetic downstream could not tell the
+# difference — it read them as twelve independent confirmations. Worse, the
+# persona asked whether the regime supported each name's *nominated* direction,
+# a question a screen-chosen direction can only be answered "yes" to: across the
+# last three stored runs this domain agreed with the nomination on 12 of 12 names
+# every time, correlating 0.85-0.99 with the quant domain, which reads the same
+# price history the nomination came from. Ten per cent of the weight was the
+# pre-screen composite agreeing with itself, and because a regime read needs no
+# filing and no option chain it was the vote that carried the *thinly covered*
+# names: two of the five ideas shipped on 2026-09-04 were scored by quant and
+# macro alone and reported 100% agreement.
+#
+# Setting it above zero restores all of that. If you do, expect the `agree`
+# column to stop meaning anything and unresearched foreign listings to clear the
+# thin-coverage floor again.
 #[weights]
 #quant        = 0.35
-#news         = 0.25
-#fundamentals = 0.15
-#sentiment    = 0.15
-#macro        = 0.10
+#news         = 0.30
+#fundamentals = 0.18
+#sentiment    = 0.17
+#macro        = 0.00
 
 # Per-stage subprocess timeouts (Go duration strings). Each is a per-attempt
 # budget, never divided across retries. Synthesis is 15m by default — every

@@ -159,6 +159,33 @@ func applyRiskGate(res *model.IdeasResult, v verified, cfg model.RiskConfig) []r
 	for i := range res.Ideas {
 		out = append(out, gateIdea(&res.Ideas[i], v, cfg)...)
 	}
+	// The evidence floor is a run-level policy rather than part of an idea's
+	// geometry, and it does not apply in single-stock mode: the user named the
+	// ticker, so refusing to answer because the news feed had nothing is a
+	// non-answer rather than a risk control. In independent mode the pipeline
+	// chose the name out of a shortlist of twelve and can simply choose another.
+	if model.Mode(res.Mode) != model.ModeSingle {
+		// An idea with no recorded domain scores is only a finding when the run
+		// produced scores for *something*. If nothing in the book has any, the
+		// scoring stage did not run — the degraded path, or a synthesis with no
+		// base scores to anchor to — and that is a fault in the run rather than
+		// in each idea. Dropping the whole book on it would replace a warning
+		// anchorConfidence already gives with an empty result.
+		scored := false
+		for i := range res.Ideas {
+			if len(res.Ideas[i].DomainScores) > 0 {
+				scored = true
+				break
+			}
+		}
+		if scored {
+			for i := range res.Ideas {
+				if msg := checkPriceOnlyEvidence(&res.Ideas[i]); msg != "" {
+					out = append(out, riskFinding{Ticker: res.Ideas[i].Ticker, Hard: true, Message: msg})
+				}
+			}
+		}
+	}
 	out = append(out, checkFabricatedNoteDates(res, v.Dates)...)
 	out = append(out, gateBook(res, v, cfg)...)
 	return out
@@ -607,6 +634,57 @@ func ideaSeed(idea *model.TradeIdea) int64 {
 // for a scheduled event inside the window to count as accounted for. It is
 // deliberately generous: the check exists to catch silence, not to grade prose.
 var eventAcknowledgement = []string{"earnings", "report", "results", "event", "catalyst"}
+
+// priceDerivedDomains are the scoring domains whose evidence is computed from
+// the same price history the pre-screen composite is. A verdict from one of them
+// is a reading of the ranking that selected the name, not a second opinion on
+// it.
+var priceDerivedDomains = map[string]bool{"quant": true}
+
+// checkPriceOnlyEvidence refuses an idea that no domain outside the price series
+// could see.
+//
+// The base score already prices thin coverage — a domain with no data votes
+// zero, so such a name scores low — and `max_thinly_covered` already stops the
+// *shortlist* filling with names most domains must abstain on. Neither reaches
+// the output, and on 2026-09-04 BAYN.DE and DSFIR.AS shipped at ranks 4 and 5
+// with `domain_scores` of quant and macro alone: the composite that selected
+// them, and a regime read that had agreed with it on all twelve names. Both
+// reported 100% agreement to the Chief, and both were repeat proposals across
+// several runs.
+//
+// A name whose entire case is the ranking that picked it is a screen output, not
+// a research conclusion. The pipeline is allowed to have found only three
+// tradeable ideas — the Chief's own persona says returning four sound ideas is a
+// success and a fifth that fails these tests is worse than nothing — and this is
+// one of the ways it says so.
+//
+// The check reads what a domain *scored*, not what a provider returned: a domain
+// that abstained saw the name and had nothing directional to say, which is
+// exactly as unhelpful here as never having reached it.
+func checkPriceOnlyEvidence(idea *model.TradeIdea) string {
+	var priced []string
+	for d := range idea.DomainScores {
+		if !priceDerivedDomains[d] {
+			return ""
+		}
+		priced = append(priced, d)
+	}
+	if len(priced) == 0 {
+		// No domain scored this name at all. It is the same failure one step
+		// further along, and it was the louder one: an idea with an empty
+		// `domain_scores` has its confidence clamped to the band around a base
+		// of zero and then ships anyway, at rank 3 of 5, looking from the
+		// outside exactly like the ideas that had evidence.
+		return fmt.Sprintf("%s was scored by no domain at all — its confidence is anchored to a base of zero. "+
+			"Drop it, and if nothing else clears the bar, ship fewer ideas and say so in notes", idea.Ticker)
+	}
+	sort.Strings(priced)
+	return fmt.Sprintf("%s is scored by %s alone — every domain that can see something "+
+		"other than its price history abstained or had no data. Its whole case is the ranking "+
+		"that selected it. Drop it, and if nothing else clears the bar, ship fewer ideas and say so in notes",
+		idea.Ticker, strings.Join(priced, " and "))
+}
 
 // checkEventWindow penalises an idea whose holding period spans a verified
 // earnings date it never mentions.

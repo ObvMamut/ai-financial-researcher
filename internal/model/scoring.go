@@ -2,17 +2,45 @@ package model
 
 import "math"
 
-// DefaultDomainWeights is the Phase 3.B horizon-matched weighting: quant is the
-// only domain covered for every name, computed rather than recalled, and
-// measured over exactly this horizon, so it carries the most; fundamentals and
-// macro say least about the next three weeks.
+// DefaultDomainWeights is the horizon-matched weighting: quant is the only
+// domain covered for every name, computed rather than recalled, and measured
+// over exactly this horizon, so it carries the most; fundamentals says least
+// about the next three weeks.
+//
+// Macro carries **zero**, which does not mean the domain was deleted. It still
+// runs, and its regime read still reaches the Chief — as context, the way an
+// enforcement-noticed report does. What it no longer does is vote.
+//
+// A regime is a backdrop shared by every name in a market. Scoring it per name
+// turns one fact into twelve, and the persona's own cap said so ("if this domain
+// scores twelve names 7, it has said nothing that distinguishes any of them, and
+// the weighting will treat that as twelve independent confirmations"). The cap
+// bounded the magnitude and could not touch the shape.
+//
+// What made that fatal rather than merely wasteful is that the twelve were not
+// independent of the *funnel* either. The persona instructed the analyst to
+// judge whether the regime supported each name's **nominated direction** — a
+// confirmation task, structurally unable to return the opposite sign. Measured
+// across the stored runs it never did: 12 of 12 in each of the last three runs,
+// with its signed scores correlating 0.85-0.99 against quant's, which reads the
+// same price history the nomination came from. Ten per cent of the weight was
+// the pre-screen composite agreeing with itself, and because it covered every
+// name it was the vote that carried the thinly-covered ones — two of the five
+// ideas shipped on 2026-09-04 were scored by quant and macro alone and reported
+// 100% agreement to the Chief.
+//
+// Zero removes all of it in one place: computeBaseScores skips a non-positive
+// weight before accumulating, so macro no longer contributes a vote, no longer
+// enters the Consensus ratio, and no longer counts toward covered weight — which
+// also drops an unmapped foreign listing's expected coverage to quant alone,
+// where the thinly-covered cap can see it.
 func DefaultDomainWeights() DomainWeights {
 	return DomainWeights{
 		Quant:        0.35,
-		News:         0.25,
-		Fundamentals: 0.15,
-		Sentiment:    0.15,
-		Macro:        0.10,
+		News:         0.30,
+		Fundamentals: 0.18,
+		Sentiment:    0.17,
+		Macro:        0.00,
 	}
 }
 

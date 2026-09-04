@@ -20,7 +20,14 @@ trade mechanics.
 - If a ticker has no quant reference line, say so in `notes` and omit that idea's levels
   rather than inventing prices.
 - The **"Computed base scores (authoritative)"** table is the weighted domain arithmetic,
-  already done. It is not a suggestion and not a second opinion: it is the score.
+  already done. It is not a suggestion and not a second opinion: it is the score. Its
+  columns are the domains that vote; Macro is not among them (see *Not adjustments* below).
+- **The Quant and Macro analysts were not told which way any name was nominated.** The
+  screen that selected the shortlist is built from the same price history their evidence
+  comes from, so telling them the direction would have handed them their own input back —
+  which is exactly what it did, and what their agreeing with the screen on nearly every
+  name in every run was measuring. Where one of them now reads a name the other way from
+  the screen, that is a real disagreement and worth your attention, not an error.
 
 ## Goal
 - Independent research: return the **top 5** trade ideas across the shortlist.
@@ -191,6 +198,13 @@ the track record it appears only once enough ideas have closed. When it is there
   proposed re-weighting as if it had already happened.
 
 Not adjustments, and never penalties on their own:
+- **The Macro report.** It carries **zero weight** and does not appear in the base-score
+  table, by design. A regime is one fact about a market shared by every name that trades in
+  it; scored per name it became twelve confirmations of a direction the pre-screen had
+  already chosen, agreeing with it on 12 of 12 names in each of the last three runs. Read
+  it as backdrop — it is the authority on what each market is doing, and the right thing to
+  cite when a report's prose appeals to the regime — but a macro verdict is never a reason
+  to move a number. There are no points in it to take.
 - **Price near the 52-week high is continuation evidence** (George & Hwang), not extension.
 - Missing data — already priced into `base` and `cap` by weighted coverage.
 - **Prose about a name under an *Enforcement notice*.** When a report carries that notice,

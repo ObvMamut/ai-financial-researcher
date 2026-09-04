@@ -88,13 +88,73 @@ but it does get the other legs, which are not Section 16 evidence.
 | Domain        | Weight |
 |---------------|--------|
 | Quant         | 0.35   |
-| News/catalyst | 0.25   |
-| Fundamentals  | 0.15   |
-| Sentiment     | 0.15   |
-| Macro         | 0.10   |
+| News/catalyst | 0.30   |
+| Fundamentals  | 0.18   |
+| Sentiment     | 0.17   |
+| Macro         | **0.00** |
 
 These are the `orchestrator.Config` defaults, overridable in `[weights]` in `cfr.toml`, and
 the authoritative set is injected into the Chief Analyst prompt.
+
+### Why Macro does not vote
+
+The domain still runs and its regime read still reaches the Chief. It is read as *context*
+— the authority on what each market is doing — and it moves no number.
+
+A regime is one fact about a market, shared by every name that trades in it, and a run asks
+about a dozen names drawn from three or four markets. Scored per name, three facts became
+twelve, and `Σ w·sign·strength` cannot tell those apart from twelve independent
+confirmations. The persona's own strength cap was written against this ("if this domain
+scores twelve names 7, it has said nothing that distinguishes any of them") and could only
+ever bound the magnitude, never the shape.
+
+The shape also pointed one way. The persona instructed the analyst to judge whether the
+regime supported each name's **nominated direction** — a confirmation task, structurally
+unable to return the opposite sign, asked about a direction chosen by a price screen and so
+already running with the tape. Measured over the stored runs it never did return it: 12 of
+12 names in each of the last three runs, with signed scores correlating 0.85–0.99 against
+the quant domain's, which reads the same price history.
+
+Two consequences made it worse than merely redundant:
+
+- a regime read needs no filing and no option chain, so macro reached **every** name. It
+  was therefore the vote that carried the *thinly covered* ones: on 2026-09-04 BAYN.DE and
+  DSFIR.AS shipped at ranks 4 and 5 scored by quant and macro alone, and both reported
+  `agree: 100%`;
+- because `Consensus` is computed over the domains that scored a name, a domain that cannot
+  disagree inflates it. The figure built to detect one signal wearing several hats was being
+  fooled by exactly that.
+
+A weight of zero removes all of it in one place: `computeBaseScores` skips a non-positive
+weight before accumulating, so macro casts no vote, enters neither side of the `Consensus`
+ratio, and adds nothing to covered weight — which also drops an unmapped foreign listing's
+expected coverage to quant alone, where `max_thinly_covered` can see it.
+
+### Blinding the price-derived domains
+
+The **Quant and Macro** prompts are assembled without the scout's nominated direction or its
+reason (`agents.blindToDirection`). Both read evidence derived from the same price history
+the nomination is: Stage 0.5 computes a composite from trailing returns whose *sign is the
+direction*, the scout nominates in it and quotes the composite's own figures, and the
+shortlist line carried both into every specialist prompt.
+
+The timing says it was the prompt and not a coincidence of style. Before the pre-screen
+existed the quant domain agreed with the nomination 3/3, 1/2, 5/9 and 0/5 — noisy, which is
+what an independent domain looks like. Every run after it is 11/12 or 12/12.
+
+News, fundamentals and sentiment keep the line. Their evidence — headlines, filings,
+positioning — is not derivable from the price series, so a stated thesis is something they
+can genuinely contradict, and they do: fundamentals dissents on 40% of names and sentiment
+on 29%.
+
+The setup archetype survives blinding because it is a shape and not a side: "pullback"
+describes a trend resting against itself and is carried by names in both directions.
+
+**This is an experiment with a stated reading.** Blinding removes the anchoring, not the
+shared input — quant still reads bars the composite was computed from. If its agreement
+falls materially below 12/12, the anchoring was the mechanism. If it stays there, the
+redundancy is the input, and the indicated fix is to let the composite into the base score
+as its own named term rather than laundering it through a domain.
 
 They are mapped to the **5–20 trading-day horizon this system actually trades**.
 Fundamentals previously led at 0.30, which was borrowed from long-horizon equity research:
@@ -116,9 +176,9 @@ For each shortlisted ticker, over the domains **d** that scored it:
 signᵈ     = +1 bullish, −1 bearish, 0 neutral
 weighted  = Σ wᵈ · signᵈ · strengthᵈ / 10       (over the domains that scored it)
 covered   = Σ wᵈ                                (over the domains that scored it)
-total     = Σ wᵈ                                (over all five domains)
+total     = Σ wᵈ                                (over every domain with a positive weight)
 signed    = weighted / total             ∈ [−1, 1]   — the raw figure, kept for audit
-reference = Σ wᵈ · Rᵈ / 10                      (over all five domains)
+reference = Σ wᵈ · Rᵈ / 10                      (over every domain with a positive weight)
 base      = weighted / reference         ∈ [−1, 1]   — what confidence is read from
 ```
 
@@ -135,10 +195,11 @@ ceiling on it.
 
 **Then score against `reference`, the strongest verdict the rubrics permit.** `Rᵈ` is the
 top of the band each persona actually uses — **8** for quant, news, fundamentals and
-sentiment, which all reserve 9–10 for "rare", and **5** for macro, whose rubric states that
-ceiling outright absent a dated sector driver. With the default weights `reference = 0.77`.
+sentiment, which all reserve 9–10 for "rare". Macro is not in either sum: a zero weight is
+skipped by both, which is what makes the demotion above a single edit rather than a special
+case threaded through the arithmetic. With the default weights `reference = 0.80`.
 
-Without this the denominator was an unreachable 1.0 — all five domains at strength 10 —
+Without this the denominator was an unreachable 1.0 — every domain at strength 10 —
 so the top quarter of the scale could not be occupied by construction. Across the four runs
 from 2026-08-31, the first with this arithmetic live, the highest base *anywhere* was 45.5
 and the shipped ideas ran 26–45, while every consumer of the number still treated 50 as

@@ -403,3 +403,108 @@ func TestChiefPromptCarriesThePostMortemAndTheRuleForUsingIt(t *testing.T) {
 		t.Errorf("prompt carries a lessons block it does not have:\n%s", got)
 	}
 }
+
+// The blinding tests. The pre-screen composite selects a name *and* its
+// direction; the scout nominates in that direction and quotes the composite's
+// own figures as its reason. Passing that line to a domain whose evidence is the
+// same price history hands it the answer, and the stored runs say what that
+// cost: quant agreed with the nomination on 11 or 12 of 12 names in every run
+// after the pre-screen was introduced, against 3/3, 1/2, 5/9 and 0/5 before it.
+func TestQuantAndMacroPromptsCarryNoNominatedDirection(t *testing.T) {
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	shortlist := []model.Candidate{
+		{Ticker: "ORCL", Name: "Oracle Corporation", Sector: "Information Technology",
+			Index: "sp500", Setup: "pullback", Bias: model.BiasBearish,
+			Reason: "Pullback short: score -2.59, 63d -25.5% with 21d +10.6%"},
+	}
+	params := func(role string) PromptParams {
+		return PromptParams{Role: role, Mode: model.ModeIndependent, RunTS: time.Now(), Shortlist: shortlist}
+	}
+
+	for _, role := range []string{"quant", "macro"} {
+		p, err := reg.AssemblePrompt(params(role))
+		if err != nil {
+			t.Fatalf("AssemblePrompt(%s): %v", role, err)
+		}
+		if strings.Contains(p, "scout:") {
+			t.Errorf("%s prompt names the scout's direction", role)
+		}
+		// Checked on the shortlist line itself: every persona's output schema
+		// spells out "bullish|bearish|neutral", so scanning the whole prompt for
+		// the word would match the instructions rather than the leak.
+		for _, line := range strings.Split(p, "\n") {
+			if strings.HasPrefix(line, "- ORCL") && strings.Contains(line, "bearish") {
+				t.Errorf("%s shortlist line leaks the nominated bias: %s", role, line)
+			}
+		}
+		if strings.Contains(p, "Pullback short") {
+			t.Errorf("%s prompt carries the scout's reason, which states the composite's own figures", role)
+		}
+		// The name still has to arrive, with the parts that carry no direction.
+		if !strings.Contains(p, "ORCL") || !strings.Contains(p, "setup: pullback") {
+			t.Errorf("%s prompt lost the ticker or its setup archetype:\n%s", role, p)
+		}
+		if !strings.Contains(p, "No direction is given for these names") {
+			t.Errorf("%s prompt does not say why the direction is absent — silence reads as an omission", role)
+		}
+	}
+
+	// The other three keep it. Their evidence is headlines, filings and
+	// positioning, none of which is derivable from the price series, so a stated
+	// thesis is something they can genuinely contradict — and they do:
+	// fundamentals dissents on 40% of names and sentiment on 29%.
+	for _, role := range []string{"news", "fundamentals", "sentiment"} {
+		p, err := reg.AssemblePrompt(params(role))
+		if err != nil {
+			t.Fatalf("AssemblePrompt(%s): %v", role, err)
+		}
+		if !strings.Contains(p, "scout: bearish") {
+			t.Errorf("%s prompt lost the scout's nomination, which it is meant to test against", role)
+		}
+	}
+}
+
+func TestChiefStillSeesTheNominations(t *testing.T) {
+	// The Chief is the one reader that must see both the nomination and which
+	// domains agreed with it — that comparison is its job.
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	p, err := reg.AssemblePrompt(PromptParams{
+		Role: "chief-analyst", Mode: model.ModeIndependent, RunTS: time.Now(),
+		Shortlist: []model.Candidate{{Ticker: "ORCL", Bias: model.BiasBearish, Reason: "pullback short"}},
+	})
+	if err != nil {
+		t.Fatalf("AssemblePrompt: %v", err)
+	}
+	if !strings.Contains(p, "scout: bearish") {
+		t.Error("chief prompt lost the scout's nomination")
+	}
+}
+
+func TestZeroWeightDomainSaysWhyItIsZero(t *testing.T) {
+	// "Macro: 0%" on its own reads as a domain that failed. The difference
+	// between that and one that deliberately does not vote decides whether the
+	// Chief treats its report as evidence or as backdrop.
+	reg, err := Load("../../agents")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	p, err := reg.AssemblePrompt(PromptParams{
+		Role: "chief-analyst", Mode: model.ModeIndependent, RunTS: time.Now(),
+		Weights: model.DefaultDomainWeights(),
+	})
+	if err != nil {
+		t.Fatalf("AssemblePrompt: %v", err)
+	}
+	if !strings.Contains(p, "**Macro:** 0% — reported but not scored") {
+		t.Errorf("the zero weight is unexplained:\n%s", p)
+	}
+	if !strings.Contains(p, "**Quant:** 35%") {
+		t.Errorf("a scoring weight lost its number:\n%s", p)
+	}
+}

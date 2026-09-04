@@ -159,11 +159,19 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    by candidates clearing `shortlist_reserve_min_merit` so the list ships short rather than
    padded; without it the merit sort simply undoes the archetypes, since merit *is* the
    composite and the composite rewards having run. A name three of the
-   five domains cannot reach (an unmapped foreign listing: 0.45 of the weight) is capped
-   by `max_thinly_covered`.
+   scoring domains cannot reach (an unmapped foreign listing: quant alone, 0.35 of the
+   weight) is capped by `max_thinly_covered`, and the risk gate refuses one that reaches
+   the output anyway.
 2. **Stage 1.5 (in-process, no model):** compute `internal/quant` metrics for the
    shortlist (mostly cache hits from Stage 0.5), persist `prices/` + `quant.json`.
 3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
+   **Quant and Macro are blinded** to the direction the scout nominated
+   (`agents.blindToDirection`): both read evidence derived from the same price history the
+   nomination is, and telling them the answer is what made quant agree with it on 11-12 of
+   12 names in every run since the pre-screen existed, against 3/3, 1/2, 5/9 and 0/5 before
+   it. **Macro carries zero weight** — a regime is one fact per market, and scoring it per
+   name turned three facts into twelve confirmations; it still runs and the Chief reads it
+   as context.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
    News additionally carries a bulk-fetched verified earnings calendar; sentiment reads
@@ -207,7 +215,9 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 5. **Risk gate (in-process, no model):** `riskgate.go` sizes each idea from the account's
    risk budget and checks stop/target bands, reward:risk, liquidity and simulated
    expectancy, plus book-level correlation, sector and beta-adjusted exposure measured
-   against the account rather than averaged over the idea count. Violations buy one corrective
+   against the account rather than averaged over the idea count. It also enforces an
+   **evidence floor** (independent mode only): an idea scored by quant alone, or by no
+   domain at all, is a screen output rather than a research conclusion and is dropped. Violations buy one corrective
    re-prompt; per-idea violations that survive it drop the idea. Shipping fewer than 5
    ideas is the intended outcome. At ≥30 closed ideas the expectancy simulation swaps its
    assumed edge for the measured one.

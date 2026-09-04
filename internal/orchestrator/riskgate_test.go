@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -1275,5 +1276,83 @@ func TestBookBetaCountsIdeasItCouldNotSize(t *testing.T) {
 	}
 	if !strings.Contains(found, "could not be sized") {
 		t.Errorf("the finding hides that an idea was left out of the sum: %s", found)
+	}
+}
+
+// The evidence floor. On 2026-09-04 BAYN.DE and DSFIR.AS shipped at ranks 4 and
+// 5 scored by quant and macro alone — the composite that selected them, and a
+// regime read that had agreed with it on all twelve names — and both reported
+// 100% agreement to the Chief. `max_thinly_covered` caps such names on the
+// shortlist and the base score prices them low, but neither reaches the output.
+func TestRiskGateRefusesAnIdeaWhoseOnlyEvidenceIsItsOwnPriceHistory(t *testing.T) {
+	book := func(scores ...map[string]int) *model.IdeasResult {
+		res := &model.IdeasResult{Mode: string(model.ModeIndependent)}
+		for i, sc := range scores {
+			res.Ideas = append(res.Ideas, model.TradeIdea{
+				Ticker: fmt.Sprintf("T%d", i), Direction: model.DirectionBuy,
+				Entry: 100, Stop: 95, Target: 110, TimeframeDays: 15, DomainScores: sc,
+			})
+		}
+		return res
+	}
+	v := verified{Universe: testUniverse(t)}
+	find := func(res *model.IdeasResult, ticker string) *riskFinding {
+		for _, f := range applyRiskGate(res, v, model.RiskConfig{}) {
+			if f.Ticker == ticker && strings.Contains(f.Message, "scored by") {
+				g := f
+				return &g
+			}
+		}
+		return nil
+	}
+
+	res := book(
+		map[string]int{"quant": 7, "news": 4}, // T0: real evidence
+		map[string]int{"quant": 7},            // T1: the composite restated
+		nil,                                   // T2: nothing scored it at all
+	)
+	if f := find(res, "T0"); f != nil {
+		t.Errorf("an idea with news behind it was refused: %s", f.Message)
+	}
+	f1 := find(res, "T1")
+	if f1 == nil {
+		t.Fatal("a quant-only idea was allowed to ship")
+	}
+	if !f1.Hard {
+		t.Error("the finding is not hard, so the idea would survive the corrective re-prompt")
+	}
+	if f2 := find(res, "T2"); f2 == nil {
+		t.Error("an idea no domain scored was allowed to ship — it is the same failure one step further along")
+	}
+}
+
+func TestRiskGateKeepsTheBookWhenNothingWasScored(t *testing.T) {
+	// If no idea in the book has any domain score, the scoring stage did not run
+	// — the degraded path, or a synthesis with no base scores to anchor to. That
+	// is a fault in the run, not in each idea, and dropping the whole book on it
+	// replaces a warning with an empty result.
+	res := &model.IdeasResult{Mode: string(model.ModeIndependent), Ideas: []model.TradeIdea{
+		{Ticker: "AAA", Direction: model.DirectionBuy, Entry: 100, Stop: 95, Target: 110, TimeframeDays: 15},
+		{Ticker: "BBB", Direction: model.DirectionBuy, Entry: 50, Stop: 47, Target: 56, TimeframeDays: 15},
+	}}
+	for _, f := range applyRiskGate(res, verified{Universe: testUniverse(t)}, model.RiskConfig{}) {
+		if strings.Contains(f.Message, "scored by no domain") {
+			t.Errorf("a book with no scoring stage was dropped idea by idea: %s", f.Message)
+		}
+	}
+}
+
+func TestRiskGateAnswersASingleStockEvenOnThinEvidence(t *testing.T) {
+	// The user named this ticker. Refusing to answer because the news feed had
+	// nothing is a non-answer, not a risk control — the pipeline has no other
+	// name to offer here, which is the whole difference from independent mode.
+	res := &model.IdeasResult{Mode: string(model.ModeSingle), Ideas: []model.TradeIdea{
+		{Ticker: "AAA", Direction: model.DirectionBuy, Entry: 100, Stop: 95, Target: 110,
+			TimeframeDays: 15, DomainScores: map[string]int{"quant": 6}},
+	}}
+	for _, f := range applyRiskGate(res, verified{Universe: testUniverse(t)}, model.RiskConfig{}) {
+		if strings.Contains(f.Message, "scored by") {
+			t.Errorf("single-stock mode refused the ticker it was asked about: %s", f.Message)
+		}
 	}
 }

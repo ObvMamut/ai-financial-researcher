@@ -87,6 +87,12 @@ type BaseScore struct {
 	// disagreeing: `|Σ w·sign·s| / Σ w·|s|`, ∈ [0, 1]. One means every domain
 	// that spoke pointed the same way; zero means they cancelled exactly.
 	//
+	// It is computed over the *scoring* domains only, because a zero-weight
+	// domain is skipped before it reaches either side of the ratio. That matters:
+	// while macro was weighted it agreed with the nomination on every name in
+	// every recent run, so this figure reported unanimity for names on which
+	// nothing independent had spoken at all.
+	//
 	// It reads no evidence Signed does not already read, and it changes nothing —
 	// ranking, capping and the Chief's band are all untouched. It exists because
 	// the base score is one number doing two jobs, *how much evidence* and *how
@@ -273,7 +279,10 @@ func abs(x float64) float64 {
 
 // baseScoreDomains is the fixed column order of the per-domain cells, heaviest
 // weight first so the table reads in order of what actually moves the score.
-var baseScoreDomains = []string{"quant", "news", "fundamentals", "sentiment", "macro"}
+// Macro is absent: it carries zero weight (model.DefaultDomainWeights) and a
+// column of nothing but `·` would read as a domain that had failed rather than
+// as one that does not vote.
+var baseScoreDomains = []string{"quant", "news", "fundamentals", "sentiment"}
 
 // baseScoreBlock renders the computed scores for the chief-analyst prompt. The
 // band is stated in the header because the number the Chief may move by is part
@@ -286,8 +295,7 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 	sb.WriteString("### Computed base scores (authoritative)\n\n")
 	sb.WriteString("Computed in-process from the `scores` tails of the reports below, using the weights above: ")
 	sb.WriteString("`base = Σ wᵈ · signᵈ · strengthᵈ/10` over the *full* domain weight — a domain with no data for a name votes 0 — ")
-	sb.WriteString("then expressed as a share of the strongest joint verdict the five rubrics allow ")
-	sb.WriteString("(strength 8 for quant/news/fundamentals/sentiment, 5 for macro, which is macro's own stated ceiling). ")
+	sb.WriteString("then expressed as a share of the strongest joint verdict the scoring rubrics allow (strength 8). ")
 	sb.WriteString("So 100 means every domain agreeing at the top of its band, and a well-supported idea lands in the 50s–70s rather than the 30s. ")
 	sb.WriteString(fmt.Sprintf("**Start from `base` and adjust by at most ±%d**, naming each adjustment. ", band))
 	sb.WriteString("`covered` is the share of total domain weight behind the number; a low `covered` has already lowered `base`, ")

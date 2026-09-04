@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -57,12 +58,59 @@ func fakeBinaries(t *testing.T) map[model.CLI]string {
 func fakeYahoo(t *testing.T) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sym := path.Base(r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(syntheticChart(sym))
+		// The news search shares this base URL with the chart endpoint and is
+		// told apart by its path. Serving it matters to the pipeline test rather
+		// than to the news provider's own tests: with only charts faked, the
+		// news, fundamentals and sentiment domains had no verified data for any
+		// name, enforcement deleted every score they wrote, and each shipped
+		// idea's entire evidence was the price series — which the risk gate now
+		// refuses (checkPriceOnlyEvidence). A hermetic run in which no domain
+		// outside the price history can reach anything is not a small version of
+		// a real run; it is the degenerate case the gate exists to reject.
+		if strings.Contains(r.URL.Path, "/finance/search") {
+			w.Write(syntheticNews(r.URL.Query().Get("q")))
+			return
+		}
+		w.Write(syntheticChart(path.Base(r.URL.Path)))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+}
+
+// syntheticNews reproduces the coverage asymmetry the live runs actually hit:
+// the keyless search resolves a US symbol and tags its stories to it, and
+// answers a foreign listing with stories tagged to nobody.
+//
+// Tagging is what decides coverage — the provider reads an untagged story as
+// sector context rather than as coverage of the company — so this one
+// distinction gives the hermetic pipeline both halves to work with. A US name
+// reaches the news domain and can ship; a foreign one is left with the price
+// series alone, which is the exact shape the evidence floor exists to refuse and
+// the exact shape that put two unresearched EU names into a shipped book on
+// 2026-09-04.
+//
+// A symbol carrying an exchange suffix stands in for the foreign case, which is
+// how the universe distinguishes them everywhere else.
+func syntheticNews(symbol string) []byte {
+	if symbol == "" {
+		return []byte(`{"news":[],"quotes":[]}`)
+	}
+	now := time.Now()
+	item := func(title, publisher string, ageHours int, tagged bool) string {
+		rel := ""
+		if tagged {
+			rel = fmt.Sprintf("%q", symbol)
+		}
+		return fmt.Sprintf(`{"uuid":%q,"title":%q,"publisher":%q,"link":"https://example.test/%s",
+			"providerPublishTime":%d,"type":"STORY","relatedTickers":[%s]}`,
+			title, title, publisher, url.PathEscape(title),
+			now.Add(-time.Duration(ageHours)*time.Hour).Unix(), rel)
+	}
+	tagged := !strings.Contains(symbol, ".")
+	return []byte(fmt.Sprintf(`{"news":[%s,%s],"quotes":[]}`,
+		item(symbol+" reports a quarter ahead of guidance", "Reuters", 20, tagged),
+		item(symbol+" names a new chief financial officer", "Bloomberg", 44, tagged)))
 }
 
 // syntheticChart builds a Yahoo chart response for one symbol: 400 weekday bars
@@ -352,7 +400,11 @@ func TestIndependentRun(t *testing.T) {
 	if meta.Warnings == nil {
 		t.Error("metadata warnings is null, want []")
 	}
-	for _, d := range []string{"news", "fundamentals", "sentiment"} {
+	// Fundamentals and sentiment have no provider at all in the hermetic config.
+	// News does — the fixture serves the keyless search — but only for US
+	// symbols, so it is the mixed case: real coverage on some names and none on
+	// the foreign ones, which is what a live run looks like.
+	for _, d := range []string{"fundamentals", "sentiment"} {
 		want := d + ": no verified data for"
 		found := false
 		for _, w := range meta.Warnings {
@@ -413,15 +465,27 @@ func TestIndependentRun(t *testing.T) {
 		if d.Domain == "quant" && !d.Grounded {
 			t.Errorf("domain quant should be grounded via the computed metrics pack")
 		}
-		// News/sentiment/fundamentals have no provider keys in the hermetic
+		// Sentiment and fundamentals have no provider at all in the hermetic
 		// config, so they must report themselves ungrounded rather than
 		// borrowing the shared price context's credibility.
-		if d.Domain == "news" || d.Domain == "sentiment" || d.Domain == "fundamentals" {
+		if d.Domain == "sentiment" || d.Domain == "fundamentals" {
 			if d.Grounded {
 				t.Errorf("domain %s reported grounded with no provider data", d.Domain)
 			}
 			if len(d.Ungrounded) == 0 {
 				t.Errorf("domain %s should list its ungrounded tickers", d.Domain)
+			}
+		}
+		// News is the mixed case: the keyless search answers a US symbol and
+		// leaves a foreign listing's stories untagged, so the domain is grounded
+		// *and* still has names it could not reach. Both halves have to be true
+		// at once, which is the state enforcement is actually written for.
+		if d.Domain == "news" {
+			if !d.Grounded {
+				t.Errorf("domain news should be grounded — the fixture serves tagged headlines for US symbols")
+			}
+			if len(d.Ungrounded) == 0 {
+				t.Errorf("domain news should still list the foreign listings it could not reach")
 			}
 		}
 	}

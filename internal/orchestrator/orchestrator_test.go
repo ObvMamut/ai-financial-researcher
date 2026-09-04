@@ -43,8 +43,15 @@ func TestConfigApplyDefaults(t *testing.T) {
 				if c.Weights.Quant != 0.35 {
 					t.Errorf("expected Quant weight 0.35, got %f", c.Weights.Quant)
 				}
-				if c.Weights.Fundamentals != 0.15 {
-					t.Errorf("expected Fundamentals weight 0.15, got %f", c.Weights.Fundamentals)
+				if c.Weights.Fundamentals != 0.18 {
+					t.Errorf("expected Fundamentals weight 0.18, got %f", c.Weights.Fundamentals)
+				}
+				// Macro runs and is read, but does not vote: a regime is one
+				// fact shared by a whole market, and scoring it per name turned
+				// it into twelve confirmations of the direction the pre-screen
+				// had already chosen.
+				if c.Weights.Macro != 0 {
+					t.Errorf("expected Macro weight 0, got %f", c.Weights.Macro)
 				}
 				if c.ChiefAdjustBand != 10 {
 					t.Errorf("expected ChiefAdjustBand 10, got %d", c.ChiefAdjustBand)
