@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // sep15CapacityCase freezes one company's byte-budget outcome from the
@@ -119,12 +121,34 @@ func TestSep15CapacityManifestReconciles(t *testing.T) {
 }
 
 // Baseline: describes the defect, not the fix. Task 8 inverts this.
-func TestBaselineRawByteBudgetRejectsLLY(t *testing.T) {
+//
+// This test used to assert only the fixture facts that made the defect
+// possible — LLY's raw bytes overflow the limit, its compact bytes do not —
+// without ever exercising the gate itself, because before Task 8 the gate
+// (responseCapacity) measured raw bytes and there was nothing to call that
+// would have accepted LLY. Its name recorded the outcome that produced: a
+// compaction result that already fit under the budget was rejected anyway,
+// for 155 bytes of formatting whitespace plus a 12-byte fence.
+//
+// Task 8 makes the payload (compact) bytes the gate. This is Ruling R2's
+// recorded inversion: the fixture facts are unchanged (LLY's raw bytes still
+// overflow, correctly — see TestSep15CapacityManifestReconciles), but the
+// gate itself, exercised directly, now accepts LLY instead of rejecting it.
+func TestCapacityGateAcceptsLLYOnPayloadBytesNotRawBytes(t *testing.T) {
 	c := capacityCase(t, "LLY")
 	if c.RawBytes <= c.Limit {
 		t.Fatalf("fixture no longer reproduces the raw-byte overflow")
 	}
 	if c.CompactBytes > c.Limit {
 		t.Fatalf("LLY must be recoverable by normalization alone: %d > %d", c.CompactBytes, c.Limit)
+	}
+	// The manifest deliberately does not retain response payloads (see its
+	// provenance note), so exercise the real gate with a fenced payload built
+	// to the manifest's own recorded byte counts.
+	stdout := syntheticDossierOfCompactSize(t, c.CompactBytes, c.RawBytes)
+	r := model.Report{Status: model.StatusDone, Stdout: stdout}
+	responseCapacity(&r, &model.PromptProfile{ResponseLimit: c.Limit})
+	if r.Status != model.StatusDone {
+		t.Fatalf("a compact-fitting LLY must now pass the capacity gate: %s", r.Err)
 	}
 }

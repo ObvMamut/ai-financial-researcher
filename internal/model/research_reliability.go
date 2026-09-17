@@ -15,6 +15,41 @@ type PromptProfile struct {
 	SHA256           string              `json:"sha256"`
 	Components       map[string]int      `json:"components_bytes"`
 	Compactions      []string            `json:"compactions,omitempty"`
+
+	// ResponseContractVersion and Response are additive: a profile stored by a
+	// run that predates them has neither field, and an absent
+	// ResponseContractVersion means "unrecorded" — this response was never
+	// measured under a versioned contract — never "measured zero" or "measured
+	// under version 0". Do not backfill either field onto a historical
+	// artifact; a past run's acceptance is never recomputed under a later
+	// rule. This is NOT the profile's own Version above, which is the prompt
+	// profile's schema version, currently 1, and stays 1.
+	ResponseContractVersion int              `json:"response_contract_version,omitempty"`
+	Response                *ResponseMeasure `json:"response,omitempty"`
+}
+
+// ResponseMeasure records both byte counts a response can be judged by: the
+// complete raw response (RawBytes, exactly len(stdout)) and the normalized
+// size of the fenced JSON payload it actually carries (PayloadBytes) — the
+// bytes json.Compact produces from that payload, which is what the response
+// capacity budget bounds as of ResponseContractVersion 2. An agent's
+// formatting whitespace (indentation, wrapped narrative lines) inflates
+// RawBytes without adding any information the model spent budget producing,
+// so gating on RawBytes alone charged a response for whitespace it never
+// asked to be measured on.
+//
+// Normalized is false when no fenced JSON payload could be extracted, or
+// extraction succeeded but the extracted bytes did not compact (malformed
+// JSON, e.g. an unescaped raw newline inside a string). In either case
+// PayloadBytes falls back to RawBytes: a response that cannot be normalized
+// must not gain a spurious capacity pass by appearing smaller than it is.
+type ResponseMeasure struct {
+	RawBytes      int    `json:"raw_bytes"`
+	PayloadBytes  int    `json:"payload_bytes"`
+	Method        string `json:"normalization"` // "json.Compact of the fenced payload"
+	RawSHA256     string `json:"raw_sha256"`
+	PayloadSHA256 string `json:"payload_sha256"`
+	Normalized    bool   `json:"normalized"` // false when no payload could be extracted
 }
 
 type RoleBudget struct {

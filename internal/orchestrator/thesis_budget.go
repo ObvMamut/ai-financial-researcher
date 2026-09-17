@@ -119,12 +119,30 @@ func chiefContext(research []thesisResearch) []chiefCompany {
 	return out
 }
 
+// responseCapacity gates a response on the bytes its budget actually bounds:
+// the normalized fenced JSON payload, not the raw response text. Formatting
+// whitespace an agent's own writing style adds — indentation, wrapped
+// narrative lines — inflated RawBytes without spending any of the budget the
+// response is supposed to be measured against; a compaction result that
+// already fit under the limit was being thrown away for exactly that
+// whitespace (see ResponseContractVersion 2's fixture, "LLY" in
+// testdata/sep15-capacity/manifest.json). Only PayloadBytes gates now;
+// RawBytes is still recorded and still appears in the failure message, for
+// audit, but it no longer decides the outcome on its own.
 func responseCapacity(r *model.Report, profile *model.PromptProfile) {
 	r.Prompt = profile
-	if profile != nil && r.Status == model.StatusDone && len(r.Stdout) > profile.ResponseLimit {
+	if profile == nil || r.Status != model.StatusDone {
+		return
+	}
+	m := measureResponse(r.Stdout)
+	profile.Response = &m
+	profile.ResponseContractVersion = 2
+	if m.PayloadBytes > profile.ResponseLimit {
 		r.Status = model.StatusFailed
 		r.FailureKind = "response_capacity"
-		r.Err = fmt.Sprintf("response capacity exceeded: %d > %d bytes; complete response retained for audit", len(r.Stdout), profile.ResponseLimit)
+		r.Err = fmt.Sprintf(
+			"response capacity exceeded: payload %d > %d bytes (raw %d); complete response retained for audit",
+			m.PayloadBytes, profile.ResponseLimit, m.RawBytes)
 	}
 }
 
