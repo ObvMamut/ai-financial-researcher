@@ -26,19 +26,21 @@ import (
 // When there is no fenced JSON object (extractLastJSON returns false), or the
 // extracted bytes fail to compact (malformed JSON — e.g. an unescaped raw
 // newline inside a string), Normalized is false and PayloadBytes falls back
-// to RawBytes. An unfenced or malformed response must not gain a capacity
-// pass by appearing smaller than it is; it stays on the unchanged path,
-// exactly as before this measurement existed.
+// to RawBytes: that fallback is a GATE value, and an unfenced or malformed
+// response must not gain a capacity pass by appearing smaller than it is.
+//
+// The hash and method fields are provenance, not a gate, and get no such
+// fallback: when Normalized is false there is no payload to name a method or
+// a hash for, so Method and PayloadSHA256 stay "" (unrecorded), never a
+// fabricated claim that the payload equals the raw response. RawSHA256 is
+// always set — the complete response is always known, whether or not a
+// payload could be extracted from it.
 func measureResponse(stdout string) model.ResponseMeasure {
 	m := model.ResponseMeasure{
-		RawBytes:  len(stdout),
-		Method:    "json.Compact of the fenced payload",
-		RawSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(stdout))),
+		RawBytes:     len(stdout),
+		PayloadBytes: len(stdout), // gate fallback; see doc comment above
+		RawSHA256:    fmt.Sprintf("%x", sha256.Sum256([]byte(stdout))),
 	}
-	// Default/fallback: no payload could be extracted or normalized, so the
-	// payload measurement is the raw measurement.
-	m.PayloadBytes = m.RawBytes
-	m.PayloadSHA256 = m.RawSHA256
 
 	payload, ok := extractLastJSON(stdout)
 	if !ok {
@@ -49,6 +51,7 @@ func measureResponse(stdout string) model.ResponseMeasure {
 		return m
 	}
 	m.Normalized = true
+	m.Method = "json.Compact of the fenced payload"
 	m.PayloadBytes = buf.Len()
 	m.PayloadSHA256 = fmt.Sprintf("%x", sha256.Sum256(buf.Bytes()))
 	return m

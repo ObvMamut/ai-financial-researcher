@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -42,6 +44,18 @@ func syntheticDossierOfCompactSize(t *testing.T, compactWant, rawWant int) strin
 	if err := json.Unmarshal(base, &obj); err != nil {
 		t.Fatalf("unmarshal base dossier: %v", err)
 	}
+
+	// Carry the current wire contract so thesisFixture's currentFixtureReply
+	// (thesis_schema_test.go:317) returns this string VERBATIM. It rewrites any
+	// reply lacking contract_version — decode to map, re-marshal, re-fence —
+	// which silently destroys the byte calibration below.
+	obj["contract_version"] = 2
+	ids := []string{}
+	for _, c := range d.Claims {
+		ids = append(ids, c.ID)
+	}
+	obj["expectations_claim_ids"] = ids
+	obj["priced_in_claim_ids"] = ids
 
 	obj["filler"] = ""
 	empty, err := json.Marshal(obj)
@@ -98,9 +112,22 @@ func TestCompactPayloadBudgetRecoversLLYAndStillRejectsRealOversize(t *testing.T
 		t.Fatalf("measure = %d/%d", m.PayloadBytes, m.RawBytes)
 	}
 	r := model.Report{Status: model.StatusDone, Stdout: lly}
-	responseCapacity(&r, &model.PromptProfile{ResponseLimit: limit})
+	profile := &model.PromptProfile{ResponseLimit: limit}
+	responseCapacity(&r, profile)
 	if r.Status != model.StatusDone {
 		t.Fatalf("LLY must pass on payload bytes: %s", r.Err)
+	}
+	// The ResponseMeasure/ResponseContractVersion contract Tasks 11 and 14
+	// are told to consume: responseCapacity must record what it measured
+	// against, not just decide pass/fail from it.
+	if profile.ResponseContractVersion != 2 {
+		t.Fatalf("ResponseContractVersion = %d, want 2", profile.ResponseContractVersion)
+	}
+	if profile.Response == nil {
+		t.Fatal("profile.Response not recorded")
+	}
+	if r.Prompt != profile {
+		t.Fatal("r.Prompt must be the same profile responseCapacity measured")
 	}
 
 	bac := syntheticDossierOfCompactSize(t, 20894, 21289)
@@ -168,6 +195,109 @@ func TestNormalizationPreservesUnknownFieldsUnicodeEscapesAndBigNumbers(t *testi
 	}
 }
 
+// TestMeasureResponseFieldsPerInputClass defends the ResponseMeasure contract
+// itself — Method, both hashes and Normalized — for every input class
+// measureResponse distinguishes. The brief declared ResponseMeasure an
+// interface for Tasks 11 and 14 to consume; before this test, six mutations
+// to measureResponse/responseCapacity (dropping ResponseContractVersion,
+// dropping profile.Response, blanking either hash, aliasing PayloadSHA256 to
+// RawSHA256 on the normalized path, or renaming Method) all survived the
+// full repo suite with zero failures — an interface with no test on it is
+// not one.
+func TestMeasureResponseFieldsPerInputClass(t *testing.T) {
+	fencedValid := "```json\n" + `{"ticker":"AAA"}` + "\n```"
+	// Modeled on the same JNJ shape as TestMalformedPayloadCannotBeNormalizedIntoValidity.
+	fencedMalformed := "```json\n{\"ticker\":\"AAA\",\"note\":\"bad\nvalue\"}\n```"
+	unfenced := "just prose here, no fenced ```json block at all"
+
+	cases := []struct {
+		name       string
+		stdout     string
+		normalized bool
+	}{
+		{"fenced_valid", fencedValid, true},
+		{"fenced_malformed", fencedMalformed, false},
+		{"unfenced", unfenced, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := measureResponse(c.stdout)
+			if m.Normalized != c.normalized {
+				t.Fatalf("Normalized = %v, want %v", m.Normalized, c.normalized)
+			}
+			wantRawSHA := fmt.Sprintf("%x", sha256.Sum256([]byte(c.stdout)))
+			if m.RawSHA256 != wantRawSHA {
+				t.Fatalf("RawSHA256 = %q, want %q (independently computed sha256.Sum256 of stdout)", m.RawSHA256, wantRawSHA)
+			}
+			if m.RawBytes != len(c.stdout) {
+				t.Fatalf("RawBytes = %d, want %d", m.RawBytes, len(c.stdout))
+			}
+
+			if !c.normalized {
+				if m.Method != "" {
+					t.Fatalf("Method = %q, want \"\" (unrecorded) when not normalized", m.Method)
+				}
+				if m.PayloadSHA256 != "" {
+					t.Fatalf("PayloadSHA256 = %q, want \"\" when not normalized — it must never fall back to RawSHA256, which would assert the payload IS the raw response", m.PayloadSHA256)
+				}
+				if m.PayloadBytes != m.RawBytes {
+					t.Fatalf("PayloadBytes = %d, want the RawBytes gate fallback %d", m.PayloadBytes, m.RawBytes)
+				}
+				return
+			}
+
+			if m.Method != "json.Compact of the fenced payload" {
+				t.Fatalf("Method = %q", m.Method)
+			}
+			payload, ok := extractLastJSON(c.stdout)
+			if !ok {
+				t.Fatal("expected a fenced payload for a normalized case")
+			}
+			var buf bytes.Buffer
+			if err := json.Compact(&buf, []byte(payload)); err != nil {
+				t.Fatalf("json.Compact: %v", err)
+			}
+			wantPayloadSHA := fmt.Sprintf("%x", sha256.Sum256(buf.Bytes()))
+			if m.PayloadSHA256 != wantPayloadSHA {
+				t.Fatalf("PayloadSHA256 = %q, want %q (independently computed sha256.Sum256 of the compacted payload)", m.PayloadSHA256, wantPayloadSHA)
+			}
+			if m.PayloadSHA256 == m.RawSHA256 {
+				t.Fatal("PayloadSHA256 must not equal RawSHA256 by coincidence of this fixture — the payload and the raw response differ (fence markers)")
+			}
+			if m.PayloadBytes != buf.Len() {
+				t.Fatalf("PayloadBytes = %d, want %d", m.PayloadBytes, buf.Len())
+			}
+		})
+	}
+}
+
+// TestMeasureResponseIsMonotonicAcrossLineSeparatorCharacters guards a claim
+// this task's commit message relies on to justify not re-auditing every
+// existing test against the new gate: PayloadBytes <= RawBytes always, so
+// nothing that passed the old raw-byte gate can newly fail the payload-byte
+// one. That claim rests on a stdlib detail, not a documented contract —
+// json.Compact's handling of U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+// SEPARATOR) inside JSON strings was unconditionally rewritten in older Go
+// versions (guarded by an internal escape flag since Go 1.17); go.mod pins
+// 1.26, where it is confirmed safe (verified directly: json.Compact leaves
+// both code points byte-identical on this toolchain). This pins that as a
+// regression guard rather than an assumption, and closes a real gap in
+// TestNormalizationPreservesUnknownFieldsUnicodeEscapesAndBigNumbers, whose
+// name promises Unicode-escape coverage but whose fixture (an em-dash and
+// CJK) never exercised a code point where byte-preservation was actually in
+// question.
+func TestMeasureResponseIsMonotonicAcrossLineSeparatorCharacters(t *testing.T) {
+	payload := "{\"ticker\":\"AAA\",\"note\":\"line break end\"}"
+	stdout := "```json\n" + payload + "\n```"
+	m := measureResponse(stdout)
+	if !m.Normalized {
+		t.Fatalf("expected normalization to succeed: %+v", m)
+	}
+	if m.PayloadBytes > m.RawBytes {
+		t.Fatalf("monotonicity violated: PayloadBytes %d > RawBytes %d", m.PayloadBytes, m.RawBytes)
+	}
+}
+
 // Step 3a. Modeled on runs/2026-09-15T17-00-30/research-4a4e4a-round-1.md
 // (JNJ), which failed json.Compact with "invalid character '\n' in string
 // literal" — a raw, unescaped newline inside a JSON string value, in an
@@ -228,14 +358,26 @@ func TestMalformedPayloadCannotBeNormalizedIntoValidity(t *testing.T) {
 // incomplete) JSON prefix would compact to, it must never be read as a
 // capacity verdict, and it must not buy a repair call: it is not a complete
 // response.
+//
+// This test cannot, on its own, distinguish responseCapacity's status guard
+// firing from the guard being absent: callAPIEngineUsage (apiengine.go)
+// discards the completion text entirely on finish_reason=="length" and
+// returns "" — runner.go's callAgent only ever assigns report.Stdout on its
+// success path, so an output_limit Report's Stdout is "" regardless of how
+// large the provider's truncated content was, and "" can never exceed a
+// positive response limit whether or not the guard runs. Content size here
+// is therefore not load-bearing; the size guarantee this test names is
+// enforced structurally, not by this fixture. The status guard itself is
+// tested directly and adversarially by
+// TestResponseCapacityNeverOverwritesATransportFailure below.
 func TestTruncatedCompletionGetsNoNormalizationBenefit(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{
 			map[string]any{
-				// Deliberately tiny and incomplete: even a payload that would
-				// compact far under the limit must not be treated as fitting.
+				// Deliberately tiny and incomplete — see the doc comment above
+				// for why its size does not matter to what this test pins.
 				"message":       map[string]string{"content": `{"ticker":"AAA"`},
 				"finish_reason": "length",
 			},
@@ -278,6 +420,34 @@ func TestTruncatedCompletionGetsNoNormalizationBenefit(t *testing.T) {
 	}
 	if reports[0].Recovery != "" {
 		t.Fatalf("a truncated completion bought a recovery call: %+v", reports[0])
+	}
+}
+
+// TestResponseCapacityNeverOverwritesATransportFailure directly defends the
+// "failure states stay distinct" global constraint that responseCapacity's
+// r.Status != model.StatusDone guard exists to enforce: a report that
+// already failed for a non-capacity reason (transport, authentication,
+// cancellation, or the provider's own output_limit) must never be relabeled
+// a capacity failure, no matter what its Stdout happens to contain.
+//
+// The full-pipeline test above cannot exercise a removal of that guard,
+// because the one engine that produces "output_limit" today always hands
+// back an empty Stdout on that path (see its doc comment) — so this
+// constructs the adversarial case directly: an already-failed report whose
+// Stdout is, hypothetically, both present and oversized. Guard intact,
+// responseCapacity must leave it alone; guard removed, it would overwrite
+// FailureKind with "response_capacity", which is exactly the defect this
+// test exists to catch.
+func TestResponseCapacityNeverOverwritesATransportFailure(t *testing.T) {
+	r := model.Report{
+		Status:      model.StatusFailed,
+		FailureKind: "output_limit",
+		Err:         "api engine: response truncated at the 8192-token limit; unchanged retry suppressed",
+		Stdout:      strings.Repeat("x", 25000), // oversized on raw bytes, were it ever measured
+	}
+	responseCapacity(&r, &model.PromptProfile{ResponseLimit: 20480})
+	if r.Status != model.StatusFailed || r.FailureKind != "output_limit" {
+		t.Fatalf("a transport failure must never be relabeled a capacity failure: status=%v kind=%q", r.Status, r.FailureKind)
 	}
 }
 

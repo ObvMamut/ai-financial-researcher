@@ -43,13 +43,23 @@ type PromptProfile struct {
 // JSON, e.g. an unescaped raw newline inside a string). In either case
 // PayloadBytes falls back to RawBytes: a response that cannot be normalized
 // must not gain a spurious capacity pass by appearing smaller than it is.
+// That fallback is a gate value, not a provenance claim: the hash and method
+// fields carry no equivalent fallback (see below), because reporting a
+// payload hash/method for a response that has no payload would assert that
+// the payload IS the raw response, which is not a fact.
+//
+// RawSHA256 hashes the complete raw response (stdout) and is always set.
+// PayloadSHA256 hashes the compacted payload bytes and Method names the
+// normalization ("json.Compact of the fenced payload"); both are set only
+// when Normalized is true, and are the empty string otherwise — absent,
+// never a fabricated equivalence with the raw response.
 type ResponseMeasure struct {
 	RawBytes      int    `json:"raw_bytes"`
 	PayloadBytes  int    `json:"payload_bytes"`
-	Method        string `json:"normalization"` // "json.Compact of the fenced payload"
+	Method        string `json:"normalization"` // "json.Compact of the fenced payload"; "" when !Normalized
 	RawSHA256     string `json:"raw_sha256"`
-	PayloadSHA256 string `json:"payload_sha256"`
-	Normalized    bool   `json:"normalized"` // false when no payload could be extracted
+	PayloadSHA256 string `json:"payload_sha256"` // "" when !Normalized; never falls back to RawSHA256
+	Normalized    bool   `json:"normalized"`     // false when no payload could be extracted or compacted
 }
 
 type RoleBudget struct {
