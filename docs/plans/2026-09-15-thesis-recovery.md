@@ -55,10 +55,15 @@ not establish that the shortlist contained no trade opportunities.
 | ASML.AS | Completed final challenge rejected the thesis |
 
 All 55 HTTP completions with a recorded finish reason reported `stop`. No
-provider truncated anything; the budgets were ours. LLY's response measured
-20,493 raw bytes against a 20,480-byte limit but 20,326 bytes once compacted —
-rejected for whitespace. The remaining five exceeded the limit on payload bytes
-as well and needed a compaction allowance that was never computed.
+provider truncated anything; the budgets were ours. All six spent their one
+compaction allowance and were rejected again afterwards. LLY's is the clearest
+case: its compaction had already done the job, landing at 20,326 payload bytes
+against a 20,480-byte limit, and was discarded anyway because the raw response
+measured 20,493 — 155 bytes of interior whitespace and a 12-byte fence, none of
+which the budget was ever meant to bound. The remaining five exceeded the limit
+on payload bytes as well, having been given a fixed "under 400 characters each"
+target instead of the allowance that was actually left to them, which nothing
+computed.
 
 ## Verification
 

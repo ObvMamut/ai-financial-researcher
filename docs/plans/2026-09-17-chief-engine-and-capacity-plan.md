@@ -58,7 +58,7 @@ Copied from the spec and `CLAUDE.md`. Every task's requirements implicitly inclu
 
 ## Diagnosis — verified in the code, not inferred from the run log
 
-**1. The response budget measures the wrong bytes.** `internal/orchestrator/thesis_budget.go:122-129` (`responseCapacity`) compares `len(r.Stdout)` — raw stdout including the ```json fence and every space the model emitted — against `profile.ResponseLimit`. LLY's captured response was **20,493 raw bytes against a 20,480 limit, but 20,326 compact**. It was rejected for whitespace. The same check then runs *again* on the compaction result (`thesis.go:114`, reached via `compactDossier` → `t.call`), so a compaction that genuinely fits the payload budget can still fail on formatting.
+**1. The response budget measures the wrong bytes.** `internal/orchestrator/thesis_budget.go:122-129` (`responseCapacity`) compares `len(r.Stdout)` — raw stdout including the ```json fence and every space the model emitted — against `profile.ResponseLimit`. LLY's round-2 *compaction result* was **20,493 raw bytes against a 20,480 limit, but 20,326 compact** — a compaction that had done its job and was thrown away over 155 bytes of interior whitespace and a 12-byte fence. (LLY's original response measured 20,883 compact and did need that compaction; what was lost was the recovery, not the need for one.) The same check then runs *again* on the compaction result (`thesis.go:114`, reached via `compactDossier` → `t.call`), so a compaction that genuinely fits the payload budget can still fail on formatting.
 
 **2. The compactor is not told how much room it has.** `internal/orchestrator/thesis_compaction.go:71` builds a fixed prompt: *"Aim for under 400 characters each."* Nothing computes protected-field bytes, JSON structural overhead, or the remaining narrative allowance. With 12–17 claims and 23–29 passages, six dossiers had almost no narrative room left and the model was handed a target that could not help. There is no check that the compaction *input* (which embeds the entire original response) fits, and no refusal path when protected content alone already exceeds the budget — a doomed call is dispatched anyway.
 
@@ -208,10 +208,15 @@ The repo keeps its planning record in `docs/plans/`, and the SDD workspace is ke
 | ASML.AS | Completed final challenge rejected the thesis |
 
 All 55 HTTP completions with a recorded finish reason reported `stop`. No
-provider truncated anything; the budgets were ours. LLY's response measured
-20,493 raw bytes against a 20,480-byte limit but 20,326 bytes once compacted —
-rejected for whitespace. The remaining five exceeded the limit on payload bytes
-as well and needed a compaction allowance that was never computed.
+provider truncated anything; the budgets were ours. All six spent their one
+compaction allowance and were rejected again afterwards. LLY's is the clearest
+case: its compaction had already done the job, landing at 20,326 payload bytes
+against a 20,480-byte limit, and was discarded anyway because the raw response
+measured 20,493 — 155 bytes of interior whitespace and a 12-byte fence, none of
+which the budget was ever meant to bound. The remaining five exceeded the limit
+on payload bytes as well, having been given a fixed "under 400 characters each"
+target instead of the allowance that was actually left to them, which nothing
+computed.
 ```
 
 - [ ] **Step 3: Replace the first paragraph of "Verification"**
@@ -1430,7 +1435,10 @@ Then the whole-branch review (Opus) over `merge-base..HEAD`, pointed at the ledg
 **Gate B is green when, and only when:**
 
 - [ ] All 13 packages pass; `gofmt -l .` empty; `git diff --check` clean.
-- [ ] LLY recovers by normalization alone, dispatching zero recovery calls.
+- [ ] LLY recovers: its compaction result (raw 20,493 / payload 20,326) is accepted on
+      payload bytes. Note this is the compaction RESULT, not LLY's original response —
+      the original measured 20,883 compact and legitimately needed its one compaction.
+      Separately: a response whose payload already fits dispatches zero recovery calls.
 - [ ] The remaining five capacity cases produce a *recorded, measured* feasible/infeasible verdict — whatever it is. Recovering all six is not required and must not be asserted.
 - [ ] The captured SNOW, OKTA and ORCL prompts fit, with every required quotation and unresolved review issue retained.
 - [ ] Twelve realistically-sized dossiers fit the Chief input budget, order-independently.
