@@ -195,6 +195,15 @@
 # below, which only fires if that primary call fails.
 #cheap_engine = "gemini"
 
+# Which engine runs the Chief Analyst synthesis step (independent of
+# cheap_engine above):
+#   "claude" — the `claude` CLI (default; also what an omitted/empty value means).
+#   "api"    — the same stdlib OpenAI-compatible HTTP engine as [api]/[local],
+#              routed through its OWN dedicated [chief_api] block below.
+# Switching cheap_engine to "api" never turns this on by itself, and vice
+# versa — the two selectors, and their credentials, are entirely independent.
+#chief_engine = "claude"
+
 # Max simultaneous local-model calls (cheap_engine = "local"). One GPU can't run
 # the 5 specialists at once, so keep this at 1 unless you have plenty of VRAM.
 #local_concurrency = 1
@@ -293,16 +302,36 @@
 #model    = "qwen2.5:7b-instruct"         # must match a model you've pulled
 #api_key  = ""                            # optional; ignored by most local servers
 
+# Chief Analyst's own dedicated OpenAI-compatible engine (used only when
+# chief_engine = "api" above). Same apiengine.go engine as [api]/[local], but
+# a wholly separate, DEDICATED block: it never inherits base_url/model/api_key
+# from [api] or [local], and there is no DEEPSEEK_API_KEY alias here either
+# (unlike [api]'s) — turning cheap_engine = "api" on must never silently also
+# enable Chief-tier spend for the single most important step in the pipeline.
+# Put the key in CFR_CHIEF_API_KEY rather than committing it here.
+#[chief_api]
+#base_url = "https://api.deepseek.com"
+#model    = "deepseek-chat"
+#api_key  = ""                            # prefer CFR_CHIEF_API_KEY; never shared with [api]/[local]
+#max_tokens = 8192
+
 # Optional Chief Analyst resilience fallback (same apiengine.go engine as [api]/
 # [local]). Off by default — set only once you've decided to accept this
 # reviewed exception to the CLI-only synthesis rule. Fires only after the
 # primary `claude` call has exhausted synthesis_max_attempts or its JSON failed
 # to parse, and sits strictly before the mechanical degraded-ideas fallback
-# (docs/workflow/scoring.md, "Degraded path"). Needs its OWN dedicated key —
-# deliberately never shared with [api]/[local], so turning those on can never
-# silently also enable this spend. Put the key in CFR_CHIEF_FALLBACK_API_KEY
-# rather than committing it here (no DEEPSEEK_API_KEY alias, unlike [api]).
+# (docs/workflow/scoring.md, "Degraded path"). Only meaningful when
+# chief_engine = "claude" (there is no Claude primary to fall back from
+# otherwise — Load rejects an explicitly-enabled fallback under chief_engine =
+# "api"). Needs its OWN dedicated key — deliberately never shared with
+# [api]/[local]/[chief_api], so turning those on can never silently also
+# enable this spend. Put the key in CFR_CHIEF_FALLBACK_API_KEY rather than
+# committing it here (no DEEPSEEK_API_KEY alias, unlike [api]). `enabled` is
+# optional and defaults to "on once api_key is set"; set it to false to keep
+# credentials configured but the fallback off, or CFR_CHIEF_FALLBACK_ENABLED
+# to override at runtime.
 #[chief_fallback]
+#enabled  = true
 #base_url = "https://api.deepseek.com"
 #model    = "deepseek-reasoner"          # a smarter tier than the cheap role's deepseek-chat
 #api_key  = ""                            # prefer CFR_CHIEF_FALLBACK_API_KEY; never share with [api]

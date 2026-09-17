@@ -105,6 +105,28 @@ type Settings struct {
 	// by default (gated on its own api_key), and never shared with API/Local —
 	// turning on cheap_engine=api must never silently also enable this spend.
 	ChiefFallback model.APIConfig
+	// ChiefFallbackEnabled is a three-state override on top of the api_key gate
+	// above: nil (the key omitted) preserves today's behaviour — enabled once
+	// ChiefFallback.APIKey is set — while a non-nil value wins outright, so an
+	// operator can force the fallback off even with credentials present. It
+	// must stay *bool rather than bool: a plain bool cannot distinguish
+	// "omitted" from "false" and would silently disable every existing user's
+	// fallback the moment this field shipped.
+	ChiefFallbackEnabled *bool
+
+	// ChiefEngine selects the Chief Analyst synthesis engine: "claude" (the
+	// `claude` CLI; also the meaning of "") or "api" (the same stdlib
+	// OpenAI-compatible engine as CheapEngine's "api"/"local", routed through
+	// ChiefAPI instead). Omitting the key preserves the pipeline's existing
+	// behaviour exactly — the Chief stays on the Claude CLI.
+	ChiefEngine string
+	// ChiefAPI is the Chief's own dedicated OpenAI-compatible credentials, read
+	// only when ChiefEngine == "api". It deliberately never inherits from
+	// API, Local, or DEEPSEEK_API_KEY: turning the cheap-research role onto the
+	// API engine (cheap_engine = "api") must never silently also turn on
+	// Chief-tier spend, which runs on a different cost tier for the single most
+	// important step in the pipeline.
+	ChiefAPI model.APIConfig
 }
 
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
@@ -137,6 +159,10 @@ type fileFormat struct {
 	// CheapEngine routes scouts+specialists: "gemini" (agy CLI, default), "api"
 	// (remote OpenAI-compatible HTTP), or "local" (local OpenAI-compatible server).
 	CheapEngine string `toml:"cheap_engine"`
+
+	// ChiefEngine routes the Chief Analyst synthesis step: "claude" (default,
+	// the `claude` CLI) or "api" (the dedicated [chief_api] HTTP engine below).
+	ChiefEngine string `toml:"chief_engine"`
 
 	// LocalConcurrency caps simultaneous local-model calls (default 1).
 	LocalConcurrency int `toml:"local_concurrency"`
@@ -225,11 +251,25 @@ type fileFormat struct {
 	// Deliberately its own dedicated credentials, never shared with [api]/[local]:
 	// prefer CFR_CHIEF_FALLBACK_API_KEY over committing api_key to this file.
 	ChiefFallback struct {
+		// Enabled is *bool, not bool: omitted (nil) keeps today's behaviour
+		// (enabled once APIKey is set), while an explicit true/false overrides
+		// it either way. See Settings.ChiefFallbackEnabled.
+		Enabled   *bool  `toml:"enabled"`
 		BaseURL   string `toml:"base_url"`
 		Model     string `toml:"model"`
 		APIKey    string `toml:"api_key"`
 		MaxTokens int    `toml:"max_tokens"`
 	} `toml:"chief_fallback"`
+
+	// ChiefAPI is the Chief Analyst's dedicated OpenAI-compatible engine (used
+	// only when chief_engine = "api"). Deliberately its own block, never
+	// merged with [api]/[local]: see Settings.ChiefAPI.
+	ChiefAPI struct {
+		BaseURL   string `toml:"base_url"`
+		Model     string `toml:"model"`
+		APIKey    string `toml:"api_key"`
+		MaxTokens int    `toml:"max_tokens"`
+	} `toml:"chief_api"`
 
 	// Local configures a local OpenAI-compatible server (Ollama/llama.cpp). The
 	// key is optional — local servers don't authenticate.
@@ -286,8 +326,65 @@ func Load() (*Settings, error) {
 	if err := s.validateRisk(); err != nil {
 		return nil, err
 	}
+	if err := s.ValidateChiefEngine(); err != nil {
+		return nil, err
+	}
 	s.registerSecrets()
 	return s, nil
+}
+
+// ValidateChiefEngine normalizes an omitted ChiefEngine to "claude" and
+// enforces its enum plus the [chief_api]/[chief_fallback] rules that only
+// make sense once the selector is known. It is exported so cmd/cfr can
+// re-check a run after a --chief-engine flag override changes the resolved
+// value post-Load — the same "fail before any data acquisition" guarantee
+// Load itself gives a file/env-only configuration.
+//
+// Note: this — like every check in Load — runs BEFORE registerSecrets, so
+// none of its error messages may interpolate a credential value; they name
+// the offending field instead (see the registerSecrets doc comment).
+func (s *Settings) ValidateChiefEngine() error {
+	if s.ChiefEngine == "" {
+		s.ChiefEngine = "claude"
+	}
+	switch s.ChiefEngine {
+	case "claude":
+		return nil
+	case "api":
+		if s.ChiefAPI.BaseURL == "" {
+			return fmt.Errorf(`chief_api.base_url is required when chief_engine = "api"`)
+		}
+		if s.ChiefAPI.Model == "" {
+			return fmt.Errorf(`chief_api.model is required when chief_engine = "api"`)
+		}
+		if s.ChiefAPI.APIKey == "" {
+			return fmt.Errorf(`chief_api.api_key is required when chief_engine = "api" — it is never inherited from [api], [local], or DEEPSEEK_API_KEY`)
+		}
+		// The DeepSeek fallback is a resilience measure for when the Claude
+		// primary call fails; with chief_engine = "api" there is no Claude
+		// primary to fall back from. Gate on the *effective* state (ChiefFallbackActive),
+		// not just an explicit `enabled = true`: an operator who already had
+		// [chief_fallback] configured for the Claude engine and then merely
+		// flips chief_engine to "api" — without touching `enabled` — must not
+		// silently end up with a live fallback call under the new engine.
+		if s.ChiefFallbackActive() {
+			return fmt.Errorf(`chief_fallback is supported only after a Claude primary (chief_engine = "claude") — it cannot be active when chief_engine = "api"; set [chief_fallback] enabled = false or remove its api_key`)
+		}
+		return nil
+	default:
+		return fmt.Errorf(`chief_engine must be "claude" or "api" (got %q)`, s.ChiefEngine)
+	}
+}
+
+// ChiefFallbackActive reports whether the configured DeepSeek Chief Analyst
+// fallback would actually fire: enabled once its own api_key is present,
+// unless ChiefFallbackEnabled overrides that either way. nil (the `enabled`
+// key omitted) is what preserves today's api_key-only gate.
+func (s *Settings) ChiefFallbackActive() bool {
+	if s.ChiefFallback.APIKey == "" {
+		return false
+	}
+	return s.ChiefFallbackEnabled == nil || *s.ChiefFallbackEnabled
 }
 
 // registerSecrets is the one place that knows every configured credential, so
@@ -304,6 +401,7 @@ func (s *Settings) registerSecrets() {
 		s.API.APIKey,
 		s.Local.APIKey,
 		s.ChiefFallback.APIKey,
+		s.ChiefAPI.APIKey,
 	)
 }
 
@@ -556,6 +654,7 @@ func (s *Settings) applyFile(path string) error {
 	if f.CheapEngine != "" {
 		s.CheapEngine = model.CLI(f.CheapEngine)
 	}
+	setStr(&s.ChiefEngine, f.ChiefEngine)
 	setInt(&s.LocalConcurrency, f.LocalConcurrency)
 	setInt(&s.FillWindowDays, f.Scoreboard.FillWindowDays)
 	setStr(&s.API.BaseURL, f.API.BaseURL)
@@ -570,6 +669,17 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.ChiefFallback.Model, f.ChiefFallback.Model)
 	setStr(&s.ChiefFallback.APIKey, f.ChiefFallback.APIKey)
 	setInt(&s.ChiefFallback.MaxTokens, f.ChiefFallback.MaxTokens)
+	// *bool, not setStr/setInt's "nonzero wins": omitted (nil) must stay distinct
+	// from an explicit false, so presence is read straight off the decoded
+	// pointer rather than off an IsDefined lookup keyed by string path.
+	if f.ChiefFallback.Enabled != nil {
+		v := *f.ChiefFallback.Enabled
+		s.ChiefFallbackEnabled = &v
+	}
+	setStr(&s.ChiefAPI.BaseURL, f.ChiefAPI.BaseURL)
+	setStr(&s.ChiefAPI.Model, f.ChiefAPI.Model)
+	setStr(&s.ChiefAPI.APIKey, f.ChiefAPI.APIKey)
+	setInt(&s.ChiefAPI.MaxTokens, f.ChiefAPI.MaxTokens)
 	return nil
 }
 
@@ -624,6 +734,16 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_CHEAP_ENGINE"); v != "" {
 		s.CheapEngine = model.CLI(v)
 	}
+	setStr(&s.ChiefEngine, "CFR_CHIEF_ENGINE")
+
+	// Chief Analyst's own dedicated API engine (chief_engine = "api"). No
+	// DEEPSEEK_API_KEY alias here either, for the same reason [chief_fallback]
+	// has none below: a dedicated key must be set explicitly, never inherited
+	// from the cheap-research role's config.
+	setStr(&s.ChiefAPI.BaseURL, "CFR_CHIEF_API_BASE_URL")
+	setStr(&s.ChiefAPI.Model, "CFR_CHIEF_API_MODEL")
+	setStr(&s.ChiefAPI.APIKey, "CFR_CHIEF_API_KEY")
+	setPosInt(&s.ChiefAPI.MaxTokens, "CFR_CHIEF_API_MAX_TOKENS")
 
 	// Local OpenAI-compatible server (Ollama/llama.cpp). Key is optional.
 	setStr(&s.Local.BaseURL, "CFR_LOCAL_BASE_URL")
@@ -645,6 +765,15 @@ func (s *Settings) applyEnv() {
 	if v := os.Getenv("CFR_CHIEF_FALLBACK_MAX_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.ChiefFallback.MaxTokens = n
+		}
+	}
+	// *bool: presence decides, not truthiness — CFR_CHIEF_FALLBACK_ENABLED=false
+	// must be as expressible as leaving it unset means "inherit today's
+	// api_key-gated default". LookupEnv (not Getenv) is what makes an explicit
+	// empty string distinguishable from unset, matching the file-side check.
+	if v, ok := os.LookupEnv("CFR_CHIEF_FALLBACK_ENABLED"); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			s.ChiefFallbackEnabled = &b
 		}
 	}
 	if v := os.Getenv("CFR_SYNTHESIS_TIMEOUT"); v != "" {

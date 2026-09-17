@@ -24,6 +24,7 @@ func runHeadless(settings *config.Settings, args []string) int {
 	ticker := fs.String("ticker", "", "ticker for single-stock mode (implies --mode single)")
 	indices := fs.String("indices", "", "comma-separated index keys to screen (e.g. sp500,eu50); empty = all")
 	researchMode := fs.String("research-mode", settings.ResearchMode, "research mode: legacy or thesis")
+	chiefEngine := fs.String("chief-engine", settings.ChiefEngine, "chief analyst engine: claude or api")
 	asJSON := fs.Bool("json", false, "print the final IdeasResult as JSON on stdout")
 	quiet := fs.Bool("quiet", false, "suppress progress output on stderr")
 	if err := fs.Parse(args); err != nil {
@@ -64,6 +65,16 @@ func runHeadless(settings *config.Settings, args []string) int {
 	}
 	settingsCopy := *settings
 	settingsCopy.ResearchMode = *researchMode
+	// Flags win over env/file per the fixed precedence. Re-validate here (not
+	// just the flag's own enum) so a --chief-engine=api override without a
+	// configured [chief_api] fails now — before any pre-screening or
+	// frozen-corpus collection — rather than surfacing later as an
+	// unconfigured-engine error mid-run.
+	settingsCopy.ChiefEngine = *chiefEngine
+	if err := settingsCopy.ValidateChiefEngine(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
 	settings = &settingsCopy
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

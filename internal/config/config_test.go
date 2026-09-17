@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,9 @@ func clearEnv(t *testing.T) {
 		"CFR_LOCAL_BASE_URL", "CFR_LOCAL_MODEL", "CFR_LOCAL_KEY", "CFR_LOCAL_CONCURRENCY",
 		"CFR_API_MAX_TOKENS", "CFR_LOCAL_MAX_TOKENS",
 		"APCA_API_KEY_ID", "APCA_API_SECRET_KEY", "CFR_ALPACA_KEY_ID", "CFR_ALPACA_SECRET_KEY",
+		"CFR_CHIEF_ENGINE", "CFR_CHIEF_API_BASE_URL", "CFR_CHIEF_API_MODEL", "CFR_CHIEF_API_KEY",
+		"CFR_CHIEF_API_MAX_TOKENS", "CFR_CHIEF_FALLBACK_ENABLED", "CFR_CHIEF_FALLBACK_BASE_URL",
+		"CFR_CHIEF_FALLBACK_MODEL", "CFR_CHIEF_FALLBACK_API_KEY", "CFR_CHIEF_FALLBACK_MAX_TOKENS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -649,5 +653,128 @@ func TestResearchRoleBudgetPrecedenceAndValidation(t *testing.T) {
 	t.Setenv("CFR_RESEARCH_CHIEF_RESPONSE_BYTES", "2097152")
 	if _, err = Load(); err == nil {
 		t.Fatal("invalid response budget accepted")
+	}
+}
+
+// TestChiefEngineMigrationMatrix pins the chief_engine selector's compatibility
+// matrix: the default stays "claude" with today's fallback-gating behaviour
+// when the key is omitted, "api" requires its own dedicated [chief_api]
+// credentials, and the two are mutually exclusive with an explicitly-enabled
+// [chief_fallback] (that resilience call only makes sense behind a Claude
+// primary). Every case writes its TOML into t.TempDir() — the repo's own
+// ./cfr.toml carries live credentials and must never be reachable here.
+func TestChiefEngineMigrationMatrix(t *testing.T) {
+	cases := []struct {
+		name, toml   string
+		env          map[string]string
+		wantEngine   string
+		wantFallback bool
+		wantErr      string
+	}{
+		{name: "no selector, no fallback", toml: ``, wantEngine: "claude"},
+		{name: "no selector, fallback key, enabled omitted",
+			toml:       "[chief_fallback]\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\n",
+			wantEngine: "claude", wantFallback: true},
+		{name: "claude with fallback explicitly false",
+			toml:       "chief_engine=\"claude\"\n[chief_fallback]\nenabled=false\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\n",
+			wantEngine: "claude", wantFallback: false},
+		{name: "api with valid dedicated settings",
+			toml:       "chief_engine=\"api\"\n[chief_api]\nbase_url=\"https://y/v1\"\nmodel=\"n\"\napi_key=\"k2\"\n",
+			wantEngine: "api", wantFallback: false},
+		{name: "api missing model",
+			toml:    "chief_engine=\"api\"\n[chief_api]\nbase_url=\"https://y/v1\"\napi_key=\"k2\"\n",
+			wantErr: "chief_api.model"},
+		{name: "api with fallback explicitly true",
+			toml:    "chief_engine=\"api\"\n[chief_api]\nbase_url=\"https://y/v1\"\nmodel=\"n\"\napi_key=\"k2\"\n[chief_fallback]\nenabled=true\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\n",
+			wantErr: "fallback is supported only after a Claude primary",
+		},
+		{name: "invalid enum", toml: "chief_engine=\"gpt\"\n", wantErr: "chief_engine"},
+		{name: "env overrides file",
+			toml: "chief_engine=\"claude\"\n",
+			env: map[string]string{"CFR_CHIEF_ENGINE": "api",
+				"CFR_CHIEF_API_BASE_URL": "https://z/v1", "CFR_CHIEF_API_MODEL": "q",
+				"CFR_CHIEF_API_KEY": "k3"},
+			wantEngine: "api"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, cwd := isolate(t)
+			if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(tc.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			s, err := Load()
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Load: got no error, want one containing %q", tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Load error = %q, want it to contain %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if s.ChiefEngine != tc.wantEngine {
+				t.Errorf("ChiefEngine = %q, want %q", s.ChiefEngine, tc.wantEngine)
+			}
+			if got := s.ChiefFallbackActive(); got != tc.wantFallback {
+				t.Errorf("ChiefFallbackActive() = %v, want %v", got, tc.wantFallback)
+			}
+		})
+	}
+}
+
+// TestChiefEngineEmptyStringPreservesExistingBehaviour pins the "omitting the
+// selector changes nothing" constraint explicitly, independent of the fallback
+// axis the matrix above already covers.
+func TestChiefEngineEmptyStringPreservesExistingBehaviour(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.ChiefEngine != "claude" {
+		t.Errorf("ChiefEngine = %q, want the default claude", s.ChiefEngine)
+	}
+	if s.ChiefAPI != (model.APIConfig{}) {
+		t.Errorf("ChiefAPI = %+v, want zero value when unconfigured", s.ChiefAPI)
+	}
+}
+
+// TestLoadAllowsAPIChiefAlongsideAPICheapEngine confirms the two engine
+// selectors are independent: turning the cheap-research role onto the API
+// engine must not interact with, or be required by, the Chief's own selector.
+func TestLoadAllowsAPIChiefAlongsideAPICheapEngine(t *testing.T) {
+	_, cwd := isolate(t)
+	toml := `
+cheap_engine = "api"
+chief_engine = "api"
+
+[api]
+base_url = "https://cheap.invalid/v1"
+model = "cheap-model"
+api_key = "cheap-key"
+
+[chief_api]
+base_url = "https://chief.invalid/v1"
+model = "chief-model"
+api_key = "chief-key"
+`
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.API.APIKey != "cheap-key" || s.ChiefAPI.APIKey != "chief-key" {
+		t.Errorf("API/ChiefAPI keys crossed: API=%+v ChiefAPI=%+v", s.API, s.ChiefAPI)
 	}
 }

@@ -65,6 +65,7 @@ func runResearchPair(settings *config.Settings, args []string) int {
 	costText := fs.String("cost-bps", "", "register an assumed round-trip execution cost in basis points")
 	omitAV := fs.Bool("omit-alphavantage", false, "exclude Alpha Vantage from collection; record this choice")
 	limit := fs.Duration("timeout", 60*time.Minute, "total collection and paired execution deadline")
+	chiefEngine := fs.String("chief-engine", settings.ChiefEngine, "chief analyst engine: claude or api")
 	if fs.Parse(args) != nil {
 		return 2
 	}
@@ -108,6 +109,15 @@ func runResearchPair(settings *config.Settings, args []string) int {
 	if *omitAV {
 		copy.Providers.AlphaVantageKey = ""
 	}
+	// Flags win over env/file per the fixed precedence. Re-validate here (not
+	// just accept the flag's raw string) so a --chief-engine=api override
+	// without a configured [chief_api] fails now — before pre-screening or
+	// frozen-corpus collection — rather than mid-collection.
+	copy.ChiefEngine = *chiefEngine
+	if err := copy.ValidateChiefEngine(); err != nil {
+		fmt.Fprintln(os.Stderr, redact.String(err.Error()))
+		return 2
+	}
 	code, err := collectAndRunPair(ctx, &copy, req, *out, *omitAV, cost, marketdata.CaptureResearchSnapshot, orchestrator.Run)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, redact.String(err.Error()))
@@ -130,12 +140,18 @@ func collectAndRunPair(ctx context.Context, settings *config.Settings, req model
 	if settings.CheapEngine == "local" && settings.Local.Model == "" {
 		return 1, fmt.Errorf("configure the existing local model before collecting a pair")
 	}
-	binary := settings.Binaries[model.CLIClaude]
-	if binary == "" {
-		binary = "claude"
-	}
-	if _, e := exec.LookPath(binary); e != nil {
-		return 1, fmt.Errorf("Claude CLI unavailable: %w", e)
+	// Only check for an installed Claude binary when the resolved Chief engine
+	// actually needs it. chief_engine defaults to "claude" (empty string means
+	// claude too, matching Settings.ChiefEngine's own "" == "claude" contract),
+	// so an API-only Chief must not require a Claude CLI to be present at all.
+	if settings.ChiefEngine == "" || settings.ChiefEngine == "claude" {
+		binary := settings.Binaries[model.CLIClaude]
+		if binary == "" {
+			binary = "claude"
+		}
+		if _, e := exec.LookPath(binary); e != nil {
+			return 1, fmt.Errorf("Claude CLI unavailable: %w", e)
+		}
 	}
 	tickers, benchmarks, req, err := pairUniverse(req)
 	if err != nil {

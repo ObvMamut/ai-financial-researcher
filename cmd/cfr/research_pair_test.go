@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -217,5 +220,71 @@ func TestPairOutcomeRefreshPreservesGenerationArtifacts(t *testing.T) {
 	}
 	if _, _, err := evaluatePair(context.Background(), dir, nil); err == nil {
 		t.Fatal("accepted changed generation corpus")
+	}
+}
+
+// TestAPIChiefRunsWithNoClaudeBinaryInstalled proves an API-only Chief never
+// requires an installed Claude CLI: chief_engine="api" (with cheap_engine
+// already "api" via the fixture's dedicated settings) plus a Binaries[claude]
+// entry that cannot possibly resolve must still let both Load's own
+// validation and the research-pair preflight succeed.
+func TestAPIChiefRunsWithNoClaudeBinaryInstalled(t *testing.T) {
+	s, req, dir := pairFixture(t)
+	s.CheapEngine = model.CLIApi
+	s.API = model.APIConfig{BaseURL: "https://cheap.invalid/v1", Model: "cheap-model", APIKey: "cheap-key"}
+	s.ChiefEngine = "api"
+	s.ChiefAPI = model.APIConfig{BaseURL: "https://chief.invalid/v1", Model: "chief-model", APIKey: "chief-key"}
+	// A path that cannot exist on any machine — the point is that the Claude
+	// binary preflight must never even be consulted when chief_engine="api".
+	s.Binaries[model.CLIClaude] = "/nonexistent/claude"
+
+	if err := s.ValidateChiefEngine(); err != nil {
+		t.Fatalf("ValidateChiefEngine: %v (an API-only chief config must validate)", err)
+	}
+
+	run := func(ctx context.Context, cfg orchestrator.Config) <-chan orchestrator.Event {
+		return pairFakeRun(t, cfg)
+	}
+	code, err := collectAndRunPair(context.Background(), s, req, dir, false, nil, pairFakeCapture, run)
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v, want the run's preflight to succeed with no claude binary installed", code, err)
+	}
+}
+
+// TestSelectedClaudeWithMissingBinaryFailsBeforeAcquisition proves the
+// opposite: with chief_engine left at its "claude" default (Settings built
+// directly here, bypassing Load's own "" -> "claude" normalization, so the
+// research-pair gating logic itself — not just Load — must treat "" as
+// claude) and no Claude binary reachable, collectAndRunPair must fail before
+// any market-data acquisition starts. "Before acquisition" is proven by
+// routing the real marketdata.CaptureResearchSnapshot at a counting Yahoo
+// fixture server via CFR_YAHOO_BASE (the same rerouting hook
+// internal/marketdata's own tests use) and requiring zero hits — not merely
+// that an injected test double was never invoked.
+func TestSelectedClaudeWithMissingBinaryFailsBeforeAcquisition(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	s, req, dir := pairFixture(t)
+	s.Binaries[model.CLIClaude] = "/nonexistent/claude"
+	// s.ChiefEngine is left at its Go zero value (""), never touched by Load
+	// here — this fixture builds Settings by struct literal, so this pins the
+	// research-pair gate's own "" == claude default independent of Load's.
+
+	run := func(ctx context.Context, cfg orchestrator.Config) <-chan orchestrator.Event {
+		t.Fatal("orchestrator run launched despite a missing claude binary")
+		return nil
+	}
+	_, err := collectAndRunPair(context.Background(), s, req, dir, false, nil, marketdata.CaptureResearchSnapshot, run)
+	if err == nil {
+		t.Fatal("expected an error for the missing claude binary")
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("market-data acquisition made %d HTTP request(s) before the claude-binary preflight failed", n)
 	}
 }
