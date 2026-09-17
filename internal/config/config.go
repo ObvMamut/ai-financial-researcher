@@ -362,13 +362,17 @@ func (s *Settings) ValidateChiefEngine() error {
 		}
 		// The DeepSeek fallback is a resilience measure for when the Claude
 		// primary call fails; with chief_engine = "api" there is no Claude
-		// primary to fall back from. Gate on the *effective* state (ChiefFallbackActive),
-		// not just an explicit `enabled = true`: an operator who already had
-		// [chief_fallback] configured for the Claude engine and then merely
-		// flips chief_engine to "api" — without touching `enabled` — must not
-		// silently end up with a live fallback call under the new engine.
-		if s.ChiefFallbackActive() {
-			return fmt.Errorf(`chief_fallback is supported only after a Claude primary (chief_engine = "claude") — it cannot be active when chief_engine = "api"; set [chief_fallback] enabled = false or remove its api_key`)
+		// primary to fall back from. Reject only an EXPLICIT `enabled = true`
+		// here, not the broader "would be active" state (ChiefFallbackActive):
+		// leftover [chief_fallback] credentials with `enabled` omitted are a
+		// common, harmless shape — this repo's own cfr.toml is exactly that —
+		// and must load as "configured API Chief, fallback disabled" rather than
+		// fail config-time. Retained-but-inert credentials never dispatching a
+		// second DeepSeek call is a runtime guarantee (Task 5's job), not a
+		// config-time one; see docs/plans/2026-09-15-deepseek-chief-and-
+		// research-reliability.md's compatibility matrix, row 4 vs row 6.
+		if s.ChiefFallbackEnabled != nil && *s.ChiefFallbackEnabled {
+			return fmt.Errorf(`chief_fallback is supported only after a Claude primary (chief_engine = "claude") — it cannot be explicitly enabled when chief_engine = "api"; leave [chief_fallback] enabled unset (or false) to keep its credentials configured but inert`)
 		}
 		return nil
 	default:
@@ -377,10 +381,16 @@ func (s *Settings) ValidateChiefEngine() error {
 }
 
 // ChiefFallbackActive reports whether the configured DeepSeek Chief Analyst
-// fallback would actually fire: enabled once its own api_key is present,
-// unless ChiefFallbackEnabled overrides that either way. nil (the `enabled`
-// key omitted) is what preserves today's api_key-only gate.
+// fallback would actually fire: it requires a Claude primary to fall back
+// from (chief_engine == "claude" — under "api" there is no primary-failure
+// event to trigger it, so leftover credentials there are inert by
+// construction, not merely by policy), its own api_key present, and
+// ChiefFallbackEnabled not explicitly false. nil (the `enabled` key omitted)
+// is what preserves today's api_key-only gate under chief_engine == "claude".
 func (s *Settings) ChiefFallbackActive() bool {
+	if s.ChiefEngine != "claude" {
+		return false
+	}
 	if s.ChiefFallback.APIKey == "" {
 		return false
 	}

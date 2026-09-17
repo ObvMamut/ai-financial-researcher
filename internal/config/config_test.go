@@ -688,6 +688,18 @@ func TestChiefEngineMigrationMatrix(t *testing.T) {
 			toml:    "chief_engine=\"api\"\n[chief_api]\nbase_url=\"https://y/v1\"\nmodel=\"n\"\napi_key=\"k2\"\n[chief_fallback]\nenabled=true\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\n",
 			wantErr: "fallback is supported only after a Claude primary",
 		},
+		// The exact shape of this repo's own ./cfr.toml: a [chief_fallback]
+		// block left over from chief_engine="claude" use, with base_url, model
+		// and api_key set but no `enabled` key at all. Compatibility matrix row
+		// 4 (docs/plans/2026-09-15-deepseek-chief-and-research-reliability.md:
+		// 157-165): the run PROCEEDS as "Configured API Chief, fallback
+		// Disabled" — leftover credentials with `enabled` omitted must not
+		// block adding chief_engine="api" to an existing config. Whether those
+		// retained credentials could ever fire is a runtime guarantee, not a
+		// config-time one.
+		{name: "api with leftover fallback credentials, enabled omitted",
+			toml:       "chief_engine=\"api\"\n[chief_api]\nbase_url=\"https://y/v1\"\nmodel=\"n\"\napi_key=\"k2\"\n[chief_fallback]\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\nmax_tokens=32768\n",
+			wantEngine: "api", wantFallback: false},
 		{name: "invalid enum", toml: "chief_engine=\"gpt\"\n", wantErr: "chief_engine"},
 		{name: "env overrides file",
 			toml: "chief_engine=\"claude\"\n",
