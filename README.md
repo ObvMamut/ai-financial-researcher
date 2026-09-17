@@ -13,6 +13,18 @@ volatility, variance ratios — no chart TA).
 
 ## What it does
 
+An opt-in [thesis research mode](docs/workflow/thesis-research.md) adds per-company
+source reading, research rounds, a separate challenge and Claude-led selection for
+10–15 trading sessions. Run `go run ./cmd/cfr run --research-mode thesis --json`.
+It includes reviewed conditional plans with explicit entry checks and monitoring.
+It can return zero ideas and distinguishes research failures from completed
+watchlist/rejected decisions, with visible research and review counts. Legacy remains
+the default; better trading performance has not yet been established. Compare
+future runs with `go run ./cmd/cfr scoreboard --research-compare`. Add `--offline`
+to inspect saved artifacts without provider calls. Explicit pairing audits and
+assumed execution-cost scenarios are described in the
+[evaluation workflow](docs/workflow/thesis-research.md#explicit-pairing-and-evaluation-diagnostics).
+
 - **Independent research** — pick which index samples to screen, agents shortlist the most
   promising setups (capped at 12, cross-listings deduped), a quant stage computes verified
   statistics from real price history, specialists analyze news / fundamentals / quant /
@@ -27,7 +39,7 @@ volatility, variance ratios — no chart TA).
 
 ## Requirements
 
-- [Go](https://go.dev/) 1.24+
+- [Go](https://go.dev/) 1.26.3+ (see `go.mod`)
 - [`claude`](https://claude.com/claude-code) CLI, logged in
 - [`agy`](https://antigravity.google/) CLI, logged in (override with `CFR_GEMINI_BIN`)
 
@@ -65,7 +77,29 @@ TUI / cfr run ──▶ Orchestrator ──▶ scouts (agy) ──▶ quant stag
 See `docs/workflow/` for the full pipeline, scoring rubric, and output schema, and
 `agents/*.md` for the agent personas (runtime data — edit without recompiling).
 
+## Developing with Codex or Claude Code
+
+Open this repository in Codex and work from the repository root. Codex discovers
+[`AGENTS.md`](AGENTS.md), which provides a code map, validation commands, and points
+to [`CLAUDE.md`](CLAUDE.md) for the detailed shared development guidance. This uses
+the standard [Codex project instructions](https://developers.openai.com/codex/guides/agents-md)
+mechanism; no additional project configuration is required.
+
+Claude Code can continue using `CLAUDE.md` and its existing `.claude/` settings.
+The application's research engines and runtime personas in `agents/` retain their
+existing roles. Codex support here is for developing the application.
+
+Build and validate with `go build ./...`, `go test ./...`, and `go vet ./...`.
+Tests use fake model CLIs and local HTTP fixtures without model credentials.
+
 ## Disclaimer
 
 This is a research tool, not financial advice. Trade ideas are AI-generated and may be
 wrong. Do your own due diligence.
+
+For a prospective comparison, `cfr research-pair --out .data/pair-2026-09-09
+--ticker AAPL --omit-alphavantage` collects a common evidence corpus and runs
+legacy and thesis with isolated inputs. Later use `cfr research-pair --evaluate
+.data/pair-2026-09-09 --refresh` to save outcome prices separately. See the
+[paired-evaluation workflow](docs/workflow/thesis-research.md#collecting-a-prospective-frozen-pair)
+for configuration, registered assumptions and 10/15-session maturity limits.

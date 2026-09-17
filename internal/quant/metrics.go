@@ -449,3 +449,30 @@ func covariance(a, b []float64) float64 {
 	}
 	return sum / float64(len(a)-1)
 }
+
+// LiquidityUSD renders the 20-day average turnover as the USD figure every
+// threshold in this pipeline is expressed in, and reports whether that figure
+// exists at all.
+//
+// AvgDollarVol20 is Σ close·volume in the *listing's own* currency, and printing
+// it behind a dollar sign is how LG Chem reached the Chief Analyst on 2026-09-05
+// as "ADV $45,680M" against a true $33.8M — the run emitting two different
+// liquidity figures for one name, since every gate reads AvgDollarVol20USD. A
+// yen listing reads ~156x too large that way, a won listing ~1351x.
+//
+// When no FX rate resolved there is no honest number to print: ApplyFX has
+// already flagged the name, and the caller must say "not established" rather
+// than fall back to the local figure. The second return distinguishes the two.
+func (m Metrics) LiquidityUSD() (string, bool) {
+	if m.AvgDollarVol20USD > 0 {
+		return fmt.Sprintf("$%.0fM", m.AvgDollarVol20USD/1e6), true
+	}
+	if m.AvgDollarVol20 > 0 {
+		cur := m.Currency
+		if cur == "" {
+			cur = "local"
+		}
+		return fmt.Sprintf("not established (%.0fM %s, no USD rate)", m.AvgDollarVol20/1e6, cur), false
+	}
+	return "", false
+}

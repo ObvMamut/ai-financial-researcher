@@ -109,6 +109,7 @@ func Replay(ctx context.Context, runsDir string, yc marketdata.PriceSource, fill
 // history cannot be fetched is an `error` row, which is information.
 func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, idea model.TradeIdea, cache *seriesCache, fillWindow int) Entry {
 	e := Entry{
+		ResearchMode: idea.ResearchMode, PlanStatus: idea.Status,
 		RunName:       r.Name,
 		GeneratedAt:   generatedAt,
 		Ticker:        idea.Ticker,
@@ -165,12 +166,22 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 	}
 	e.EntryPlanned = entry
 
-	fillIdx, fillPrice, ok := simulateFill(bars, entry, idea.Direction, fillWindow)
+	fillBars := bars
+	entryExpired := false
+	if idea.Thesis != nil && idea.Thesis.EntryExpiresOn != "" {
+		n := 0
+		for n < len(bars) && bars[n].Date <= idea.Thesis.EntryExpiresOn {
+			n++
+		}
+		fillBars = bars[:n]
+		entryExpired = len(bars) > n || (len(bars) > 0 && bars[len(bars)-1].Date >= idea.Thesis.EntryExpiresOn)
+	}
+	fillIdx, fillPrice, ok := simulateFill(fillBars, entry, idea.Direction, fillWindow)
 	if !ok {
 		// An idea whose fill window has not run out yet has not failed to
 		// fill — it has not been given its chance. Calling that `unfilled`
 		// would write off every idea generated in the last two days.
-		if len(bars) < fillWindow {
+		if len(bars) < fillWindow && !entryExpired {
 			e.Outcome = OutcomeOpen
 			e.BarsHeld = len(bars)
 			return e
@@ -184,13 +195,38 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 	// The trade: the same window anchored at the fill rather than at generation.
 	// It answers what the account saw, where the call answers whether the read
 	// was right, and the two differ by exactly the entry limit.
-	if trade := measureHorizon(ctx, cache, bars[fillIdx+1:], fillPrice,
-		idea.Direction, e.TimeframeDays, bench, e.EntryDate); trade.complete {
+	tradeBars := bars[fillIdx:]
+	hold := e.TimeframeDays
+	expiryObserved := false
+	if idea.Thesis != nil && idea.Thesis.ExpiresOn != "" {
+		n := 0
+		for n < len(tradeBars) && tradeBars[n].Date <= idea.Thesis.ExpiresOn {
+			n++
+		}
+		if n == 0 {
+			e.Outcome = OutcomeUnfilled
+			e.EntryFilled = 0
+			e.EntryDate = ""
+			return e
+		}
+		if n < len(tradeBars) || tradeBars[n-1].Date == idea.Thesis.ExpiresOn {
+			hold = n
+			expiryObserved = true
+		}
+	}
+	var trade horizonResult
+	if idea.Thesis == nil {
+		trade = measureHorizon(ctx, cache, bars[fillIdx+1:], fillPrice, idea.Direction, e.TimeframeDays, bench, e.EntryDate)
+	} else if expiryObserved {
+		// Include the fill session: even an expiry on that session has a
+		// measurable fill-to-close return. A late fill never restarts the clock.
+		trade = measureHorizon(ctx, cache, tradeBars, fillPrice, idea.Direction, hold, bench, e.EntryDate)
+	}
+	if trade.complete {
 		e.TradeDone = true
 		e.TradePnLPct, e.TradeExcessPct = trade.pct, trade.excess
 	}
-
-	exit := walkToExit(bars[fillIdx:], idea, e.TimeframeDays)
+	exit := walkToExit(tradeBars, idea, hold)
 	e.Outcome = exit.outcome
 	e.ExitPrice = round2(exit.price)
 	e.ExitDate = exit.date
@@ -328,7 +364,10 @@ func (c *seriesCache) get(ctx context.Context, symbol, runDir string) (*quant.Se
 	if tried && live != nil {
 		return live, nil
 	}
-	if !tried {
+	if !tried && c.yc != nil {
+		if c.bySymbol == nil {
+			c.bySymbol = map[string]*quant.Series{}
+		}
 		s, err := c.yc.History(ctx, symbol)
 		if err == nil && s != nil && len(s.Bars) > 0 {
 			c.bySymbol[key] = s

@@ -135,6 +135,25 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
 
 ## Pipeline (independent research)
 
+The numbered pipeline below describes the default `research_mode = "legacy"`.
+The opt-in `thesis` path branches after the pre-screen into event/price discovery,
+per-company source research, challenge and Claude-led selection. Its source of
+truth is [thesis-research.md](docs/workflow/thesis-research.md); implementation is
+`internal/orchestrator/thesis*.go`, runtime personas are `agents/thesis-*.md`.
+It has schema v2, a 10–15-session horizon, no weighted confidence anchor, and no
+mechanical trade fallback. Writing targets are advisory within hard byte budgets;
+a complete oversized dossier may use its one repair allowance for evidence-preserving
+narrative compaction, explicitly checked by the challenger. Reviewed entry conditions
+and future monitoring are separate from unresolved core evidence. All-failed research
+skips Chief synthesis and still persists degraded decisions and research counts. Preserve the normal Claude CLI/cheap-engine split.
+`scoreboard --research-compare` compares separate cohorts at 10 and 15 sessions.
+`research-pair` explicitly registers and collects a common frozen corpus for
+legacy/thesis arms, with private caches and disabled model tools. It requires
+the existing API/local cheap engine and keeps the normal Chief on Claude CLI.
+Its later `--evaluate --refresh` path saves outcome prices separately, without
+rerunning models or changing calibration. See the paired-evaluation section in
+the thesis workflow for acquisition cutoffs and maturity limits.
+
 0. **Stage 0.5 — pre-screen (in-process, no model):** fetch 2y daily OHLCV for *every*
    constituent of the selected indices (US names batched through Alpaca in a handful of
    multi-symbol requests when a key is configured, the rest one-at-a-time from Yahoo), compute `internal/quant` metrics, and rank each
@@ -167,18 +186,31 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    by it is long-only whatever the classifier found: the best shorts carry the most
    negative scores and sit at the far end of a best-first walk. Nominations outside the index's constituent list are
    dropped. Orchestrator merges/dedupes (incl. cross-listings) and trims to
-   `max_shortlist` by merit — the pre-screen composite aligned with the nominated
-   direction, plus a bonus per agreeing scout and a penalty when another scout nominated
-   the same name the other way — capped at `max_per_index` per index. `shortlist_reserve`
-   slots are held for non-`continuation` archetypes in a pass that runs first, filled only
-   by candidates clearing `shortlist_reserve_min_merit` so the list ships short rather than
-   padded; without it the merit sort simply undoes the archetypes, since merit *is* the
-   composite and the composite rewards having run. A name three of the
-   scoring domains cannot reach (an unmapped foreign listing: quant alone, 0.35 of the
-   weight) is capped by `max_thinly_covered`, and the risk gate refuses one that reaches
-   the output anyway.
+   `max_shortlist` by merit — the pre-screen composite **scaled by the coverage the run can
+   bring to the name**, aligned with the nominated direction, plus a bonus per agreeing
+   scout and a penalty when another scout nominated the same name the other way — capped
+   at `max_per_index` per index and at `max_per_sector + 1` per sector. The sector cap
+   exists because the risk gate refuses more than `max_per_sector` ideas in one sector and
+   nothing upstream knew that; the shortlist carries one spare per sector so the gate has
+   something to choose between rather than only something to truncate. The agreement bonus
+   is paid only for *independent* nominations: 35 of nq100's 56 names are also in sp500, so
+   two scouts naming one of those are two readings of one price history, not cross-index
+   agreement. `shortlist_reserve` slots are held for non-`continuation` archetypes in a
+   pass that runs first, filled only by candidates clearing `shortlist_reserve_min_merit`
+   so the list ships short rather than padded; without it the merit sort simply undoes the
+   archetypes, since merit *is* the composite and the composite rewards having run. A name
+   three of the scoring domains cannot reach (an unmapped foreign listing: quant alone,
+   0.35 of the weight) is excluded outright — `max_thinly_covered` defaults to 0, because
+   the risk gate's evidence floor deletes a quant-only idea and reserving slots for such a
+   name spends five specialist reports on a candidate that cannot ship. A negative value
+   re-admits them for an experiment.
 2. **Stage 1.5 (in-process, no model):** compute `internal/quant` metrics for the
-   shortlist (mostly cache hits from Stage 0.5), persist `prices/` + `quant.json`.
+   shortlist (mostly cache hits from Stage 0.5), persist `prices/` + `quant.json`. A name
+   whose newest bar still trails its own market's last completed session after the one
+   forced refetch leaves the shortlist here, before the specialists are paid for it: every
+   level is computed to the cent off that close, so the name cannot produce an actionable
+   idea and used to be deleted after synthesis instead. Single-stock mode never drops, and
+   nor does a drop that would empty the shortlist.
 3. **Specialists (cheap engine, parallel):** News, Fundamentals, Quant, Sentiment, Macro.
    **Quant and Macro are blinded** to the direction the scout nominated
    (`agents.blindToDirection`): both read evidence derived from the same price history the
@@ -189,6 +221,14 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    as context.
    Each writes **one** report covering the whole shortlist (5 calls total — not
    per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
+   Fundamentals additionally reads the verified earnings-reaction table (`driftBlock`, the
+   same one the Chief gets): its other evidence is one reporting period plus a YoY growth
+   rate, which is a description of a company rather than of the next fifteen sessions, and
+   post-earnings drift is the one documented fundamental effect on this clock. Its persona
+   is written around the horizon — a rich multiple alone is not bearish over 15 sessions —
+   and caps the reaction at strength 5 where the name's setup is already `drift`, so the
+   domain cannot re-vote the screen's own ranking. Per-role prompt assembly lives in
+   `specialistDataBlock`.
    News additionally carries a bulk-fetched verified earnings calendar; sentiment reads
    positioning, not news tone — Form 4 insider trades, Form 144 planned sales, 13D/13G
    ownership schedules, 23 tracked managers' 13F changes, and the Yahoo option chain's
@@ -207,8 +247,15 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    disagreeing domains averaged down. That sum is then scored against
    `model.ReferenceTotal` — the strongest verdict the five rubrics permit (strength 8, or 5
    for macro, whose persona caps itself there) — rather than against an unreachable 10
-   across the board, which had pinned every run's output under 46. It is one constant for
-   every name, so it rescales without reordering. The result is both shown to the Chief and
+   across the board, which had pinned every run's output under 46. One domain leaves that
+   reference for one name, under one condition: its own *computed* verdict said it looked and
+   found nothing directional (`standDowns` over `abstainedFor`; sentiment alone today). A gap
+   and an abstention were arithmetically identical and are not the same fact — sentiment
+   abstains on ~70% of names by design, and charging its full 0.17 for that was a flat
+   ~21-point haircut for the domain working correctly. `signed` and `covered` still measure
+   against the full weight, so the coverage caps keep their grip and a loud-domain-plus-
+   abstentions name still cannot outrank a well-covered one. Measured over the 12 runs to
+   2026-09-05, the best base on a board runs 41–67. The result is both shown to the Chief and
    enforced against its output; `internal/tui`'s confidence bar and `internal/scoreboard`'s
    buckets read the same scale, and all three must move together.
 3.75. **Post-mortem (cheap engine, one call):** once ≥10 past ideas have closed,
@@ -233,7 +280,9 @@ ambiguous, those docs are the source of truth — keep code and docs in sync.
    against the account rather than averaged over the idea count. It also enforces an
    **evidence floor** (independent mode only): an idea scored by quant alone, or by no
    domain at all, is a screen output rather than a research conclusion and is dropped. Violations buy one corrective
-   re-prompt; per-idea violations that survive it drop the idea. Shipping fewer than 5
+   re-prompt, which offers both available answers — delete the idea, or replace it from the
+   scored board the re-prompt lists, never to keep the count and never with a name a single
+   domain carries; per-idea violations that survive it drop the idea. Shipping fewer than 5
    ideas is the intended outcome. At ≥30 closed ideas the expectancy simulation swaps its
    assumed edge for the measured one.
 

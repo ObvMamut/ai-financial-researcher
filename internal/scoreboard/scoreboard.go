@@ -29,13 +29,15 @@ import (
 // legacy mode and the legacy fields are empty in replay mode; Summary.Replay
 // says which set to read.
 type Entry struct {
-	RunName     string  `json:"run"`
-	GeneratedAt string  `json:"generated_at"`
-	Ticker      string  `json:"ticker"`
-	Index       string  `json:"index,omitempty"`
-	Direction   string  `json:"direction"`
-	Confidence  int     `json:"confidence"`
-	PriceAtGen  float64 `json:"price_at_generation"`
+	ResearchMode string  `json:"research_mode,omitempty"`
+	PlanStatus   string  `json:"plan_status,omitempty"`
+	RunName      string  `json:"run"`
+	GeneratedAt  string  `json:"generated_at"`
+	Ticker       string  `json:"ticker"`
+	Index        string  `json:"index,omitempty"`
+	Direction    string  `json:"direction"`
+	Confidence   int     `json:"confidence"`
+	PriceAtGen   float64 `json:"price_at_generation"`
 
 	// Legacy fields: the idea marked to the latest close.
 	Current     float64 `json:"current_price,omitempty"`
@@ -256,7 +258,7 @@ const MinClosedPerArm = 15
 // generated before the run recorded per-domain scores, whose stated confidence
 // came from a model rather than from arithmetic. Bucketing them by number would
 // be comparing two different measurements.
-var confidenceBuckets = []string{"<25", "25-39", "40-54", "55+", "legacy"}
+var confidenceBuckets = []string{"<25", "25-39", "40-54", "55+", "legacy", "thesis (unscored)"}
 
 const legacyConfidenceBucket = "legacy"
 
@@ -265,7 +267,7 @@ const legacyConfidenceBucket = "legacy"
 func comparableConfidenceBuckets() []string {
 	out := make([]string, 0, len(confidenceBuckets))
 	for _, b := range confidenceBuckets {
-		if b != legacyConfidenceBucket {
+		if b != legacyConfidenceBucket && b != "thesis (unscored)" {
 			out = append(out, b)
 		}
 	}
@@ -403,7 +405,9 @@ func (s *Summary) aggregate() {
 		total.add(e)
 		dir.add(e.Direction, e)
 		idx.add(e.Index, e)
-		if c, ok := comparableConfidence(e); ok {
+		if e.ResearchMode == "thesis" {
+			conf.add("thesis (unscored)", e)
+		} else if c, ok := comparableConfidence(e); ok {
 			conf.add(confidenceBucket(c), e)
 		} else {
 			conf.add(legacyConfidenceBucket, e)

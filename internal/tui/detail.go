@@ -101,8 +101,20 @@ func (d *detailModel) View() string {
 	}
 	sb.WriteString(titleStyle.Render(fmt.Sprintf("#%d %s — %s", idea.Rank, idea.Ticker, idea.Name)))
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("%s  %s · confidence %d%%  %s\n",
-		dir, subtitleStyle.Render(idea.Index), idea.Confidence, confidenceBar(idea.Confidence)))
+	if idea.Thesis != nil {
+		th := idea.Thesis
+		sb.WriteString(fmt.Sprintf("%s · %s · evidence %s\nWhy now: %s\nInvalidation: %s\nCatalyst: %s\nEntry: %s\nStop: %s\nTarget: %s\nPlausible range: %.2f–%.2f\nEntry expires %s · exit by %s\n", dir, idea.Status, th.EvidenceQuality, th.WhyNow, th.Invalidation, th.CatalystWindow, th.EntryReason, th.StopReason, th.TargetReason, th.OutcomeLow, th.OutcomeHigh, th.EntryExpiresOn, th.ExpiresOn))
+		for _, note := range th.Monitoring {
+			sb.WriteString("Monitor: " + note + "\n")
+		}
+		for _, p := range th.Prerequisites {
+			sb.WriteString("Before entry: " + p + "\n")
+		}
+		sb.WriteString("Evidence IDs (see data/research.json): " + strings.Join(th.EvidenceIDs, ", ") + "\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("%s  %s · confidence %d%%  %s\n",
+			dir, subtitleStyle.Render(idea.Index), idea.Confidence, confidenceBar(idea.Confidence)))
+	}
 	// Confidence alone cannot distinguish a thin idea every domain agreed on
 	// from a well-covered one whose domains fought — both land in the same
 	// place. The second line says which this is.

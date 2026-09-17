@@ -196,10 +196,70 @@ func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Durat
 	}
 	series.Sort()
 
+	// A response that trails what we already hold is a regression upstream, not
+	// news, and must not be written over the better series.
+	//
+	// On 2026-09-05 the cache held BAYN.DE through Friday 2026-09-04, fetched
+	// that evening. Saturday morning's pre-screen asked Yahoo for all 47 eu50
+	// constituents and every one came back ending 2026-09-03; the cache was
+	// rewritten with the shorter series, the forced refetch a minute later got
+	// 2026-09-03 again, and the run then priced STLAM.MI off a superseded close.
+	// The risk gate caught it and asked the Chief to re-price against the newest
+	// bar in the quant block — which no longer existed — so the only available
+	// answer was to delete the idea. The run shipped two instead of three.
+	//
+	// Keeping the newer series wholesale rather than unioning the bars is
+	// deliberate: closes here are rescaled onto the adjusted close, so a split
+	// between two fetches puts the two series on different adjustment bases and
+	// splicing them would manufacture a gap. The cache entry keeps its original
+	// timestamp when we decline to write, so the next call re-runs this
+	// comparison and Yahoo wins the moment it catches up.
 	if y.cache != nil {
+		if kept, ok := y.keepNewerCached(symbol, series); ok {
+			return kept, nil
+		}
 		_ = y.cache.SetTTL(y.baseURL, "yahoo", "chart"+yahooRange, symbol, series)
 	}
 	return series, nil
+}
+
+// priceCacheLookbackDays is how far back keepNewerCached looks for a better
+// series. Cache keys carry the UTC calendar date, so Friday's entry and
+// Saturday's are different files and today's key alone cannot see the one that
+// matters: the 2026-09-05 regression was Saturday's fetch against Friday
+// evening's cache. Four days spans a weekend plus a public holiday, which is the
+// longest a market can be shut with the previous session still the live one.
+const priceCacheLookbackDays = 4
+
+// keepNewerCached reports the best series already cached in the last few days,
+// when it ends on a later session than the one just fetched. It applies on both
+// paths on purpose — a forced refetch is exactly when a regressing upstream does
+// the most damage, because the caller asked for it precisely because the bar
+// looked old.
+//
+// Every day in the window is read and the newest series wins, rather than
+// stopping at the most recently written entry: within one run the first fetch
+// may already have written today's regressed series, and comparing against that
+// would compare the bad data with itself.
+func (y *YahooClient) keepNewerCached(symbol string, fetched *quant.Series) (*quant.Series, bool) {
+	var best *quant.Series
+	for d := 0; d <= priceCacheLookbackDays; d++ { // 0 is today
+		var cached quant.Series
+		if _, ok := y.cache.PeekTTL(d, y.baseURL, "yahoo", "chart"+yahooRange, symbol, &cached); !ok {
+			continue
+		}
+		if len(cached.Bars) == 0 {
+			continue
+		}
+		if best == nil || cached.AsOf() > best.AsOf() {
+			c := cached
+			best = &c
+		}
+	}
+	if best == nil || best.AsOf() <= fetched.AsOf() {
+		return nil, false
+	}
+	return best, true
 }
 
 // LastClose returns the most recent daily close (cached like History).

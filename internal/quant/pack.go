@@ -65,7 +65,9 @@ func (p *Pack) Markdown() string {
 		sb.WriteString(fmt.Sprintf("- Variance ratio: VR(5) %.2f | VR(10) %.2f → regime: %s\n", m.VR5, m.VR10, m.Regime))
 		sb.WriteString(fmt.Sprintf("- Risk: max drawdown 126d %s | worst day 252d %s | skew %+.2f | excess kurtosis %+.2f\n",
 			pct(m.MaxDrawdown126), pct(m.WorstDay252), m.Skew252, m.Kurt252))
-		sb.WriteString(fmt.Sprintf("- Liquidity: 20d avg dollar volume $%.0fM\n", m.AvgDollarVol20/1e6))
+		if adv, _ := m.LiquidityUSD(); adv != "" {
+			sb.WriteString(fmt.Sprintf("- Liquidity: 20d avg dollar volume %s\n", adv))
+		}
 		if m.Benchmark != "" {
 			sb.WriteString(fmt.Sprintf("- Vs %s: beta %.2f, correlation %.2f\n", m.Benchmark, m.Beta, m.Corr))
 		}
@@ -114,8 +116,8 @@ func (p *Pack) CompactLine(ticker string) string {
 	if m.Benchmark != "" {
 		line += fmt.Sprintf(", beta %.2f, corr %.2f", m.Beta, m.Corr)
 	}
-	if m.AvgDollarVol20 > 0 {
-		line += fmt.Sprintf(", ADV $%.0fM", m.AvgDollarVol20/1e6)
+	if adv, _ := m.LiquidityUSD(); adv != "" {
+		line += ", ADV " + adv
 	}
 
 	// Second line: the numbers a stop is actually placed with, plus anything

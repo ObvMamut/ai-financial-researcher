@@ -52,6 +52,21 @@ const (
 //
 // The table lives in internal/model because the scoreboard has to read a past
 // idea's recorded domain scores on the same scale a live run produces them.
+//
+// What the scale actually produces, re-measured over the 12 stored runs from
+// 2026-08-31 to 2026-09-05 by replaying their specialist reports through this
+// function on the current weights: the top base on a board runs **41–67**, median
+// 56; across all 144 scored names the median is 26, p90 is 53 and the maximum is
+// 67. Taking measured abstentions out of the scale lifted the top of a board by
+// a median of 2 points and the best case by 12 (BBVA.MC 55 → 67 on 2026-09-01);
+// 22% of scored names carry an abstention at all.
+//
+// baseScoreBlock states that range to the Chief. It used to promise "the 50s–70s
+// rather than the 30s", which described no run this codebase has ever had. The
+// range is a *measurement and it has a vintage*: agents/fundamentals.md was
+// rewritten immediately after it was taken, off a domain that had been scoring
+// bearish on 6 of 7 covered names, so the next window of runs should read higher.
+// Re-measure before quoting it again rather than editing the number to taste.
 
 // BaseScore is the deterministic weighted read on one shortlisted ticker,
 // computed in-process from the specialists' structured tails before the Chief
@@ -73,8 +88,14 @@ type BaseScore struct {
 	Signed float64 `json:"signed"`
 	// Scaled is Signed re-expressed against referenceTotal — the strongest joint
 	// verdict the five rubrics permit — rather than against an unreachable
-	// strength of 10 everywhere. Same divisor for every name, so it changes the
-	// scale and never the ordering.
+	// strength of 10 everywhere.
+	//
+	// The divisor is the same for every name except where a domain's own computed
+	// verdict took it out of the scale (see Abstained), which is the one thing in
+	// this struct that can reorder two names against their raw Signed. It is meant
+	// to: a name three domains read and one measured as quiet is better evidenced
+	// than a name three domains read and one never reached, and until this existed
+	// the two were arithmetically identical.
 	Scaled float64 `json:"scaled"`
 	// Confidence is |Scaled|·100 with the coverage cap applied.
 	Confidence int `json:"confidence"`
@@ -105,6 +126,12 @@ type BaseScore struct {
 	// Domains maps each domain that scored the ticker to its signed strength
 	// (−10…+10). A neutral bias is 0 but still counts as coverage.
 	Domains map[string]int `json:"domains,omitempty"`
+	// Abstained lists the domains that were taken out of this name's confidence
+	// scale because their own computed verdict said there was nothing
+	// directional to read. It is not the same list as "domains absent from
+	// Domains": a domain missing from both had no data at all, and that one
+	// still votes zero against the full scale.
+	Abstained []string `json:"abstained,omitempty"`
 }
 
 // For returns the base confidence for a proposed direction. A direction that
@@ -125,7 +152,11 @@ func domainWeightMap(w model.DomainWeights) map[string]float64 { return w.Map() 
 // shortlisted ticker, ranked best-first. Every shortlisted name appears, even
 // one no domain scored — an absent row would read as an oversight, whereas a
 // row with zero coverage says plainly that there is nothing to reason from.
-func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, shortlist []model.Candidate) []BaseScore {
+//
+// stoodDown is ticker → the domains whose computed verdict said they had nothing
+// directional to say about that name (orchestrator.standDowns). Those domains
+// leave the confidence scale for that name; see the divisor comment below.
+func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, shortlist []model.Candidate, stoodDown map[string]map[string]bool) []BaseScore {
 	weights := domainWeightMap(w)
 	totalWeight := 0.0
 	for _, v := range weights {
@@ -133,7 +164,7 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 			totalWeight += v
 		}
 	}
-	reference := model.ReferenceTotal(w)
+	fullReference := model.ReferenceTotal(w)
 
 	type accum struct {
 		weighted float64
@@ -204,6 +235,34 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 	for _, t := range order {
 		a := byTicker[t]
 		b := BaseScore{Ticker: t, Domains: a.domains}
+
+		// A domain that looked at this name and found no direction comes out of
+		// the *scale*, rather than voting zero against it. Sentiment's
+		// positioning verdict abstains on roughly seven names in ten by design —
+		// routine scheduled selling and a put/call ratio near 1.0 are the resting
+		// state of the market — and charging its full 0.17 for that put a flat
+		// ~21-point ceiling on every name the domain read correctly.
+		//
+		// Only the reference denominator moves. Signed and CoveredWeight stay
+		// measured against the *full* weight, which is what keeps this from
+		// becoming the covered-weight renormalisation the comment below records
+		// as an inversion: a name carried by one loud domain plus three
+		// abstentions still reports a low CoveredWeight, so the scarce/thin caps
+		// bind on it and it cannot climb past a name four domains actually read.
+		// Those caps were kept as a redundant floor; this is the case they floor.
+		reference := fullReference
+		for domain := range stoodDown[t] {
+			if weights[domain] <= 0 {
+				continue
+			}
+			if _, scored := a.domains[domain]; scored {
+				continue // it found something after all — the score is the answer
+			}
+			reference -= model.ReferenceWeight(w, domain)
+			b.Abstained = append(b.Abstained, domain)
+		}
+		sort.Strings(b.Abstained)
+
 		if a.covered > 0 && totalWeight > 0 {
 			// Divide by the *total* weight, not the covered weight: a domain with
 			// no data for this name casts an explicit neutral vote.
@@ -222,7 +281,7 @@ func computeBaseScores(w model.DomainWeights, reports []agents.ReportContext, sh
 			// Confidence is scored against what the domains can jointly express,
 			// not against an unreachable 10-across-the-board. Same denominator for
 			// every name, so this rescales without reordering. See
-			// model.ReferenceStrength.
+			// model.ReferenceStrength, less whatever stood down above.
 			if reference > 0 {
 				b.Scaled = a.weighted / reference
 				if b.Scaled > 1 {
@@ -296,14 +355,22 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 	sb.WriteString("Computed in-process from the `scores` tails of the reports below, using the weights above: ")
 	sb.WriteString("`base = Σ wᵈ · signᵈ · strengthᵈ/10` over the *full* domain weight — a domain with no data for a name votes 0 — ")
 	sb.WriteString("then expressed as a share of the strongest joint verdict the scoring rubrics allow (strength 8). ")
-	sb.WriteString("So 100 means every domain agreeing at the top of its band, and a well-supported idea lands in the 50s–70s rather than the 30s. ")
+	sb.WriteString("So 100 means all four scoring domains agreeing at the top of their own bands on one name, which has not yet happened. ")
+	sb.WriteString("Measured across the 12 runs to 2026-09-05, re-scored on the current weights: **the best base on a board runs 41–67 and sits near 56**, ")
+	sb.WriteString("a scored name is typically in the 20s–40s, and half the board is under 30. ")
+	sb.WriteString("Read a base in the 50s as a strong result on this scale rather than a mediocre one — the numbers here are lower than a percentage reads, ")
+	sb.WriteString("because a name has to persuade four domains, not one. Rank on the spread between them, not against 100. ")
 	sb.WriteString(fmt.Sprintf("**Start from `base` and adjust by at most ±%d**, naming each adjustment. ", band))
 	sb.WriteString("`covered` is the share of total domain weight behind the number; a low `covered` has already lowered `base`, ")
 	sb.WriteString("so do not discount thin coverage a second time. `cap` is the further ceiling coverage imposes. ")
 	sb.WriteString("`agree` is how much of the evidence's magnitude survived the domains disagreeing (100% = every domain that spoke pointed the same way). ")
 	sb.WriteString("It is *already inside* `base` and is shown only so you can tell a thin-but-unanimous name from a well-covered name whose domains fought: ")
 	sb.WriteString("both can land on the same `base`, and they are not the same idea. Do not adjust for it — it is not new evidence.\n\n")
-	sb.WriteString("Per-domain cells are signed strengths (−10…+10); `·` means that domain had no data for the name.\n\n")
+	sb.WriteString("Per-domain cells are signed strengths (−10…+10); `·` means that domain had no data for the name, ")
+	sb.WriteString("and `~` means it had the data and its own computed verdict found nothing directional in it. ")
+	sb.WriteString("The two are not the same and `base` treats them differently: a `·` votes 0 against the full scale, ")
+	sb.WriteString("while a `~` leaves the scale for that name, because a domain that looked and measured the resting state ")
+	sb.WriteString("is not a domain that failed to look. Do not re-read a `~` as bearish — it is the absence of a reading.\n\n")
 	sb.WriteString("| ticker | base dir | base | covered | agree | cap |")
 	for _, d := range baseScoreDomains {
 		sb.WriteString(" " + d + " |")
@@ -329,10 +396,17 @@ func baseScoreBlock(bases []BaseScore, band int) string {
 		}
 		sb.WriteString(fmt.Sprintf("| %s | %s | %d | %.0f%% | %s | %s |",
 			b.Ticker, dir, b.Confidence, b.CoveredWeight*100, agree, cap))
+		stood := map[string]bool{}
+		for _, d := range b.Abstained {
+			stood[d] = true
+		}
 		for _, d := range baseScoreDomains {
-			if v, ok := b.Domains[d]; ok {
+			switch v, ok := b.Domains[d]; {
+			case ok:
 				sb.WriteString(fmt.Sprintf(" %+d |", v))
-			} else {
+			case stood[d]:
+				sb.WriteString(" ~ |")
+			default:
 				sb.WriteString(" · |")
 			}
 		}

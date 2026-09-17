@@ -59,6 +59,17 @@ func Calibrate(s *Summary) *Calibration {
 	if s == nil {
 		return nil
 	}
+	// Legacy feedback must never silently learn from a different research engine.
+	filtered := &Summary{Replay: s.Replay}
+	for _, e := range s.Entries {
+		if e.ResearchMode != "thesis" {
+			filtered.Entries = append(filtered.Entries, e)
+		}
+	}
+	if len(filtered.Entries) != len(s.Entries) {
+		filtered.aggregate()
+		s = filtered
+	}
 	c := &Calibration{
 		ComputedAt:      time.Now().UTC().Format(time.RFC3339),
 		NClosed:         s.Closed,

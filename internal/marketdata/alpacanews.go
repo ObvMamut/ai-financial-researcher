@@ -69,6 +69,7 @@ type alpacaNewsResp struct {
 		ID        int64    `json:"id"`
 		Headline  string   `json:"headline"`
 		Summary   string   `json:"summary"`
+		Content   string   `json:"content"`
 		Author    string   `json:"author"`
 		Source    string   `json:"source"`
 		URL       string   `json:"url"`
@@ -151,6 +152,15 @@ func (p *alpacaNewsProvider) Fetch(ctx context.Context, domain string, ticker st
 		td.Warnings = append(td.Warnings, warn)
 		return td, nil
 	}
+	for i := range facts {
+		for _, n := range resp.News {
+			if n.URL == facts[i].URL {
+				facts[i].Summary = cleanDocument(n.Summary)
+				facts[i].Content = cleanDocument(n.Content)
+				break
+			}
+		}
+	}
 	td.Facts = facts
 	return td, nil
 }
@@ -169,6 +179,7 @@ func (p *alpacaNewsProvider) search(ctx context.Context, symbol string) (alpacaN
 	// pipeline reads, but a contentless one is usually a duplicate of a real
 	// story that also arrives.
 	q.Set("exclude_contentless", "true")
+	q.Set("include_content", "true")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/v1beta1/news?"+q.Encode(), nil)
 	if err != nil {

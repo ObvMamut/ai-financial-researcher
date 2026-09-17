@@ -22,6 +22,8 @@ type warning struct {
 // checked against, and a seven-argument validator invites callers to pass them
 // in the wrong order.
 type verified struct {
+	AsOf   time.Time // fixed evidence cutoff for an explicitly frozen evaluation
+	Thesis bool      // thesis mode retains risk checks without score anchoring
 	// Universe is the fallback authority on a name's identity.
 	Universe *universe.Universe
 	// Quant is the computed price/vol pack; nil when no prices were available.
@@ -69,7 +71,9 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 	}
 
 	// Fix GeneratedAt if missing
-	if res.GeneratedAt == "" {
+	if cfg.Frozen != nil {
+		res.GeneratedAt = cfg.Frozen.AsOf.UTC().Format(time.RFC3339)
+	} else if res.GeneratedAt == "" {
 		res.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	if res.Mode == "" {

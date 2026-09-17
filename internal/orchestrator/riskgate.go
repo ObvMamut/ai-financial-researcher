@@ -35,9 +35,11 @@ const (
 	// ticker string rather than by the geometry. Ten thousand antithetic pairs
 	// put it under one basis point.
 	expectancyPaths = 10000
-	// riskGateMaxSectorShare is how many of the top ideas may share a sector
-	// before the book is one bet in several tickets.
-	riskGateMaxSectorShare = 2
+	// defaultMaxPerSector is how many of the top ideas may share a sector
+	// before the book is one bet in several tickets. Exposed as
+	// risk.max_per_sector so the shortlist's own sector cap can be derived from
+	// it rather than guessed at.
+	defaultMaxPerSector = 2
 	// defaultEdgeSigmaDaily is the daily expected return assumed in the
 	// expectancy simulation, in units of σ_daily.
 	//
@@ -138,6 +140,11 @@ type riskFinding struct {
 	// model to fix any of those spends the one re-prompt on nothing and invites
 	// it to rewrite the ideas that were already sound.
 	Observational bool
+	// Blocked names what kind of failure this is, for the decision the finding
+	// produces: a plan review whose call never returned is a research failure,
+	// not a risk verdict, and recording it as one hides that the pipeline broke.
+	// Empty means the ordinary risk/construction case.
+	Blocked string
 }
 
 // actionable reports whether a finding names something the Chief can change by
@@ -305,6 +312,9 @@ func riskDefaults(c model.RiskConfig) model.RiskConfig {
 	fill(&c.ADVMinUSD, "adv_min_usd", defaultADVMinUSD)
 	fill(&c.MaxPairCorr, "max_pair_corr", 0.75)
 	fill(&c.MaxPortfolioBeta, "max_portfolio_beta", 1.5)
+	if !c.Set("max_per_sector") && c.MaxPerSector <= 0 {
+		c.MaxPerSector = defaultMaxPerSector
+	}
 	// EdgeSigmaDaily is a prior rather than a limit, so a negative value is a
 	// real setting — the system is losing money — and must not be read as
 	// "unfilled" the way a negative cost would be.
@@ -326,6 +336,10 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	var out []riskFinding
 	hard := func(format string, args ...any) {
 		out = append(out, riskFinding{Ticker: idea.Ticker, Hard: true, Message: fmt.Sprintf(format, args...)})
+	}
+	if v.Thesis && (idea.TimeframeDays < 10 || idea.TimeframeDays > 15) {
+		hard("%s: holding window must be 10–15 sessions", idea.Ticker)
+		return out
 	}
 	// note records something the run should surface but the Chief cannot fix.
 	note := func(format string, args ...any) {
@@ -371,7 +385,7 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 		// Rounded like every neighbouring field: the raw quotient shipped as
 		// 0.3511450381679389 in ideas.json beside notionals rounded to the cent.
 		idea.BreakevenWinRate = math.Round(risk/(risk+reward)*10000) / 10000
-		if rr := reward / risk; rr < cfg.RRMin {
+		if rr := reward / risk; !v.Thesis && rr < cfg.RRMin {
 			hard("%s: reward:risk is %.2f, below the hard floor of %.2f — move the target out or the stop in",
 				idea.Ticker, rr, cfg.RRMin)
 		}
@@ -408,7 +422,7 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	// and its fabricated-date check as well as its geometry checks, and shipped
 	// with no finding of any kind. An idea nothing could be verified about must
 	// not be indistinguishable from one that passed.
-	out = append(out, checkEventWindow(idea, v.Events)...)
+	out = append(out, checkEventWindowAt(idea, v.Events, v.AsOf)...)
 	out = append(out, checkFabricatedDates(idea, v.Dates)...)
 
 	unit := m.SigmaDaily * math.Sqrt(h) * m.LastClose // 1σ of the holding period, in price
@@ -420,7 +434,7 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 			idea.Ticker)
 		return out
 	}
-	if s := risk / unit; s < cfg.StopSigmaMin {
+	if s := risk / unit; !v.Thesis && s < cfg.StopSigmaMin {
 		hard("%s: the stop is %.2fσ from entry, inside the %.1fσ floor — that is noise, not risk (1σ over %.0f days ≈ %.2f)",
 			idea.Ticker, s, cfg.StopSigmaMin, h, unit)
 	} else if s > cfg.StopSigmaMax {
@@ -442,14 +456,14 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	}
 	idea.ExpectancyBps = math.Round(evBps*10) / 10
 	idea.ExpectancyR = math.Round(evR*1000) / 1000
-	if evR < cfg.MinExpectancyR {
+	if !v.Thesis && evR < cfg.MinExpectancyR {
 		verdict := "the geometry loses money at the assumed edge"
 		if evR > 0 {
 			verdict = "which is indistinguishable from zero once costs are paid"
 		}
 		hard("%s: simulated expectancy is %+.3fR (%+.1f bps net of %.0f bps costs), under the %.3fR floor — %s (breakeven win rate %.0f%%). The lever is the holding period, not the reward:risk ratio: a tighter stop is touched more often and lowers this number",
 			idea.Ticker, evR, evBps, cost, cfg.MinExpectancyR, verdict, idea.BreakevenWinRate*100)
-	} else if cfg.MinExpectancyBps > 0 && evBps < cfg.MinExpectancyBps {
+	} else if !v.Thesis && cfg.MinExpectancyBps > 0 && evBps < cfg.MinExpectancyBps {
 		hard("%s: simulated expectancy is %+.1f bps net of %.0f bps costs, under the configured %.0f bps floor (breakeven win rate %.0f%%)",
 			idea.Ticker, evBps, cost, cfg.MinExpectancyBps, idea.BreakevenWinRate*100)
 	}
@@ -694,6 +708,10 @@ func checkPriceOnlyEvidence(idea *model.TradeIdea) string {
 // to know about one: the news persona was asked for earnings dates, and on a
 // search-less engine it supplied them from memory.
 func checkEventWindow(idea *model.TradeIdea, events map[string]time.Time) []riskFinding {
+	return checkEventWindowAt(idea, events, time.Time{})
+}
+
+func checkEventWindowAt(idea *model.TradeIdea, events map[string]time.Time, asOf time.Time) []riskFinding {
 	date, ok := events[strings.ToUpper(strings.TrimSpace(idea.Ticker))]
 	if !ok {
 		return nil
@@ -702,7 +720,10 @@ func checkEventWindow(idea *model.TradeIdea, events map[string]time.Time) []risk
 	if h <= 0 {
 		h = 10
 	}
-	now := time.Now().UTC().Truncate(24 * time.Hour)
+	if asOf.IsZero() {
+		asOf = time.Now()
+	}
+	now := asOf.UTC().Truncate(24 * time.Hour)
 	// Trading days to calendar days: five sessions a week, rounded up so the
 	// window is never understated.
 	if date.Before(now) || date.After(now.AddDate(0, 0, (h*7+4)/5)) {
@@ -880,10 +901,10 @@ func gateBook(res *model.IdeasResult, v verified, cfg model.RiskConfig) []riskFi
 	}
 	sort.Strings(names)
 	for _, s := range names {
-		if sectors[s] > riskGateMaxSectorShare {
+		if sectors[s] > cfg.MaxPerSector {
 			out = append(out, riskFinding{Message: fmt.Sprintf(
 				"%d of %d ideas are in %s — at most %d may share a sector; replace the weakest with a different one",
-				sectors[s], len(res.Ideas), s, riskGateMaxSectorShare)})
+				sectors[s], len(res.Ideas), s, cfg.MaxPerSector)})
 		}
 	}
 

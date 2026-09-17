@@ -25,11 +25,13 @@ var ErrNotApplicable = fmt.Errorf("%w: not covered by this provider", ErrUnavail
 // search-less engine may cite only URLs that appear in the pack, and the
 // orchestrator enforces that against the pack's URL set.
 type Fact struct {
-	Label  string    `json:"label"`
-	Value  string    `json:"value"`
-	AsOf   time.Time `json:"as_of"`
-	Source string    `json:"source"`
-	URL    string    `json:"url,omitempty"`
+	Summary string    `json:"summary,omitempty"`
+	Content string    `json:"content,omitempty"`
+	Label   string    `json:"label"`
+	Value   string    `json:"value"`
+	AsOf    time.Time `json:"as_of"`
+	Source  string    `json:"source"`
+	URL     string    `json:"url,omitempty"`
 }
 
 // TickerData is the set of facts collected for one ticker in one domain.

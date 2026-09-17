@@ -33,7 +33,7 @@ func attemptChiefFallback(ctx context.Context, ch chan<- Event, run *store.Run, 
 	}
 	status = model.DomainStatus{
 		Domain: "chief-analyst-fallback", Status: r.Status, Err: r.Err,
-		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens,
+		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Usage: r.Usage,
 	}
 
 	if r.Status == model.StatusFailed {

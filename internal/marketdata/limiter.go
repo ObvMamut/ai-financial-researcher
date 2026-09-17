@@ -105,6 +105,16 @@ func (l *Limiter) save() {
 	_ = os.WriteFile(l.statePath, data, 0o644)
 }
 
+// ExhaustForDay remembers a provider-confirmed daily quota refusal across runs.
+// Local counts alone cannot account for calls made by another application.
+func (l *Limiter) ExhaustForDay() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.resetIfNewDayLocked(time.Now())
+	l.dailyCount = l.dailyLimit
+	l.save()
+}
+
 // sameUTCDay reports whether two instants fall on the same UTC calendar day.
 // Provider quotas reset on the provider's own clock; UTC is the deterministic
 // choice, and being an hours off only costs a little unused budget.

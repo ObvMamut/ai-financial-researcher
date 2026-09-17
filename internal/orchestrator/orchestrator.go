@@ -16,6 +16,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/parse"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
 	"github.com/mamut/claude-financial-researcher/internal/store"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
@@ -44,13 +45,19 @@ type Event struct {
 
 // Config holds all run parameters.
 type Config struct {
-	Mode      model.Mode
-	Ticker    string   // single-stock mode only
-	Indices   []string // independent mode: index keys to screen; empty = all
-	AgentsDir string   // path to agents/*.md
-	RunsDir   string   // base directory for run artifacts (default "runs")
-	DataDir   string   // path for cached market data
-	Workers   int      // bounded pool size (default 4)
+	// Frozen and EvaluationRun execute an explicitly reserved evaluation arm
+	// against a common, closed evidence corpus. They must be supplied together.
+	Frozen        *marketdata.ResearchSnapshot
+	EvaluationRun *store.Run
+	ResearchMode  string
+	Research      model.ResearchConfig
+	Mode          model.Mode
+	Ticker        string   // single-stock mode only
+	Indices       []string // independent mode: index keys to screen; empty = all
+	AgentsDir     string   // path to agents/*.md
+	RunsDir       string   // base directory for run artifacts (default "runs")
+	DataDir       string   // path for cached market data
+	Workers       int      // bounded pool size (default 4)
 
 	Timeouts  model.StageTimeouts
 	Retry     model.RetryPolicy
@@ -112,9 +119,10 @@ type Config struct {
 	// the merit backfill. Zero means 5.
 	MaxPerIndex int
 	// MaxThinlyCovered caps how many shortlisted names the run's sources can
-	// ground less than thinCoverage of the domain weight for. On 2026-09-01
-	// seven of twelve shortlisted names were in that position, with three of the
-	// five shipped ideas resting on a single domain. Zero means 4.
+	// ground less than thinCoverage of the domain weight for. Zero — the
+	// default — admits none, because the risk gate's evidence floor deletes an
+	// idea scored by quant alone and such a name can be scored by nothing else.
+	// A negative value disables the cap.
 	MaxThinlyCovered int
 	// ShortlistReserve holds slots in the shortlist for names the pre-screen
 	// classified as something other than "continuation" — a pullback or a base.
@@ -164,6 +172,10 @@ type Config struct {
 }
 
 func (c *Config) applyDefaults() {
+	if c.ResearchMode == "" {
+		c.ResearchMode = "legacy"
+	}
+	c.Research = c.Research.Defaults()
 	if c.AgentsDir == "" {
 		c.AgentsDir = "agents"
 	}
@@ -263,11 +275,22 @@ func (c *Config) applyDefaults() {
 	if c.MaxPerIndex <= 0 {
 		c.MaxPerIndex = 5
 	}
-	// A third of a twelve-name shortlist. Enough that a genuinely strong non-US
-	// nomination still reaches the specialists, few enough that the book cannot
-	// be mostly names four of the five domains must abstain on.
-	if c.MaxThinlyCovered <= 0 {
-		c.MaxThinlyCovered = 4
+	// None, and the reason is that such a name cannot reach the output at all.
+	//
+	// A name below thinCoverage is one no domain but quant can ground —
+	// expectedCoverage counts exactly the quant weight for an unmapped foreign
+	// listing — and riskgate's evidence floor deletes an idea scored by quant
+	// alone. So the cap was not admitting weaker research, it was admitting
+	// candidates guaranteed to be deleted, and paying for them in specialist
+	// reports and shortlist slots. On 2026-09-05 it seated exactly its four:
+	// 051910.KS, BAYN.DE, BMW.DE and DSFIR.AS took a third of the shortlist,
+	// News, Fundamentals and Sentiment returned nothing for any of them, and
+	// all four were dropped — leaving eight eligible names of which seven were
+	// one sector, so the run shipped two ideas.
+	//
+	// A negative value disables the cap, for an experiment that wants them back.
+	if c.MaxThinlyCovered < 0 {
+		c.MaxThinlyCovered = -1
 	}
 	// A quarter of a twelve-name shortlist. Enough that a run cannot ship an
 	// all-continuation book by default, few enough that the merit sort still
@@ -386,19 +409,24 @@ func Run(ctx context.Context, cfg Config) <-chan Event {
 		defer close(ch)
 		cfg.applyDefaults()
 		if err := run(ctx, cfg, ch); err != nil {
-			ch <- Event{Type: EventError, Message: err.Error()}
+			ch <- Event{Type: EventError, Message: redact.String(err.Error())}
 		}
 	}()
 	return ch
 }
 
 func emit(ch chan<- Event, e Event) {
+	e.Message = redact.String(e.Message)
 	select {
 	case ch <- e:
 	default: // drop if the TUI is too slow; never block pipeline
 	}
 }
 
+// Every event message passes through emit, which redacts: run-log lines are
+// built from provider diagnostics, and a provider that echoes its own query
+// string would otherwise print a credential to the TUI and to the headless
+// stream.
 func log(ch chan<- Event, msg string) {
 	emit(ch, Event{Type: EventLog, Message: msg})
 }
@@ -409,6 +437,21 @@ func agentStatus(ch chan<- Event, role string, status model.AgentStatus, r *mode
 
 func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	start := time.Now()
+	if err := validateFrozenRun(cfg); err != nil {
+		return err
+	}
+	if cfg.Frozen != nil {
+		ctx = withResearchTime(ctx, cfg.Frozen.AsOf)
+		ctx = withFrozenModelTools(ctx)
+	}
+	if cfg.ResearchMode != "legacy" && cfg.ResearchMode != "thesis" {
+		return fmt.Errorf("research_mode must be legacy or thesis")
+	}
+	if cfg.ResearchMode == "thesis" {
+		if err := validateResearchBudgets(cfg.Research); err != nil {
+			return err
+		}
+	}
 
 	// Resolve + validate the cheap-research engine up front. Fail fast on a
 	// misconfigured API/local engine rather than letting every cheap call fail
@@ -440,6 +483,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// this, and reports are checked against it afterwards — the personas assume a
 	// search-capable CLI, which is false on the HTTP engine.
 	cheapCaps := agents.Capabilities{WebSearch: engineWebSearch(cheapCLI)}
+	if cfg.Frozen != nil {
+		cheapCaps.WebSearch = false
+	}
 	if !cheapCaps.WebSearch {
 		log(ch, "Cheap engine has no web search: agents are told not to cite sources, and any [source:] tag they emit anyway will be stripped.")
 	}
@@ -457,12 +503,17 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	// Create run store
-	run, err := store.New(cfg.RunsDir)
-	if err != nil {
-		return fmt.Errorf("create run dir: %w", err)
+	run := cfg.EvaluationRun
+	if run == nil {
+		run, err = store.New(cfg.RunsDir)
+		if err != nil {
+			return fmt.Errorf("create run dir: %w", err)
+		}
 	}
 	log(ch, fmt.Sprintf("Run directory: %s", run.Dir))
-	_ = store.CleanupOldRuns(cfg.RunsDir, cfg.KeepRuns)
+	if cfg.Frozen == nil {
+		_ = store.CleanupOldRuns(cfg.RunsDir, cfg.KeepRuns)
+	}
 
 	// Start worker pool
 	p := newPool(cfg.Workers, cfg.Models, cfg.Binaries, cheapAPI, cheapCLI, cheapConc)
@@ -474,7 +525,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// Cache keys are date-scoped, so yesterday's entries can never be read
 	// again — but nothing removed them, and a universe-wide pre-screen writes a
 	// few hundred files a day.
-	if cfg.DataCacheDays > 0 {
+	if cfg.Frozen == nil && cfg.DataCacheDays > 0 {
 		if n, err := cache.Prune(time.Duration(cfg.DataCacheDays) * 24 * time.Hour); err != nil {
 			log(ch, fmt.Sprintf("warn: prune data cache: %v", err))
 		} else if n > 0 {
@@ -501,12 +552,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		marketdata.NewYahooOptionsProvider(),
 		marketdata.NewFredProvider(cfg.Providers.FredKey),
 	)
+	if cfg.Frozen != nil {
+		dataSvc = marketdata.NewFrozenService(cfg.Frozen)
+	}
 	// AlphaVantage's free tier is 25 requests a day against the key, not against
 	// the run, so a run can start with the budget already gone. Say so up front:
 	// on 2026-09-01 the counter stood at 24 of 25 and the run discovered it one
 	// ticker at a time, five minutes in, as a scatter of unrelated-looking
 	// failures. A run with no key configured is not degraded and says nothing.
 	avBudget := dailyBudgetOf(avProvider)
+	if cfg.Frozen != nil {
+		avBudget = nil
+	}
 	if avBudget != nil {
 		used, limit := avBudget.DailyBudget()
 		log(ch, fmt.Sprintf("AlphaVantage daily budget: %d of %d requests spent, %d left for this run",
@@ -529,8 +586,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// this is Yahoo alone and the run behaves exactly as it did before.
 	yahoo := marketdata.NewYahooClient(cache)
 	yahoo.SetPriceTTL(cfg.PriceTTL)
-	prices := marketdata.NewPrices(cfg.Providers.AlpacaKeyID, cfg.Providers.AlpacaSecret, cache)
-	prices.SetPriceTTL(cfg.PriceTTL)
+	livePrices := marketdata.NewPrices(cfg.Providers.AlpacaKeyID, cfg.Providers.AlpacaSecret, cache)
+	livePrices.SetPriceTTL(cfg.PriceTTL)
+	var prices marketdata.PriceSource = livePrices
 	// One FX table for the whole run: every liquidity floor and every position
 	// size is stated in USD, and half this universe does not trade in it.
 	//
@@ -539,6 +597,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// as US listings — routing them would send a currency pair to an equities
 	// API that has never heard of it.
 	fx := marketdata.NewFXRates(yahoo)
+	if cfg.Frozen != nil {
+		prices = cfg.Frozen
+		fx = marketdata.NewFXRates(cfg.Frozen)
+	}
 
 	var indices []string
 	if cfg.Mode == model.ModeIndependent {
@@ -577,7 +639,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// contact and disk cache with every other EDGAR provider, and is
 		// additive: without a contact email it returns nothing and the
 		// pre-screen ranks exactly as it did before.
-		reportDates := marketdata.NewEdgarReportDates(cfg.Providers.ContactEmail, cache)
+		var reportDates marketdata.ReportDateSource = marketdata.NewEdgarReportDates(cfg.Providers.ContactEmail, cache)
+		if cfg.Frozen != nil {
+			reportDates = cfg.Frozen
+		}
 		prescreen = runPrescreen(ctx, ch, prices, fx, reportDates, uni, indices, prescreenParams)
 		logPackErrors(ch, "prescreen", prescreen.Errors)
 		dataErrors = append(dataErrors, prefixed("prescreen", prescreen.Errors)...)
@@ -591,6 +656,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		log(ch, fmt.Sprintf("Pre-screen ranked %d of %d names (%d excluded: illiquid, too little history, or unavailable)",
 			ranked, total, total-ranked))
 		stage("prescreen", prescreenStart)
+	}
+
+	if cfg.ResearchMode == "thesis" {
+		return runThesis(ctx, cfg, ch, run, reg, uni, p, cheapCLI, dataSvc, prices, fx, prescreen, indices, start, stageMS)
 	}
 
 	// ── Stage 1: Scouts (independent research only) ────────────────────────────
@@ -648,7 +717,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			// stage was missing from the run's own accounting.
 			domainStatuses = append(domainStatuses, model.DomainStatus{
 				Domain: role, Status: r.Status, Err: r.Err,
-				Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens,
+				Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Usage: r.Usage,
 			})
 			if r.Status == model.StatusFailed {
 				agentStatus(ch, role, model.StatusFailed, &r)
@@ -666,6 +735,10 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 		shortlist = universe.Dedupe(shortlist)
 		log(ch, fmt.Sprintf("Shortlist after dedup: %d names", len(shortlist)))
+		for _, c := range collapseOverlappingNominations(uni, shortlist) {
+			log(ch, fmt.Sprintf("%s was nominated by %s, which share the listing — counting that as one reading, not agreement",
+				c.Ticker, strings.Join(c.NominatedBy, " and ")))
+		}
 		// Agreement and disagreement between scouts are the two things the merge
 		// used to swallow. Both are worth saying out loud: the run log is where
 		// a reader finds out that two independent tables produced the same name,
@@ -689,6 +762,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 		}
 		before := len(shortlist)
+		// One coverage answer, read by both the merit sort and the hard cap, so
+		// the two cannot disagree about which names the run can research.
+		coverage := func(ticker string) float64 { return expectedCoverage(cfg.Weights, ticker) }
 		// Merit, not round-robin: keep the nominations the pre-screen composite
 		// agrees with, in the direction they were nominated in — but hold a few
 		// slots for the setups that are not "this has already run", because the
@@ -697,17 +773,25 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		shortlist = universe.CapMerit(shortlist, universe.MeritCaps{
 			Max:              cfg.MaxShortlist,
 			PerIndex:         cfg.MaxPerIndex,
+			PerSector:        shortlistPerSector(cfg.Risk.MaxPerSector),
 			ThinlyCovered:    cfg.MaxThinlyCovered,
 			CoverageFloor:    thinCoverage,
 			Reserve:          cfg.ShortlistReserve,
 			ReservePredicate: func(c model.Candidate) bool { return c.Setup != "" && c.Setup != SetupContinuation },
 			ReserveMinMerit:  cfg.ShortlistReserveMinMerit,
-			Score:            func(c model.Candidate) float64 { return meritScore(prescreen, c) },
-			Coverage:         func(c model.Candidate) float64 { return expectedCoverage(cfg.Weights, c.Ticker) },
+			Score:            func(c model.Candidate) float64 { return meritScore(prescreen, coverage, c) },
+			Coverage:         func(c model.Candidate) float64 { return coverage(c.Ticker) },
 		})
 		if len(shortlist) < before {
-			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index, max %d under %.0f%% coverage)",
-				before, len(shortlist), cfg.MaxPerIndex, cfg.MaxThinlyCovered, thinCoverage*100))
+			coverageRule := fmt.Sprintf("max %d under %.0f%% coverage", cfg.MaxThinlyCovered, thinCoverage*100)
+			switch {
+			case cfg.MaxThinlyCovered < 0:
+				coverageRule = "no coverage cap"
+			case cfg.MaxThinlyCovered == 0:
+				coverageRule = fmt.Sprintf("none under %.0f%% coverage — the evidence floor would delete them", thinCoverage*100)
+			}
+			log(ch, fmt.Sprintf("Shortlist trimmed %d → %d by pre-screen merit (max %d per index, %s)",
+				before, len(shortlist), cfg.MaxPerIndex, coverageRule))
 		}
 		if cfg.ShortlistReserve > 0 {
 			var held int
@@ -721,7 +805,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		for _, c := range shortlist {
 			log(ch, fmt.Sprintf("shortlist: %s (%s, %s) — scout %s, %s, merit %+.2f",
-				c.Ticker, c.Index, c.Sector, c.Bias, orUnknown(c.Setup), meritScore(prescreen, c)))
+				c.Ticker, c.Index, c.Sector, c.Bias, orUnknown(c.Setup), meritScore(prescreen, coverage, c)))
 		}
 		if err := run.WriteShortlist(shortlist); err != nil {
 			log(ch, fmt.Sprintf("warn: write shortlist: %v", err))
@@ -760,6 +844,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	quantPack, quantSeries := buildQuantPack(ctx, ch, run, prices, fx, shortlist)
 	logPackErrors(ch, "quant", quantPack.Errors)
 	dataErrors = append(dataErrors, prefixed("quant", quantPack.Errors)...)
+	if trimmed, dropped := dropStalePriced(cfg.Mode, shortlist, quantPack); len(dropped) > 0 {
+		shortlist = trimmed
+		msg := fmt.Sprintf("dropped %s from the shortlist: priced off a superseded close, so no level computed for %s could be acted on",
+			strings.Join(dropped, ", "), pluralNames(len(dropped)))
+		log(ch, "warn: "+msg)
+		dataErrors = append(dataErrors, "quant: "+msg)
+		if err := run.WriteShortlist(shortlist); err != nil {
+			log(ch, fmt.Sprintf("warn: rewrite shortlist: %v", err))
+		}
+	}
 	if len(quantPack.ByTicker) > 0 {
 		agentStatus(ch, "quant-data", model.StatusDone, nil)
 		log(ch, fmt.Sprintf("Quant metrics computed for %d/%d tickers", len(quantPack.ByTicker), len(shortlist)))
@@ -787,6 +881,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	eventDates := map[string]time.Time{}
 	verifiedDates := map[string]bool{}
 	collectQuantDates(verifiedDates, quantPack)
+	// The filing dates the drift block renders. They come from the pre-screen
+	// rather than from a data pack, so nothing else registers them, and an
+	// unregistered date the app itself printed reads to checkFabricatedDates as
+	// an invention.
+	collectDriftDates(verifiedDates, prescreen, shortlist)
 	specChans := make([]<-chan model.Report, len(specialists))
 	grounded := make([]bool, len(specialists))
 	ungrounded := make([][]string, len(specialists))
@@ -798,6 +897,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 	for i, sp := range specialists {
 		pack := dataSvc.BuildPack(ctx, sp.role, tickers)
+		if cfg.Frozen != nil && sp.role == "fundamentals" {
+			cfg.Frozen.AddLegacySources(ctx, pack, tickers)
+		}
 		// The verified earnings dates ride in on the news pack; the validator and
 		// the risk checks read the same map the news prompt renders.
 		for t, d := range pack.EventDates {
@@ -824,35 +926,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		citable[i] = pack.Citable
 
-		// Assemble the verified-data block per role: the quant specialist gets
-		// the full computed pack; news/sentiment get compact price context so
-		// their narratives stay anchored to real closes.
-		dataBlock := pack.Markdown()
-		switch sp.role {
-		case "quant":
-			if qmd := quantPack.Markdown(); qmd != "" {
-				// Append rather than replace: replacing made quant the only
-				// specialist that lost the macro backdrop every other role got.
-				dataBlock = qmd
-				if mm := pack.MacroMarkdown(); mm != "" {
-					dataBlock += "\n### Verified macro backdrop\n\n" + mm
-				}
-			}
-		case "news", "sentiment", "fundamentals":
-			// Fundamentals needs the price to say anything about a multiple:
-			// without it the domain could report a revenue figure but never a
-			// P/E, and "expensive" was an assertion about a number it had not
-			// been shown.
-			if cb := quantPack.CompactBlock(); cb != "" {
-				dataBlock += "\n### Verified price context (computed from daily OHLCV)\n\n" + cb
-			}
-		case "macro":
-			// The macro domain's question at this horizon is the market regime,
-			// and the benchmark prices answer it. FRED alone never could.
-			if rb := quantPack.RegimeBlock(); rb != "" {
-				dataBlock += "\n" + rb
-			}
-		}
+		dataBlock := specialistDataBlock(sp.role, pack, quantPack, prescreen, shortlist)
 
 		// Grounded means we injected *per-ticker* verified data for this domain.
 		// Judging it from dataBlock != "" was misleading: macro facts and the
@@ -964,6 +1038,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			Duration:               r.Duration,
 			Attempts:               r.Attempts,
 			Tokens:                 r.Tokens,
+			Usage:                  r.Usage,
 			Grounded:               grounded[i],
 			Ungrounded:             ungrounded[i],
 			Abstained:              abstained[i],
@@ -1024,20 +1099,31 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// arithmetic the run can reproduce. It is shown to the model as the level to
 	// start from, and enforced afterwards as the level it may only move by the
 	// configured band.
-	bases := computeBaseScores(cfg.Weights, specReports, shortlist)
+	// Which domains stood down on which names, so a measured "nothing to read
+	// here" stops being priced as a fetch that failed. Computed once and shared
+	// with the degraded path below, so the fallback ranking cannot disagree with
+	// the numbers the Chief was shown.
+	stoodDown := standDowns(domainStatuses)
+	bases := computeBaseScores(cfg.Weights, specReports, shortlist, stoodDown)
 
 	// What this pipeline has actually achieved, measured by replaying its own
 	// past ideas. It reaches the Chief as context for how hard to lean on
 	// today's evidence, and the risk gate as the edge its expectancy check
 	// assumes — replacing a prior with a measurement.
-	cal := trackRecord(ctx, ch, cfg, prices)
+	var cal *scoreboard.Calibration
+	if cfg.Frozen == nil {
+		cal = trackRecord(ctx, ch, cfg, prices)
+	}
 
 	// And what that record *shows*, which the arithmetic cannot say on its own:
 	// the attribution counts outcomes, and only the reasoning recorded with each
 	// past idea says what the winners had in common. One cheap-engine call,
 	// enforced against the counted cells, and skipped entirely below the closed-
 	// trade threshold.
-	pmRes := postMortem(ctx, ch, cfg, reg, p, cheapCLI, cheapCaps, prices)
+	var pmRes postMortemResult
+	if cfg.Frozen == nil {
+		pmRes = postMortem(ctx, ch, cfg, reg, p, cheapCLI, cheapCaps, prices)
+	}
 	if pmRes.Status.Domain != "" {
 		domainStatuses = append(domainStatuses, pmRes.Status)
 	}
@@ -1053,6 +1139,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	verifiedCtx := verified{
+		AsOf:      frozenAsOf(cfg),
 		Universe:  uni,
 		Quant:     quantPack,
 		Shortlist: shortlist,
@@ -1138,7 +1225,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	chiefStatusIdx := len(domainStatuses)
 	domainStatuses = append(domainStatuses, model.DomainStatus{
 		Domain: "chief-analyst", Status: r.Status, Err: r.Err,
-		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens,
+		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Usage: r.Usage,
 	})
 
 	var ideas *model.IdeasResult
@@ -1169,7 +1256,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		if !fellBack {
 			log(ch, "Chief analyst failed — building degraded fallback from specialist scores…")
-			ideas = buildDegradedIdeas(cfg, specReports, shortlist)
+			ideas = buildDegradedIdeas(cfg, specReports, shortlist, stoodDown)
 		}
 		outcome = "degraded"
 	} else {
@@ -1214,7 +1301,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			if len(repromptReasons) > 0 {
 				log(ch, "Validation failed — attempting corrective re-prompt…")
 				first := r
-				reprompt := correctivePrompt(prompt, first.Stdout, repromptReasons)
+				reprompt := correctivePrompt(prompt, first.Stdout, repromptReasons, bases)
 				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, synthRetry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
 				r.Path = first.Path // same artifact; the corrected pass is written over it
 
@@ -1224,6 +1311,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				st.Duration += r.Duration
 				st.Attempts += r.Attempts
 				st.Tokens += r.Tokens
+				st.Usage = append(st.Usage, r.Usage...)
 				if r.Status != model.StatusFailed {
 					st.Status, st.Err = r.Status, r.Err
 				}
@@ -1304,7 +1392,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				}
 			}
 			if !fellBack {
-				ideas = buildDegradedIdeas(cfg, specReports, shortlist)
+				ideas = buildDegradedIdeas(cfg, specReports, shortlist, stoodDown)
 				ideas.Notes = fmt.Sprintf("JSON parse error: %v — %s", parseErr, ideas.Notes)
 			}
 			outcome = "degraded"
@@ -1321,6 +1409,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	// Final persistence and metadata
+	if cfg.Frozen != nil {
+		ideas.GeneratedAt = cfg.Frozen.AsOf.UTC().Format(time.RFC3339)
+	}
 	if err := run.WriteIdeas(ideas); err != nil {
 		log(ch, fmt.Sprintf("warn: write ideas.json: %v", err))
 	}
@@ -1565,4 +1656,73 @@ func cheapModelName(cfg Config) string {
 	default:
 		return cfg.Models[model.CLIGemini]
 	}
+}
+
+// collapseOverlappingNominations rewrites Nominations to count *independent*
+// readings, and returns the candidates it changed so the run log can say so.
+//
+// The merit sort pays meritAgreementBonus per extra nomination, and the reason
+// it gives is that "two scouts reaching the same name from different index
+// tables is independent evidence". That holds only where the tables are drawn
+// from different pools. 35 of the 56 names in nq100 are also in sp500 — MU,
+// PANW, QCOM, SNPS, NVDA, META and thirty more — so for those names the two
+// scouts are choosing the same ticker out of two overlapping candidate pools
+// built from one price history. The composite differs between the two rows only
+// because it is standardised within each index; the underlying evidence is one
+// series, read twice.
+//
+// So a name every nominating index holds is one reading however many scouts
+// mention it. On 2026-09-05 all four dual-nominated names were in that overlap,
+// each collected a bonus for it, and the shortlist came out seven-twelfths
+// Information Technology against a book limit of two ideas per sector.
+//
+// A nomination from an index that does *not* hold the ticker would be genuinely
+// separate, and still counts — parseScoutResult drops off-list nominations, so
+// today that cannot arise, but the rule is about independence rather than about
+// which validation happens to run upstream.
+func collapseOverlappingNominations(uni *universe.Universe, shortlist []model.Candidate) []model.Candidate {
+	if uni == nil {
+		return nil
+	}
+	var changed []model.Candidate
+	for i := range shortlist {
+		c := &shortlist[i]
+		if len(c.NominatedBy) < 2 {
+			continue
+		}
+		// One reading for the pool they share, plus one for each index that
+		// could not have been reading it.
+		n := 1
+		for _, idx := range c.NominatedBy {
+			if !uni.Contains(idx, c.Ticker) {
+				n++
+			}
+		}
+		if n >= c.Nominations {
+			continue
+		}
+		c.Nominations = n
+		changed = append(changed, *c)
+	}
+	return changed
+}
+
+// shortlistPerSector is how many names of one sector may reach the specialists,
+// derived from the number the risk gate will let into the book.
+//
+// One more than the gate allows, deliberately. Matching the gate exactly would
+// hand it a shortlist with no slack: every sector would arrive at its limit and
+// the gate could only accept or shrink the book, never choose between two names
+// of the same sector on the research it just paid for. One spare per sector is
+// what makes the gate's cap a selection rather than a truncation.
+//
+// It is derived rather than configured separately because the two numbers answer
+// one question, and on 2026-09-05 they disagreed: the funnel had no sector notion
+// at all, returned a shortlist seven-twelfths Information Technology, and the
+// gate's limit of two then cut the book to two ideas.
+func shortlistPerSector(gate int) int {
+	if gate <= 0 {
+		return 0 // the gate is disabled; so is the funnel's cap
+	}
+	return gate + 1
 }

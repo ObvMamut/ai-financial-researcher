@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 // EarningsFactLabel is the label of the fact carrying a verified next-earnings
@@ -133,7 +135,8 @@ func (c *earningsCalendar) fetch(ctx context.Context) (string, error) {
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", err
+		// *url.Error carries the whole request URL, apikey included.
+		return "", redact.Error(err)
 	}
 	defer resp.Body.Close()
 	// The CSV is a few hundred KB; anything far beyond that is not a calendar.
@@ -146,7 +149,8 @@ func (c *earningsCalendar) fetch(ctx context.Context) (string, error) {
 	// CSV should be. Parsed as CSV it yields an empty calendar, which reads
 	// exactly like "nobody reports in the next three months".
 	if t := strings.TrimSpace(body); strings.HasPrefix(t, "{") {
-		return "", fmt.Errorf("%w: AlphaVantage earnings calendar: %s", ErrUnavailable, firstLine(t))
+		rememberDailyQuota(c.limiter, t)
+		return "", fmt.Errorf("%w: AlphaVantage earnings calendar: %s", ErrUnavailable, redact.String(firstLine(t)))
 	}
 	return body, nil
 }

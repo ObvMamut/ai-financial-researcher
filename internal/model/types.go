@@ -111,6 +111,13 @@ type Candidate struct {
 	// scouts, the merit sort ranked purely on the pre-screen composite, and both
 	// were dropped for names one scout had mentioned once.
 	Nominations int `json:"nominations,omitempty"`
+	// NominatedBy names the indices that put this ticker forward in that
+	// direction, in collection order. Nominations is a count and cannot answer
+	// whether the scouts were looking at different evidence: 35 of the 56 names
+	// in nq100 are also in sp500, so two scouts "agreeing" on MU may be two
+	// readings of one row. The orchestrator collapses those before the merit
+	// sort pays for them; this is what it collapses on.
+	NominatedBy []string `json:"nominated_by,omitempty"`
 	// Contested names the indices that nominated this ticker in the *opposite*
 	// direction, when two scouts disagreed. Dedupe keeps the first-seen reading
 	// and records the collision here rather than resolving it silently: on
@@ -142,31 +149,37 @@ type SpecialistResult struct {
 
 // Report is the outcome of a single agent subprocess run.
 type Report struct {
-	Agent    string      // role name, e.g. "technicals", "scout-sp500"
-	CLI      CLI         // gemini | claude
-	Stage    Stage       // screening | analysis | synthesis
-	Status   AgentStatus // done | failed
-	Path     string      // runs/<ts>/<agent>.md
-	Stdout   string      // raw captured output
-	Err      string      // error text when Status == failed
-	Duration int64       // milliseconds
-	Attempts int         // subprocess attempts actually made (≥1)
-	// Tokens is the completion-token count the engine reported, when it reported
-	// one. The CLI engines report none, so this stays 0 for them.
+	FailureKind string
+	Prompt      *PromptProfile
+	Agent       string      // role name, e.g. "technicals", "scout-sp500"
+	CLI         CLI         // gemini | claude
+	Stage       Stage       // screening | analysis | synthesis
+	Status      AgentStatus // done | failed
+	Path        string      // runs/<ts>/<agent>.md
+	Stdout      string      // raw captured output
+	Err         string      // error text when Status == failed
+	Duration    int64       // milliseconds
+	Attempts    int         // subprocess attempts actually made (≥1)
+	// Tokens sums reported completion tokens across attempts, including failed
+	// attempts. Usage distinguishes unknown CLI counts from reported zeroes.
 	Tokens int
+	Usage  []TokenUsage
 }
 
 // TradeIdea is one final deliverable: direction, confidence, rationale, and
 // actionable trade mechanics. The mechanics fields are omitempty so ideas.json
 // from runs predating them still parses.
 type TradeIdea struct {
-	Rank       int       `json:"rank"`
-	Ticker     string    `json:"ticker"`
-	Name       string    `json:"name"`
-	Index      string    `json:"index"`
-	Direction  Direction `json:"direction"`  // BUY | SELL
-	Confidence int       `json:"confidence"` // 0-100
-	Why        string    `json:"why"`
+	ResearchMode string      `json:"research_mode,omitempty"`
+	Status       string      `json:"status,omitempty"`
+	Thesis       *ThesisPlan `json:"thesis,omitempty"`
+	Rank         int         `json:"rank"`
+	Ticker       string      `json:"ticker"`
+	Name         string      `json:"name"`
+	Index        string      `json:"index"`
+	Direction    Direction   `json:"direction"`  // BUY | SELL
+	Confidence   int         `json:"confidence"` // 0-100
+	Why          string      `json:"why"`
 	// Setup carries the pre-screen archetype through to the run artifact, so
 	// the record can eventually answer whether pullback entries outperform
 	// continuation ones. It is recorded, not yet scored on:
@@ -269,6 +282,17 @@ type RiskConfig struct {
 	// MaxPortfolioBeta bounds both the average absolute beta of the book and its
 	// net signed beta.
 	MaxPortfolioBeta float64 `json:"max_portfolio_beta"`
+	// MaxPerSector is how many of the shipped ideas may share a sector before
+	// the book is one bet in several tickets.
+	//
+	// It was a private constant in the risk gate, which meant the funnel that
+	// selects the shortlist had no way to know the limit it was feeding. On
+	// 2026-09-05 the merit sort returned a shortlist seven-twelfths Information
+	// Technology, seven of the eight names that cleared the evidence floor were
+	// IT, and this limit then cut the book to two ideas. Exported here so
+	// universe.MeritCaps.PerSector can be derived from it and the two cannot
+	// drift apart.
+	MaxPerSector int `json:"max_per_sector"`
 	// EdgeSigmaDaily is the daily expected return assumed in the expectancy
 	// simulation, in units of sigma_daily. A driftless check is vacuous —
 	// gambler's ruin makes EV about minus costs for any geometry — and an
@@ -313,10 +337,14 @@ func (c RiskConfig) Set(key string) bool { return c.Explicit[key] }
 
 // IdeasResult is the Chief Analyst's final JSON payload.
 type IdeasResult struct {
-	Mode        string      `json:"mode"`
-	GeneratedAt string      `json:"generated_at"`
-	Ideas       []TradeIdea `json:"ideas"`
-	Notes       string      `json:"notes"`
+	ResearchSummary *ResearchSummary    `json:"research_summary,omitempty"`
+	SchemaVersion   int                 `json:"schema_version,omitempty"`
+	ResearchMode    string              `json:"research_mode,omitempty"`
+	Decisions       []SelectionDecision `json:"decisions,omitempty"`
+	Mode            string              `json:"mode"`
+	GeneratedAt     string              `json:"generated_at"`
+	Ideas           []TradeIdea         `json:"ideas"`
+	Notes           string              `json:"notes"`
 }
 
 // StageTimeouts defines per-stage durations.
@@ -401,15 +429,29 @@ type APIConfig struct {
 
 // DomainStatus tracks the outcome of a specialist research run.
 type DomainStatus struct {
-	Domain   string      `json:"domain"`
-	Status   AgentStatus `json:"status"`
-	Err      string      `json:"err,omitempty"`
-	Grounded bool        `json:"grounded"` // true if per-ticker verified data was used
-	Attempts int         `json:"attempts"`
-	Duration int64       `json:"duration_ms"`
-	// Tokens counts the completion tokens the engine reported for this call,
-	// when it reported any (the CLI engines do not).
-	Tokens int `json:"tokens,omitempty"`
+	Contract           string            `json:"contract,omitempty"` // ok, compacted, failed; separate from JSON parsing
+	Recovery           string            `json:"recovery,omitempty"` // schema_repair or compaction
+	WritingDiagnostics []string          `json:"writing_diagnostics,omitempty"`
+	OriginalNarratives map[string]string `json:"original_narratives,omitempty"` // retained for independent compaction review
+	FailureKind        string            `json:"failure_kind,omitempty"`
+	Prompt             *PromptProfile    `json:"prompt,omitempty"`
+	Domain             string            `json:"domain"`
+	Status             AgentStatus       `json:"status"`
+	Err                string            `json:"err,omitempty"`
+	Grounded           bool              `json:"grounded"` // true if per-ticker verified data was used
+	Attempts           int               `json:"attempts"`
+	Duration           int64             `json:"duration_ms"`
+	// Tokens is the compatibility total of reported completion tokens across
+	// attempts. Usage retains per-attempt counts and missing-count information.
+	Tokens int          `json:"tokens,omitempty"`
+	Usage  []TokenUsage `json:"usage,omitempty"`
+
+	// Payload distinguishes receiving a response from obtaining usable research:
+	// "ok", "repaired" (the one bounded schema-repair call decoded it), or
+	// "invalid" (it never decoded). Every call in the 2026-09-07 thesis run was
+	// recorded `done` while eight of them carried nothing a decoder could read,
+	// so metadata said the research had completed and the dossiers were empty.
+	Payload string `json:"payload,omitempty"`
 
 	// Ungrounded lists the shortlisted tickers this domain found no verified
 	// data for. A domain whose whole shortlist is ungrounded is a degraded run,
@@ -464,13 +506,16 @@ type DomainStatus struct {
 
 // RunMeta captures all parameters and outcomes of a run for audit.
 type RunMeta struct {
-	Mode        string         `json:"mode"`
-	Ticker      string         `json:"ticker,omitempty"`
-	Indices     []string       `json:"indices,omitempty"` // indices screened (independent mode)
-	GeneratedAt string         `json:"generated_at"`
-	Shortlist   []Candidate    `json:"shortlist"`
-	Domains     []DomainStatus `json:"domains"`
-	Weights     DomainWeights  `json:"weights"`
+	SchemaVersion int            `json:"schema_version,omitempty"`
+	ResearchMode  string         `json:"research_mode,omitempty"`
+	Research      ResearchConfig `json:"research,omitempty"`
+	Mode          string         `json:"mode"`
+	Ticker        string         `json:"ticker,omitempty"`
+	Indices       []string       `json:"indices,omitempty"` // indices screened (independent mode)
+	GeneratedAt   string         `json:"generated_at"`
+	Shortlist     []Candidate    `json:"shortlist"`
+	Domains       []DomainStatus `json:"domains"`
+	Weights       DomainWeights  `json:"weights"`
 	// ThinlyCovered names the shortlisted tickers the run's sources can ground
 	// less than 60% of the domain weight for: SEC filings and listed option
 	// chains are US instruments, so fundamentals and sentiment cannot reach a
@@ -507,6 +552,13 @@ type RunMeta struct {
 	// because only per-agent durations were kept and the in-process stages had
 	// none at all.
 	Stages map[string]int64 `json:"stages,omitempty"`
+
+	// ResearchOutcomes records, per researched candidate, whether its calls
+	// completed, whether their payloads decoded, what evidence retrieval
+	// actually reached and what the independent review said. Those are four
+	// separate facts; a single final status cannot carry them, and reading a
+	// research failure as a rejection is what this separates.
+	ResearchOutcomes []ResearchOutcome `json:"research_outcomes,omitempty"`
 
 	// DataErrors collects every provider failure encountered while assembling
 	// the packs. These previously lived only in data/<domain>.json, so a run

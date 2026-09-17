@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 // DataPack is a collection of verified facts for a set of tickers.
@@ -281,6 +283,7 @@ func urlSuffix(u string) string {
 type Service struct {
 	providers []Provider
 	cache     *Cache
+	frozen    *ResearchSnapshot
 }
 
 func NewService(cache *Cache, providers ...Provider) *Service {
@@ -291,6 +294,9 @@ func NewService(cache *Cache, providers ...Provider) *Service {
 }
 
 func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string) *DataPack {
+	if s.frozen != nil {
+		return s.frozen.BuildPack(ctx, domain, tickers)
+	}
 	pack := NewDataPack(domain)
 
 	// Collect Macro data if applicable
@@ -309,7 +315,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			var err error
 			macro, err = prov.MacroFetch(ctx)
 			if err != nil && !errors.Is(err, ErrNotApplicable) {
-				pack.Errors = append(pack.Errors, fmt.Sprintf("%s macro: %v", prov.Name(), err))
+				pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s macro: %v", prov.Name(), err)))
 			}
 			if err == nil && len(macro) > 0 && s.cache != nil {
 				s.cache.Set(prov.Source(), prov.Name(), "MacroFetch", "GLOBAL", macro)
@@ -365,7 +371,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				var err error
 				data, err = prov.Fetch(ctx, domain, t)
 				if err != nil && !errors.Is(err, ErrNotApplicable) {
-					pack.Errors = append(pack.Errors, fmt.Sprintf("%s %s/%s: %v", prov.Name(), domain, t, err))
+					pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s %s/%s: %v", prov.Name(), domain, t, err)))
 				}
 				if err == nil && len(data.Facts) > 0 && s.cache != nil {
 					s.cache.Set(prov.Source(), prov.Name(), domain, t, data)
@@ -375,7 +381,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			// A provider that withheld a figure has to say so where the run's
 			// reader will see it, whether or not it also returned usable facts.
 			for _, w := range data.Warnings {
-				pack.Errors = append(pack.Errors, fmt.Sprintf("%s %s/%s: %s", prov.Name(), domain, t, w))
+				pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s %s/%s: %s", prov.Name(), domain, t, w)))
 			}
 
 			// Merge rather than stop at the first provider that answers. The

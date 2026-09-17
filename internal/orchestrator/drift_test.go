@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
@@ -277,5 +278,83 @@ func TestDriftBlockIsEmptyWithoutAPrescreen(t *testing.T) {
 	// Single-stock mode skips Stage 0.5 entirely.
 	if got := driftBlock(nil, []model.Candidate{{Ticker: "AAA"}}); got != "" {
 		t.Errorf("got %q, want nothing without a pre-screen", got)
+	}
+}
+
+// A date the app printed into a prompt must not read to the gate as an
+// invention. checkFabricatedDates docks 10 points and spends the run's one
+// corrective re-prompt for a date outside the verified set, and the drift block
+// is built from the pre-screen — so nothing that walks the data packs sees it.
+func TestDriftFilingDatesCountAsVerified(t *testing.T) {
+	ps := &Prescreen{Rows: []PrescreenRow{
+		{Ticker: "CRM", Index: "sp500", Setup: SetupDrift, ReportDate: "2026-08-27",
+			GapZ: 4.49, PostZ: 0.20, DriftSessions: 5, Drift: 3.59},
+		{Ticker: "MU", Index: "nq100", Setup: SetupContinuation, Score: 1.65},
+		// Shortlisted nowhere, so its date never reaches a prompt and must not
+		// be waved through either.
+		{Ticker: "ZZZ", Index: "sp500", Setup: SetupDrift, ReportDate: "2019-01-02", GapZ: 2, Drift: 1},
+	}}
+	shortlist := []model.Candidate{{Ticker: "MU", Index: "nq100"}, {Ticker: "CRM", Index: "sp500"}}
+
+	dates := map[string]bool{}
+	collectDriftDates(dates, ps, shortlist)
+
+	if !dates["2026-08-27"] {
+		t.Errorf("CRM's filing date is not verified, but the block prints it: %v", dates)
+	}
+	if dates["2019-01-02"] {
+		t.Errorf("a date no prompt carried was registered: %v", dates)
+	}
+
+	// And the gate agrees: the Chief quoting it keeps its confidence.
+	idea := &model.TradeIdea{Ticker: "CRM", Confidence: 50,
+		Why: "reported 2026-08-27 and gapped +4.49σ; the reaction is still standing"}
+	if f := checkFabricatedDates(idea, dates); len(f) != 0 {
+		t.Errorf("quoting the block's own date was flagged: %+v", f)
+	}
+	if idea.Confidence != 50 {
+		t.Errorf("confidence = %d, want 50 — no penalty for a date the app printed", idea.Confidence)
+	}
+}
+
+// Single-stock mode skips Stage 0.5, so there is no pre-screen to walk.
+func TestCollectDriftDatesToleratesNoPrescreen(t *testing.T) {
+	dates := map[string]bool{}
+	collectDriftDates(dates, nil, []model.Candidate{{Ticker: "AAA"}})
+	if len(dates) != 0 {
+		t.Errorf("got %v, want nothing without a pre-screen", dates)
+	}
+}
+
+// The fundamentals domain's own evidence is a single-period filing snapshot and
+// one year-over-year growth rate — a description of a company, on a horizon
+// where the documented fundamental effect is post-earnings drift. Without the
+// reaction it had nothing horizon-matched to score, so it scored the multiple:
+// bearish on 6 of 7 covered names on 2026-09-05, a standing ~13-point levy on
+// every momentum long at 18% of the weight.
+func TestFundamentalsSeesTheEarningsReactionAndTheBlindedDomainsDoNot(t *testing.T) {
+	ps := &Prescreen{Rows: []PrescreenRow{
+		{Ticker: "CRM", Index: "sp500", Setup: SetupDrift, ReportDate: "2026-08-27",
+			GapZ: 4.49, PostZ: 0.20, DriftSessions: 5, Drift: 3.59},
+	}}
+	shortlist := []model.Candidate{{Ticker: "CRM", Index: "sp500"}}
+	qp := quant.NewPack()
+	qp.ByTicker["CRM"] = quant.Metrics{Symbol: "CRM", LastClose: 259.23, AsOf: "2026-09-04", SigmaDaily: 0.02}
+	pack := &marketdata.DataPack{Domain: "fundamentals"}
+
+	const heading = "Verified earnings reactions"
+	if got := specialistDataBlock("fundamentals", pack, qp, ps, shortlist); !strings.Contains(got, heading) ||
+		!strings.Contains(got, "2026-08-27") || !strings.Contains(got, "+4.49") {
+		t.Errorf("fundamentals did not receive the reaction table:\n%s", got)
+	}
+
+	// Quant and macro are blinded (agents.blindToDirection) precisely so they do
+	// not read the reason a name was selected back to the Chief as independent
+	// confirmation. The reaction is that reason for a drift name.
+	for _, role := range []string{"quant", "macro", "news", "sentiment"} {
+		p := &marketdata.DataPack{Domain: role}
+		if got := specialistDataBlock(role, p, qp, ps, shortlist); strings.Contains(got, heading) {
+			t.Errorf("%s received the reaction table; only fundamentals and the Chief read it:\n%s", role, got)
+		}
 	}
 }

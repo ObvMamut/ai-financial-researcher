@@ -315,16 +315,30 @@ func TestCapMeritBoundsTheNamesOnlyQuantCanGrade(t *testing.T) {
 		t.Errorf("got %d names, want fewer than max — the backfill ignored the cap", len(out))
 	}
 
-	// A nil Coverage, a zero cap or a zero floor leaves the old behaviour
-	// untouched.
+	// A nil Coverage, a zero floor or a negative cap leaves the shortlist
+	// untouched: the first two mean the caller cannot answer the question, the
+	// third means it answered "do not ask".
 	for _, caps := range []MeritCaps{
 		{Max: 6, PerIndex: 5, ThinlyCovered: 2, CoverageFloor: 0.8, Score: score},
 		{Max: 6, PerIndex: 5, ThinlyCovered: 2, Score: score, Coverage: coverage},
-		{Max: 6, PerIndex: 5, CoverageFloor: 0.8, Score: score, Coverage: coverage},
+		{Max: 6, PerIndex: 5, ThinlyCovered: -1, CoverageFloor: 0.8, Score: score, Coverage: coverage},
 	} {
 		if got := len(CapMerit(input, caps)); got != 6 {
 			t.Errorf("an unconfigured coverage cap trimmed the shortlist to %d", got)
 		}
+	}
+
+	// A zero cap admits none of them, and that is the default rather than an
+	// edge case: a name under the floor can be scored by the price-derived
+	// domains alone, and the risk gate deletes a price-only idea outright. On
+	// 2026-09-05 the cap of four seated four such names in a twelve-name
+	// shortlist, all four were deleted, and the run shipped two ideas.
+	none := CapMerit(input, MeritCaps{
+		Max: 6, PerIndex: 5, ThinlyCovered: 0, CoverageFloor: 0.8,
+		Score: score, Coverage: coverage,
+	})
+	if want := []string{"MU", "ORCL", "TTD"}; !equal(tickers(none), want) {
+		t.Errorf("a zero cap returned %v, want only the fully covered %v", tickers(none), want)
 	}
 
 	// And a floor the sources clear is no cap: the same six names come back. This
@@ -492,4 +506,62 @@ func TestCapMeritArchetypeReserve(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+}
+
+// The risk gate refuses a book with more than two ideas in one sector, and until
+// PerSector existed nothing upstream knew that. On 2026-09-05 the merit sort —
+// which has no notion of sector — returned a shortlist seven-twelfths
+// Information Technology, seven of the eight names that cleared the evidence
+// floor were IT, and the gate's own limit then cut the book to two ideas. The
+// funnel was maximising exactly the quantity the gate forbids.
+func TestCapMeritSpreadsTheShortlistAcrossSectors(t *testing.T) {
+	mk := func(ticker, sector string) model.Candidate {
+		return model.Candidate{Ticker: ticker, Index: "sp500", Sector: sector,
+			Bias: model.BiasBullish, Name: ticker + " Inc"}
+	}
+	scores := map[string]float64{
+		"MU": 9, "PANW": 8, "SNPS": 7, "OKTA": 6, "CRM": 5, // Information Technology
+		"MRK": 4, "AMGN": 3, // Health Care
+		"PYPL": 2, // Financials
+	}
+	score := func(c model.Candidate) float64 { return scores[c.Ticker] }
+	input := []model.Candidate{
+		mk("MU", "Information Technology"), mk("PANW", "Information Technology"),
+		mk("SNPS", "Information Technology"), mk("OKTA", "Information Technology"),
+		mk("CRM", "Information Technology"),
+		mk("MRK", "Health Care"), mk("AMGN", "Health Care"),
+		mk("PYPL", "Financials"),
+	}
+
+	out := CapMerit(input, MeritCaps{Max: 5, PerSector: 3, Score: score})
+	got := tickers(out)
+	if want := []string{"MU", "PANW", "SNPS", "MRK", "AMGN"}; !equal(got, want) {
+		t.Errorf("got %v, want %v — three IT names, then the next sector", got, want)
+	}
+
+	// Soft, like PerIndex: the backfill overrides it rather than hand back a
+	// short shortlist. A thin list is worse than a concentrated one, because the
+	// gate can decline a crowded sector but cannot conjure a name that never
+	// reached it.
+	full := CapMerit(input, MeritCaps{Max: 8, PerSector: 3, Score: score})
+	if len(full) != 8 {
+		t.Errorf("the backfill returned %d of 8 — PerSector must not be able to shorten the list", len(full))
+	}
+	if first := tickers(full)[:3]; !equal(first, []string{"MU", "PANW", "SNPS"}) {
+		t.Errorf("backfilled list starts %v, want the ranking preserved", first)
+	}
+
+	// Zero disables it, which is what an unset cap means.
+	if got := tickers(CapMerit(input, MeritCaps{Max: 5, Score: score})); !equal(got, []string{"MU", "PANW", "SNPS", "OKTA", "CRM"}) {
+		t.Errorf("an unset PerSector trimmed by sector anyway: %v", got)
+	}
+
+	// A candidate with no sector is not counted against any cap: an unknown
+	// sector is not a sector they all share.
+	unsectored := append([]model.Candidate{}, input[:3]...)
+	unsectored = append(unsectored, mk("XXX", ""), mk("YYY", ""))
+	scores["XXX"], scores["YYY"] = 1, 0
+	if got := len(CapMerit(unsectored, MeritCaps{Max: 5, PerSector: 3, Score: score})); got != 5 {
+		t.Errorf("unsectored names were capped together, got %d of 5", got)
+	}
 }

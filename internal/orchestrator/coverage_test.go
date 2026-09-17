@@ -500,3 +500,35 @@ func TestAbstentionIsNotACoverageGap(t *testing.T) {
 		t.Errorf("coverage gaps = %+v, want only the name that was never fetched", gaps)
 	}
 }
+
+// standDowns is the bridge between the computed positioning verdict and the
+// confidence scale, and the one thing it must not do is relieve a name in a run
+// that lost the domain outright.
+func TestStandDownsIgnoreAFailedDomain(t *testing.T) {
+	statuses := []model.DomainStatus{
+		{Domain: "sentiment", Status: model.StatusDone, Abstained: []string{"aaa", "BBB"}},
+		{Domain: "news", Status: model.StatusFailed, Abstained: []string{"AAA"}},
+		{Domain: "fundamentals", Status: model.StatusDone},
+	}
+	got := standDowns(statuses)
+
+	want := map[string]map[string]bool{
+		"AAA": {"sentiment": true},
+		"BBB": {"sentiment": true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("standDowns = %v, want %v — a failed domain's names are a gap, not a stand-down", got, want)
+	}
+}
+
+// Nothing to relieve is the ordinary case and must stay the ordinary case: an
+// empty map means computeBaseScores divides every name by the same constant.
+func TestStandDownsAreEmptyWhenNoDomainStoodDown(t *testing.T) {
+	got := standDowns([]model.DomainStatus{
+		{Domain: "quant", Status: model.StatusDone},
+		{Domain: "news", Status: model.StatusDone, Ungrounded: []string{"AAA"}},
+	})
+	if len(got) != 0 {
+		t.Errorf("standDowns = %v, want empty — an ungrounded name is a gap", got)
+	}
+}

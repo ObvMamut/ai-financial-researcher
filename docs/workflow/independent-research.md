@@ -1,5 +1,9 @@
 # Workflow: Independent Research
 
+This page describes the default `legacy` research mode. The opt-in
+[`thesis` workflow](thesis-research.md) shares the pre-screen, then uses event
+discovery, per-company research and challenge before Claude-led selection.
+
 Goal: from a universe of 274 names (curated index samples, see `universe.md`), produce
 **5 ranked swing-trade ideas**.
 
@@ -283,6 +287,28 @@ carries no drift signal rather than a wrong one. The whole leg is additive: no
   purely because sp500's list was walked before nq100's. At most `max_per_index` (default
   5) names come from one index; if that leaves slots empty they are backfilled in pure
   score order, so a single-index run still returns a full shortlist.
+- **The composite is scaled by the coverage the run can bring to the name** before either
+  scout term is applied. A composite is computed from prices and says nothing about whether
+  the name can be researched, so left alone the sort ranked a candidate three domains must
+  abstain on as high as one all four can grade — and because the composite's extremes sit
+  on idiosyncratic mid-caps rather than on ADR-listed large caps, it systematically
+  preferred the unresearchable one. On 2026-09-05 the eu50 scout nominated ASML.AS, BBVA.MC
+  and DBK.DE, all reachable through their US lines, and merit dropped all three for
+  BAYN.DE, BMW.DE and DSFIR.AS, which are not. Scaling rather than subtracting a penalty is
+  what keeps it dimensionally honest: a 2.75 the run can evidence over 35% of the weight is
+  not a 2.75 to be docked, it is a 2.75 that is 35% evidenced. The sign is untouched.
+- **The agreement bonus is paid only for *independent* nominations.** 35 of nq100's 56
+  names are also in sp500, so two scouts naming one of those are choosing one ticker out of
+  two overlapping pools built from one price history — one reading reported twice, not
+  cross-index agreement. On 2026-09-05 all four dual-nominated names (MU, PANW, QCOM, SNPS)
+  were in that overlap and each collected a bonus for it.
+- **At most `max_per_sector + 1` (default 3) names come from one sector**, backfilled the
+  same way `max_per_index` is. The risk gate refuses a book with more than `max_per_sector`
+  ideas in one sector and nothing upstream knew that: on 2026-09-05 the merit sort returned
+  a shortlist seven-twelfths Information Technology, seven of the eight names that cleared
+  the evidence floor were IT, and the gate's limit then cut the book to two ideas. The
+  shortlist carries one spare per sector so the gate has something to choose between rather
+  than only something to truncate.
 - **`shortlist_reserve` (default 3) of those slots are held for names whose setup is not
   `continuation`**, filled in a pass that runs *before* the ordinary ones — a slot held
   back afterwards is not held back at all. This is necessary because merit *is* the
@@ -295,7 +321,8 @@ carries no drift signal rather than a wrong one. The whole leg is additive: no
   composite's own z units), so a run with no decent pullback ships a *shorter* shortlist
   rather than a padded one — the same bargain `max_thinly_covered` strikes. Every other cap
   still binds inside the reserve pass, so a reserved name cannot smuggle a run past
-  `max_per_index` or the coverage cap. A negative `shortlist_reserve` disables it.
+  `max_per_index`, the sector cap or the coverage cap. A negative `shortlist_reserve`
+  disables it.
 
   The archetype label is taken from the candidate's **own pre-screen row**, never from the
   scout's JSON: the scout chooses which table to nominate from, but the classification is
@@ -329,7 +356,7 @@ total — not per ticker):
 | Specialist    | Persona                  | Focus                                             |
 |---------------|--------------------------|---------------------------------------------------|
 | News          | `agents/news.md`         | Headline flow + the verified earnings calendar    |
-| Fundamentals  | `agents/fundamentals.md` | Filed figures + Go-computed market cap / P/E / P/S |
+| Fundamentals  | `agents/fundamentals.md` | Filed figures, Go-computed market cap / P/E / P/S, and the verified reaction to the last filing |
 | Quant         | `agents/quant.md`        | Interprets the computed statistical pack (no TA)  |
 | Sentiment     | `agents/sentiment.md`    | Insider Form 4 filings + option positioning       |
 | Macro         | `agents/macro.md`        | Computed benchmark regime + the FRED backdrop     |
@@ -362,6 +389,28 @@ P/S, each line showing its own inputs. Where the filed figure is more than 400 d
 than the price, the block says the multiple is **not computable** and why — an absent
 number gets filled in from recollection, a stated refusal does not. The persona caps
 strength at 4 on figures older than 13 months.
+
+It also receives the **verified earnings reactions** table — the same `driftBlock` the Chief
+reads, rendered from the pre-screen: filing date, `gap`, `since`, `drift`. Its own evidence
+is otherwise a single reporting period plus one year-over-year growth rate, which describes
+a company rather than the next fifteen sessions, and the persona had nothing horizon-matched
+to score. So it scored the multiple: bearish on 6 of 7 covered names on 2026-09-05, at 18%
+of the weight a standing levy of roughly 13 points on every momentum long, charged for a
+fact that was already true when the position opened. Post-earnings drift is the one
+documented fundamental effect measured on this system's own clock, and the reaction is the
+only read on it in this pipeline.
+
+Two guards travel with it. This is **not** a blinding violation — `agents.blindToDirection`
+covers quant and macro, and fundamentals already reads the nominated direction off the
+shortlist — but where a name's `setup` is already `drift` the reaction *is* the fact the
+screen ranked it on, so the persona caps its strength at 5 there; the Chief's own credit for
+the same table is capped at +2 on those names for the same reason. And a reaction row is not
+coverage: fundamentals is grounded by filing figures, so a name with a row and no filings
+still belongs in `missing`. `specialistDataBlock` assembles all of this.
+
+The filing dates the table carries are registered as verified (`collectDriftDates`).
+Without that, a Chief quoting one — which the block asks it to do — was docked 10 points by
+`checkFabricatedDates` for citing a date the app itself had printed into its prompt.
 
 Macro is scoped to the regime. `quant.Pack.Benchmarks` computes the same metrics for each
 index benchmark the run touched — series that were already fetched for beta and relative

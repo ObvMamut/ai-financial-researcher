@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 // Run represents one analysis run's on-disk directory.
@@ -29,9 +30,14 @@ func New(baseDir string) (*Run, error) {
 }
 
 // WriteReport saves an agent's raw markdown output to <agent>.md.
+//
+// Every artifact writer here redacts on the way out. A provider that echoes its
+// own query string puts a credential into an error, an error into a prompt, and
+// a prompt into a model's reply — so the last chance to keep it off disk is the
+// byte slice, not the struct field. See internal/redact.
 func (r *Run) WriteReport(agent, content string) error {
 	path := filepath.Join(r.Dir, agent+".md")
-	return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(path, redact.Bytes([]byte(content)), 0o644)
 }
 
 // ReadReport reads back a saved report; returns "" if not found (non-fatal).
@@ -162,7 +168,7 @@ func (r *Run) WriteDataPack(domain string, pack any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, domain+".json"), data, 0o644)
+	return os.WriteFile(filepath.Join(dir, domain+".json"), redact.Bytes(data), 0o644)
 }
 
 // ReadDataPack reads back a run's stored provider pack for one domain. The
@@ -183,7 +189,7 @@ func (r *Run) writeJSON(name string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(r.Dir, name), data, 0o644)
+	return os.WriteFile(filepath.Join(r.Dir, name), redact.Bytes(data), 0o644)
 }
 
 // RunSummary is one row in the run-history listing.

@@ -1,0 +1,86 @@
+[
+  {
+    "ticker": "2330.TW",
+    "original_bytes": 15602,
+    "fixture_bytes": 17271,
+    "claims": 12,
+    "requests": 3
+  },
+  {
+    "ticker": "9988.HK",
+    "original_bytes": 13909,
+    "fixture_bytes": 14712,
+    "claims": 12,
+    "requests": 2
+  },
+  {
+    "ticker": "ABBV",
+    "original_bytes": 15095,
+    "fixture_bytes": 16426,
+    "claims": 12,
+    "requests": 0
+  },
+  {
+    "ticker": "BAC",
+    "original_bytes": 16585,
+    "fixture_bytes": 17541,
+    "claims": 12,
+    "requests": 0
+  },
+  {
+    "ticker": "MU",
+    "original_bytes": 14666,
+    "fixture_bytes": 15910,
+    "claims": 12,
+    "requests": 0
+  },
+  {
+    "ticker": "ORCL",
+    "original_bytes": 16911,
+    "fixture_bytes": 18683,
+    "claims": 13,
+    "requests": 3
+  },
+  {
+    "ticker": "REGN",
+    "original_bytes": 14543,
+    "fixture_bytes": 15364,
+    "claims": 13,
+    "requests": 3
+  },
+  {
+    "ticker": "SAN.PA",
+    "original_bytes": 23814,
+    "fixture_bytes": 25264,
+    "claims": 12,
+    "requests": 3
+  },
+  {
+    "ticker": "SNOW",
+    "original_bytes": 14290,
+    "fixture_bytes": 15686,
+    "claims": 12,
+    "requests": 0
+  },
+  {
+    "ticker": "TSLA",
+    "original_bytes": 17940,
+    "fixture_bytes": 18893,
+    "claims": 12,
+    "requests": 3
+  },
+  {
+    "ticker": "TTD",
+    "original_bytes": 18531,
+    "fixture_bytes": 20268,
+    "claims": 12,
+    "requests": 3
+  },
+  {
+    "ticker": "TTE.PA",
+    "original_bytes": 13790,
+    "fixture_bytes": 15207,
+    "claims": 12,
+    "requests": 0
+  }
+]

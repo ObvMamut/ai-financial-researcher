@@ -253,9 +253,10 @@ func TestCompactLineCarriesRiskShapeAndFlags(t *testing.T) {
 		VolYZ20: 0.28, VolTrend: 1.9, VR5: 1.2, Regime: "trending",
 		SigmaDaily: 0.0176, Benchmark: "SPY", Beta: 1.35, Corr: 0.72,
 		MaxDrawdown126: -0.18, WorstDay252: -0.07, Skew252: 0.3, Kurt252: 2.1,
-		AvgDollarVol20: 4.2e9,
-		Distances:      map[string]float64{"1s_h10": 0.0556, "2s_h10": 0.1113},
-		Flags:          []string{"stale: last bar 2 sessions old"},
+		Currency: "USD", FXToUSD: 1,
+		AvgDollarVol20: 4.2e9, AvgDollarVol20USD: 4.2e9,
+		Distances: map[string]float64{"1s_h10": 0.0556, "2s_h10": 0.1113},
+		Flags:     []string{"stale: last bar 2 sessions old"},
 	}
 	p := NewPack()
 	p.ByTicker["NVDA"] = m
@@ -348,5 +349,55 @@ func TestCorrelationOfAlignedSeries(t *testing.T) {
 	}
 	if _, ok := Correlation(a, nil); ok {
 		t.Error("a nil series should report no usable correlation")
+	}
+}
+
+func TestLiquidityIsRenderedInDollarsNotInTheListingsOwnCurrency(t *testing.T) {
+	// On 2026-09-05 the Chief Analyst was shown "051910.KS ... ADV $45,680M" for
+	// LG Chem, whose real 20-day turnover was $33.8M: both renderers printed
+	// AvgDollarVol20 — Σ close·volume in *won* — behind a dollar sign, while
+	// every gate read AvgDollarVol20USD. One run, two liquidity figures for one
+	// name, off by the KRW/USD rate.
+	krw := Metrics{
+		Symbol: "051910.KS", AsOf: "2026-09-04", Bars: 484, LastClose: 282000,
+		VolYZ20: 0.35, SigmaDaily: 0.022, Regime: "random-walk",
+		Currency: "KRW", FXToUSD: 0.00074014,
+		AvgDollarVol20: 4.56802e10, AvgDollarVol20USD: 3.38096e7,
+	}
+	p := NewPack()
+	p.ByTicker["051910.KS"] = krw
+	p.AsOf = krw.AsOf
+
+	for name, got := range map[string]string{"CompactLine": p.CompactLine("051910.KS"), "Markdown": p.Markdown()} {
+		if !strings.Contains(got, "$34M") {
+			t.Errorf("%s should quote the converted $34M figure:\n%s", name, got)
+		}
+		if strings.Contains(got, "45680") {
+			t.Errorf("%s still quotes the won figure as dollars:\n%s", name, got)
+		}
+	}
+
+	// No rate resolved: there is no honest number, so say so rather than fall
+	// back to the local one. ApplyFX has already flagged the name.
+	noRate := krw
+	noRate.FXToUSD, noRate.AvgDollarVol20USD = 0, 0
+	p.ByTicker["051910.KS"] = noRate
+	line := p.CompactLine("051910.KS")
+	if !strings.Contains(line, "not established") || !strings.Contains(line, "KRW") {
+		t.Errorf("an unconvertible listing should report its size as not established, got:\n%s", line)
+	}
+	if strings.Contains(line, "$") {
+		t.Errorf("an unconvertible listing must not print a dollar figure, got:\n%s", line)
+	}
+
+	// A name with no turnover at all renders no liquidity clause rather than $0M.
+	none := krw
+	none.AvgDollarVol20, none.AvgDollarVol20USD = 0, 0
+	p.ByTicker["051910.KS"] = none
+	if got := p.CompactLine("051910.KS"); strings.Contains(got, "ADV") {
+		t.Errorf("a name with no turnover rendered an ADV clause:\n%s", got)
+	}
+	if got := p.Markdown(); strings.Contains(got, "Liquidity") {
+		t.Errorf("a name with no turnover rendered a liquidity line:\n%s", got)
 	}
 }

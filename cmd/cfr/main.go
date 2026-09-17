@@ -30,12 +30,14 @@ func main() {
 		switch os.Args[1] {
 		case "run":
 			os.Exit(runHeadless(settings, os.Args[2:]))
+		case "research-pair":
+			os.Exit(runResearchPair(settings, os.Args[2:]))
 		case "scoreboard":
 			os.Exit(runScoreboard(settings, os.Args[2:]))
 		case "postmortem":
 			os.Exit(runPostMortem(settings, os.Args[2:]))
 		case "-h", "--help", "help":
-			fmt.Println("usage: cfr [run|scoreboard|postmortem] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)\n  cfr postmortem  what the closed trades show, by cell (see cfr postmortem -h)")
+			fmt.Println("usage: cfr [run|research-pair|scoreboard|postmortem] [flags]\n\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr research-pair  collect and run a frozen evaluation pair (see cfr research-pair -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)\n  cfr postmortem  what the closed trades show, by cell (see cfr postmortem -h)")
 			os.Exit(0)
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard, cfr postmortem)\n", os.Args[1])
@@ -78,6 +80,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		indices = s.Indices // config-file default selection (may still be empty = all)
 	}
 	return orchestrator.Config{
+		ResearchMode: s.ResearchMode, Research: s.Research,
 		Mode:          req.Mode,
 		Ticker:        req.Ticker,
 		Indices:       indices,

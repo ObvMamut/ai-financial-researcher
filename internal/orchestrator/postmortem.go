@@ -102,7 +102,7 @@ func postMortem(ctx context.Context, ch chan<- Event, cfg Config, reg *agents.Re
 
 	st := model.DomainStatus{
 		Domain: "post-mortem", Status: r.Status, Err: r.Err,
-		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Grounded: true,
+		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Usage: r.Usage, Grounded: true,
 	}
 	if r.Status == model.StatusFailed {
 		agentStatus(ch, "post-mortem", model.StatusFailed, &r)

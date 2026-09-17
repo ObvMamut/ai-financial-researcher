@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 type alphaVantageProvider struct {
@@ -176,6 +178,7 @@ type avNewsFeed struct {
 
 // article is one feed item scored for the requested ticker.
 type article struct {
+	summary   string
 	title     string
 	url       string
 	publisher string
@@ -213,16 +216,22 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return TickerData{}, err
+		// A transport failure comes back as *url.Error carrying the whole
+		// request URL — apikey and all. Left alone it reaches metadata.json.
+		return TickerData{}, redact.Error(err)
 	}
 	defer resp.Body.Close()
 
 	var data avNewsFeed
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return TickerData{}, err
+		return TickerData{}, redact.Error(err)
 	}
 	if msg := firstNonEmpty(data.ErrorMessage, data.Information, data.Note); msg != "" {
-		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %s", ErrUnavailable, msg)
+		rememberDailyQuota(p.limiter, msg)
+		// AlphaVantage answers a rejected call by quoting the query string it
+		// was sent. That prose is the credential-echo path this redaction was
+		// added for; the diagnostic stays, the key does not.
+		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %s", ErrUnavailable, redact.String(msg))
 	}
 
 	arts := articlesFor(&data, symbol)
@@ -280,14 +289,23 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 		td.Facts = append(td.Facts, Fact{
 			Label: fmt.Sprintf("Headline %d (relevance %.2f, sentiment %+.2f %s)",
 				i+1, a.relevance, a.sentiment, a.label),
-			Value:  fmt.Sprintf("%s — %s", a.title, a.publisher),
-			AsOf:   a.published,
-			Source: a.domain,
-			URL:    a.url,
+			Value:   fmt.Sprintf("%s — %s", a.title, a.publisher),
+			AsOf:    a.published,
+			Source:  a.domain,
+			URL:     a.url,
+			Summary: a.summary,
 		})
 	}
 
 	return td, nil
+}
+
+func rememberDailyQuota(limiter *Limiter, message string) {
+	m := strings.ToLower(message)
+	if limiter != nil && (strings.Contains(m, "per day") || strings.Contains(m, "daily")) &&
+		(strings.Contains(m, "limit") || strings.Contains(m, "quota") || strings.Contains(m, "rate")) {
+		limiter.ExhaustForDay()
+	}
 }
 
 // avSymbol renders a symbol the way AlphaVantage spells it: upper case, with US
@@ -315,6 +333,7 @@ func articlesFor(data *avNewsFeed, ticker string) []article {
 			score, _ := strconv.ParseFloat(ts.SentimentScore, 64)
 			a := article{
 				title:     strings.TrimSpace(item.Title),
+				summary:   cleanDocument(item.Summary),
 				url:       strings.TrimSpace(item.URL),
 				publisher: strings.TrimSpace(item.Source),
 				domain:    strings.TrimSpace(item.SourceDomain),

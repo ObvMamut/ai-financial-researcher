@@ -3,6 +3,31 @@
 The machine-readable contracts between agents and Go. Agents emit a fenced ```json block;
 Go parses it. Keep these in sync with `internal/model/types.go`.
 
+The opt-in [thesis schema v2](thesis-research.md#plans-and-enforcement) additionally
+uses `internal/model/research.go`: per-company dossiers, evidence claims and
+requests, challenges, explicit selection decisions and thesis execution plans.
+`ideas.json` and metadata identify `research_mode: "thesis"` and `schema_version: 2`.
+An explicit empty ideas array is valid; a missing array is a parsing failure.
+Thesis dossiers additionally require `long_case`, `short_case`, `no_trade_case`
+and `preferred_direction` (BUY, SELL, NONE). Each research/review claim carries
+`passages`: objects with `evidence_id`, verbatim `quote` (at least 30 characters)
+and `issuer_role`. Evidence snapshots can carry `source`, `parent_id` and
+`truncated`. Research artifacts include computed `temporal_facts`; model inputs
+persist the selected excerpts. Early event deferrals have `not_run` outcomes
+and watchlist decisions blocked by `awaiting_event` or `awaiting_prices`.
+Older saved schema-v2 trade plans remain readable; new dossier requirements
+apply to newly generated research.
+
+Optional thesis fields include dossier `entry_conditions` and `monitoring`, plan
+`monitoring`, reviewer `conditions_reviewed` and `compaction_assessment`, and
+Go-computed result `research_summary`. Research outcomes record contract recovery
+and actual repair/compaction counts separately from transport and parsing. Writing
+length targets are advisory under unchanged total byte budgets. See the thesis
+workflow's reliability and conditional-research sections for their validation rules.
+
+
+The contracts below describe the legacy specialist/scoring path.
+
 ## Shortlist (Scout → orchestrator)
 
 Each scout ends its report with:
@@ -285,7 +310,10 @@ shape-change warnings `data_errors` carries; the two the scoring path reads are:
   structural limit is not a warning, and SEC filings and listed option chains are US
   instruments, so a foreign listing with no US line cannot be reached by fundamentals or
   sentiment however well the run went. `max_thinly_covered` caps how many of these may take
-  shortlist slots.
+  shortlist slots, and defaults to **0**: the risk gate's evidence floor deletes an idea
+  scored by quant alone, so such a name cannot reach the output and a slot spent on it buys
+  five specialist reports for a candidate guaranteed to be dropped. The field therefore
+  reads empty on a default run; a negative `max_thinly_covered` re-admits them.
 
   It was `quant_only` until news and macro became globally groundable. After that, "no
   provider reaches this at all" was true of nothing — the field would have read empty on
@@ -324,6 +352,17 @@ Each `domains[]` row is a `model.DomainStatus`: `status`, `grounded`, `attempts`
 rather than deletes; `ungrounded` and its subset `abstained`, `fabricated_citations`, and
 `scored_names` — the denominator the enforcement lists are only meaningful against. Six deletions out of six is a domain that
 invented its entire output; six out of forty is one that overreached.
+
+`domains[].usage` retains an entry for every attempted engine call, including
+failed or truncated API responses. Optional prompt, completion and total token
+counts distinguish missing telemetry from reported zero. Cache and reasoning
+counts are subsets, not additional tokens. `tokens` is the compatibility sum of
+reported completion tokens across attempts. Claude structured output records
+whole-tree model usage when available; main-loop-only or interrupted telemetry
+is marked `incomplete`. CLI wrappers returning plain text and engines without
+telemetry retain unavailable counts.
+See [evaluation diagnostics](thesis-research.md#explicit-pairing-and-evaluation-diagnostics)
+for aggregation and completeness semantics.
 
 ## Go types
 
@@ -392,3 +431,12 @@ symmetric 0.5σ√5 there was no wider bid available to place. Hard level-orderi
 confidence more than twice the band out trigger one corrective re-prompt of the chief.
 Malformed output → degraded mechanical fallback from specialist scores (confidence ≤ 55),
 never a crash.
+
+
+Thesis reliability additions retain result schema v2. `thesis.target_method` distinguishes external comparisons from thesis scenarios.
+`thesis.target_claim_ids`
+references validated numerical comparison claims. Fresh research artifacts use
+`contract_version: 2`; challenges carry `dossier_hash` and `claim_reviews`, while
+historical repeated-claim challenges remain readable. Prompt profiles, failure
+kinds and optional source/comparison provenance are additive metadata. See
+[thesis research reliability](thesis-research.md#reliability-contracts-and-diagnostics).

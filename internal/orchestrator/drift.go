@@ -45,6 +45,9 @@ import (
 
 // driftRead is one name's earnings-day repricing and what is left of it.
 type driftRead struct {
+	// Cumulative log returns share one scale regardless of elapsed sessions.
+	gapLog, postLog float64
+	cumulative      bool
 	// GapZ is the abnormal return over the event window, in units of the name's
 	// own daily volatility. Signed: positive is a jump, negative a drop.
 	//
@@ -69,7 +72,10 @@ type driftRead struct {
 // retraced reports whether the market has given back the whole reaction. There
 // is nothing left to drift on, whatever the report said.
 func (d driftRead) retraced() bool {
-	return d.GapZ != 0 && sameSign(d.PostZ, -d.GapZ) && math.Abs(d.PostZ) >= math.Abs(d.GapZ)
+	if d.cumulative {
+		return (d.gapLog > 0 && d.gapLog+d.postLog <= 1e-12) || (d.gapLog < 0 && d.gapLog+d.postLog >= -1e-12)
+	}
+	return d.GapZ != 0 && sameSign(d.PostZ, -d.GapZ) && math.Abs(d.PostZ)*math.Sqrt(float64(d.Sessions)) >= math.Abs(d.GapZ)*math.Sqrt2
 }
 
 // Score is the reaction decayed toward the end of the drift window, and zero
@@ -115,20 +121,24 @@ func computeDrift(s, bench *quant.Series, date time.Time, sigmaDaily float64) (d
 		return driftRead{}, false
 	}
 	gap := after/before - 1
+	gapLog := math.Log(after / before)
 	last := s.Bars[len(s.Bars)-1].Close
 	if last <= 0 {
 		return driftRead{}, false
 	}
 	post := last/after - 1
+	postLog := math.Log(last / after)
 
 	// Net of the index over the identical dates, so a market-wide move on the
 	// day of a report is not read as the report.
 	if bench != nil {
 		if br, ok := returnBetweenDates(bench, s.Bars[i-1].Date, s.Bars[i+1].Date); ok {
 			gap -= br
+			gapLog -= math.Log1p(br)
 		}
 		if br, ok := returnBetweenDates(bench, s.Bars[i+1].Date, s.Bars[len(s.Bars)-1].Date); ok {
 			post -= br
+			postLog -= math.Log1p(br)
 		}
 	}
 
@@ -137,6 +147,7 @@ func computeDrift(s, bench *quant.Series, date time.Time, sigmaDaily float64) (d
 	// a move accumulated over a month is not the same size of surprise as the
 	// same move in two days.
 	d := driftRead{
+		gapLog: gapLog, postLog: postLog, cumulative: true,
 		GapZ:     gap / (sigmaDaily * math.Sqrt2),
 		Sessions: sessions,
 		Date:     s.Bars[i].Date,
@@ -197,6 +208,53 @@ func isDrift(r PrescreenRow) bool {
 // ranking.
 func driftDirection(r PrescreenRow) float64 { return r.Drift }
 
+// driftLine is one shortlisted name's verified earnings reaction, as rendered.
+type driftLine struct {
+	ticker string
+	row    PrescreenRow
+}
+
+// driftLines selects the shortlisted names that have a measured reaction, worst
+// first by magnitude. It is shared by the block that renders them and by the
+// collector that registers their filing dates as verified, so the prompt and the
+// fabricated-date check can never disagree about which dates the run put in
+// front of a model.
+func driftLines(ps *Prescreen, shortlist []model.Candidate) []driftLine {
+	if ps == nil {
+		return nil
+	}
+	var lines []driftLine
+	for _, c := range shortlist {
+		r, ok := ps.Row(c.Index, c.Ticker)
+		if !ok || r.ReportDate == "" || r.GapZ == 0 {
+			continue
+		}
+		lines = append(lines, driftLine{strings.ToUpper(c.Ticker), r})
+	}
+	sort.SliceStable(lines, func(i, j int) bool {
+		return math.Abs(lines[i].row.Drift) > math.Abs(lines[j].row.Drift)
+	})
+	return lines
+}
+
+// collectDriftDates registers the filing dates the drift block renders as dates
+// a report may cite.
+//
+// checkFabricatedDates measures an idea's prose against the run's verified-date
+// set and docks 10 points for anything outside it. That set is built from the
+// data packs and the quant pack; the drift block is built from the pre-screen
+// and reached the Chief registered nowhere. So a Chief doing exactly what the
+// block asks — reading the reaction and saying which filing it belongs to —
+// lost 10 points and spent the run's one corrective re-prompt for quoting a date
+// the app itself had written into its prompt. That is the same failure the
+// comment on collectVerifiedDates records for the earnings calendar, and it
+// talked that run into deleting three true dates.
+func collectDriftDates(into map[string]bool, ps *Prescreen, shortlist []model.Candidate) {
+	for _, l := range driftLines(ps, shortlist) {
+		into[l.row.ReportDate] = true
+	}
+}
+
 // driftBlock renders the verified earnings reactions for the shortlisted names
 // that have one, for the Chief Analyst's prompt.
 //
@@ -207,39 +265,29 @@ func driftDirection(r PrescreenRow) float64 { return r.Drift }
 // Chief was handed the archetype label "drift" and no magnitude, no date, and no
 // read on whether the move was still standing.
 //
-// The specialists are deliberately *not* given this. Their independence is the
-// point of blinding them (agents.blindToDirection), and handing the quant
+// The *blinded* specialists are deliberately not given this. Their independence
+// is the point of blinding them (agents.blindToDirection), and handing the quant
 // analyst the reason a name was selected is the exact circularity that blinding
 // removed. The Chief is the one reader whose job is to weigh the funnel's
 // reasoning against the domains' — on the same run, that is precisely what it
 // did with SNPS, whose bullish drift nomination the blinded quant analyst read
 // bearish at strength 5.
 //
+// Fundamentals also reads it, and is not an exception to that rule: it is not
+// blinded — the shortlist section already names the nominated direction for
+// every unblinded role — and a filing's reception is its own subject matter.
+// What it must not do is re-vote the ranking, so where the reaction is the same
+// fact the drift leg selected the name on, agents/fundamentals.md caps the
+// strength it may carry.
+//
 // `since` is the honest column here. A reaction two thirds given back is a
 // different proposition from one still standing, and the classifier's own test
 // is deliberately coarse — it only asks whether the whole move has gone.
 func driftBlock(ps *Prescreen, shortlist []model.Candidate) string {
-	if ps == nil {
-		return ""
-	}
-	type line struct {
-		ticker string
-		row    PrescreenRow
-	}
-	var lines []line
-	for _, c := range shortlist {
-		r, ok := ps.Row(c.Index, c.Ticker)
-		if !ok || r.ReportDate == "" || r.GapZ == 0 {
-			continue
-		}
-		lines = append(lines, line{strings.ToUpper(c.Ticker), r})
-	}
+	lines := driftLines(ps, shortlist)
 	if len(lines) == 0 {
 		return ""
 	}
-	sort.SliceStable(lines, func(i, j int) bool {
-		return math.Abs(lines[i].row.Drift) > math.Abs(lines[j].row.Drift)
-	})
 
 	var sb strings.Builder
 	sb.WriteString("\n### Verified earnings reactions (computed)\n\n")

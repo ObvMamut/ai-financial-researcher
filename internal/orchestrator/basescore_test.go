@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -92,7 +93,7 @@ func TestComputeBaseScoresIsWeightedOverTotalWeight(t *testing.T) {
 		domainReport("fundamentals", "AAA bearish 4"),
 		domainReport("sentiment", "AAA neutral 5"),
 	}
-	bases := computeBaseScores(testWeights, reports, shortlistOf("AAA"))
+	bases := computeBaseScores(testWeights, reports, shortlistOf("AAA"), nil)
 
 	b := baseOf(t, bases, "AAA")
 	if b.Direction != model.DirectionBuy {
@@ -145,7 +146,7 @@ func TestBaseScoreCapsThinCoverage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			b := baseOf(t, computeBaseScores(testWeights, tc.reports, shortlistOf("AAA")), "AAA")
+			b := baseOf(t, computeBaseScores(testWeights, tc.reports, shortlistOf("AAA"), nil), "AAA")
 			if b.Cap != tc.wantCap {
 				t.Errorf("cap = %d, want %d (covered %.2f)", b.Cap, tc.wantCap, b.CoveredWeight)
 			}
@@ -170,7 +171,7 @@ func TestBaseScoreCapsThinCoverage(t *testing.T) {
 func TestBaseScoreScalingPreservesOrdering(t *testing.T) {
 	bases := computeBaseScores(testWeights, run20260901Reports(), shortlistOf(
 		"AMGN", "MRK", "BBVA.MC", "STLAM.MI", "IBM", "QCOM", "TTD", "ORCL",
-		"O39.SI", "2454.TW", "BAYN.DE", "BMW.DE"))
+		"O39.SI", "2454.TW", "BAYN.DE", "BMW.DE"), nil)
 
 	// Ranking by the raw weighted score must match the shipped ranking by the
 	// scaled one. Anything the coverage caps touch is excluded: a cap only ever
@@ -249,7 +250,7 @@ func TestBaseScoreRanksThickCoverageAboveThinCoverage(t *testing.T) {
 		domainReport("fundamentals", "AMGN neutral 4"),
 		domainReport("sentiment", "AMGN bearish 4"),
 		domainReport("macro", "AMGN bullish 4"),
-	}, shortlistOf("BAYN.DE", "AMGN"))
+	}, shortlistOf("BAYN.DE", "AMGN"), nil)
 
 	thin := baseOf(t, bases, "BAYN.DE") // .35·.6                      = 0.21 → /0.77 → 27
 	thick := baseOf(t, bases, "AMGN")   // .35·.7+.25·.5−.15·.4+.10·.4 = 0.35 → /0.77 → 45
@@ -272,7 +273,7 @@ func TestBaseScoreRejectsOffShortlistAndClampsStrength(t *testing.T) {
 	reports := []agents.ReportContext{
 		domainReport("quant", "AAA bullish 99", "GHOST bullish 10"),
 	}
-	bases := computeBaseScores(testWeights, reports, shortlistOf("AAA"))
+	bases := computeBaseScores(testWeights, reports, shortlistOf("AAA"), nil)
 	for _, b := range bases {
 		if b.Ticker == "GHOST" {
 			t.Fatalf("a ticker that was never on the shortlist reached the base scores: %+v", b)
@@ -288,7 +289,7 @@ func TestBaseScoreCoversEveryShortlistedTicker(t *testing.T) {
 	// zero coverage, which is what tells the Chief it has nothing to reason from.
 	bases := computeBaseScores(testWeights,
 		[]agents.ReportContext{domainReport("quant", "AAA bullish 8")},
-		shortlistOf("AAA", "ZZZ"))
+		shortlistOf("AAA", "ZZZ"), nil)
 	if len(bases) != 2 {
 		t.Fatalf("got %d base scores, want one per shortlisted name", len(bases))
 	}
@@ -321,7 +322,7 @@ func TestBaseScoreForDirectionOpposesToZero(t *testing.T) {
 			domainReport("fundamentals", "AAA bearish 6"),
 			domainReport("sentiment", "AAA bearish 6"),
 			domainReport("macro", "AAA bearish 6"),
-		}, shortlistOf("AAA")), "AAA")
+		}, shortlistOf("AAA"), nil), "AAA")
 
 	if b.Direction != model.DirectionSell {
 		t.Fatalf("direction = %q, want SELL", b.Direction)
@@ -346,8 +347,8 @@ func TestDegradedIdeasFollowTheBaseScores(t *testing.T) {
 	}
 	shortlist := shortlistOf("AAA", "BBB")
 	cfg := Config{Mode: model.ModeIndependent, Weights: testWeights}
-	res := buildDegradedIdeas(cfg, reports, shortlist)
-	bases := computeBaseScores(testWeights, reports, shortlist)
+	res := buildDegradedIdeas(cfg, reports, shortlist, nil)
+	bases := computeBaseScores(testWeights, reports, shortlist, nil)
 
 	if len(res.Ideas) != 2 {
 		t.Fatalf("got %d degraded ideas, want 2", len(res.Ideas))
@@ -447,7 +448,7 @@ func TestConsensusSeparatesAgreementFromCoverage(t *testing.T) {
 	// One domain, nothing to disagree with.
 	lone := computeBaseScores(testWeights, []agents.ReportContext{
 		domainReport("quant", "AAA bullish 7"),
-	}, []model.Candidate{{Ticker: "AAA"}})
+	}, []model.Candidate{{Ticker: "AAA"}}, nil)
 	if got := lone[0].Consensus; math.Abs(got-1) > 1e-9 {
 		t.Errorf("a single domain's consensus = %.2f, want 1", got)
 	}
@@ -462,7 +463,7 @@ func TestConsensusSeparatesAgreementFromCoverage(t *testing.T) {
 		domainReport("fundamentals", "BBB neutral 0"),
 		domainReport("sentiment", "BBB bearish 7"),
 		domainReport("macro", "BBB bullish 3"),
-	}, []model.Candidate{{Ticker: "BBB"}})
+	}, []model.Candidate{{Ticker: "BBB"}}, nil)
 	if got := split[0].Consensus; math.Abs(got-0.533) > 0.005 {
 		t.Errorf("consensus = %.3f, want 0.533", got)
 	}
@@ -477,7 +478,7 @@ func TestConsensusSeparatesAgreementFromCoverage(t *testing.T) {
 	}
 
 	// A name nothing scored has no consensus to report rather than a false 1.
-	none := computeBaseScores(testWeights, nil, []model.Candidate{{Ticker: "CCC"}})
+	none := computeBaseScores(testWeights, nil, []model.Candidate{{Ticker: "CCC"}}, nil)
 	if none[0].Consensus != 0 {
 		t.Errorf("an unscored name reported consensus %.2f, want 0", none[0].Consensus)
 	}
@@ -490,7 +491,7 @@ func TestConsensusDoesNotChangeTheOrdering(t *testing.T) {
 		domainReport("quant", "THIN bullish 8", "THICK bullish 4"),
 		domainReport("news", "THICK bullish 6"),
 		domainReport("fundamentals", "THICK bearish 2"),
-	}, []model.Candidate{{Ticker: "THIN"}, {Ticker: "THICK"}})
+	}, []model.Candidate{{Ticker: "THIN"}, {Ticker: "THICK"}}, nil)
 
 	thin, thick := baseOf(t, got, "THIN"), baseOf(t, got, "THICK")
 	// THIN is unanimous because only one domain spoke; THICK has a dissenter.
@@ -516,12 +517,155 @@ func TestBaseScoreBlockShowsAgreement(t *testing.T) {
 	block := baseScoreBlock(computeBaseScores(testWeights, []agents.ReportContext{
 		domainReport("quant", "AAA bullish 6"),
 		domainReport("news", "AAA bearish 6"),
-	}, []model.Candidate{{Ticker: "AAA"}}), 10)
+	}, []model.Candidate{{Ticker: "AAA"}}, nil), 10)
 
 	if !strings.Contains(block, "| agree |") {
 		t.Errorf("no agreement column in the base score table:\n%s", block)
 	}
 	if !strings.Contains(block, "Do not adjust for it") {
 		t.Errorf("the table does not say the figure is already inside base:\n%s", block)
+	}
+}
+
+// A domain that looked at a name and measured the market's resting state is not
+// a domain that failed to reach it. Sentiment's computed positioning verdict
+// abstains on roughly seven names in ten by design, and pricing that as a gap
+// charged every one of them the domain's full weight for working correctly.
+func TestAMeasuredAbstentionLeavesTheConfidenceScale(t *testing.T) {
+	// Both names carry the identical signed evidence:
+	//   weighted = .35·.8 + .25·.6 + .15·.4 = 0.49
+	//   covered  = .35 + .25 + .15          = 0.75
+	// ABSTAIN's sentiment stood down; GAP's sentiment never reached it.
+	//   GAP:      0.49 / 0.77                       = 0.636 → 64
+	//   ABSTAIN:  0.49 / (0.77 − .15·.8) = 0.49/0.65 = 0.754 → 75
+	reports := []agents.ReportContext{
+		domainReport("quant", "ABSTAIN bullish 8", "GAP bullish 8"),
+		domainReport("news", "ABSTAIN bullish 6", "GAP bullish 6"),
+		domainReport("fundamentals", "ABSTAIN bullish 4", "GAP bullish 4"),
+	}
+	bases := computeBaseScores(testWeights, reports, shortlistOf("ABSTAIN", "GAP"),
+		map[string]map[string]bool{"ABSTAIN": {"sentiment": true}})
+
+	ab, gap := baseOf(t, bases, "ABSTAIN"), baseOf(t, bases, "GAP")
+	if gap.Confidence != 64 {
+		t.Errorf("GAP confidence = %d, want 64 — a domain with no data still votes 0 against the full scale", gap.Confidence)
+	}
+	if ab.Confidence != 75 {
+		t.Errorf("ABSTAIN confidence = %d, want 75 — sentiment's weight leaves the scale, it does not vote against it", ab.Confidence)
+	}
+	if !reflect.DeepEqual(ab.Abstained, []string{"sentiment"}) {
+		t.Errorf("Abstained = %v, want [sentiment] recorded so the artifact says which domain left the scale", ab.Abstained)
+	}
+	if gap.Abstained != nil {
+		t.Errorf("GAP recorded abstentions %v, want none — it is a coverage gap", gap.Abstained)
+	}
+
+	// Only the scale moved. The raw weighted vote and the coverage share are the
+	// auditable figures and both must read the same for two names holding the
+	// same evidence.
+	if math.Abs(ab.Signed-gap.Signed) > 1e-9 {
+		t.Errorf("Signed diverged: ABSTAIN %.4f, GAP %.4f — the relief is to the denominator only", ab.Signed, gap.Signed)
+	}
+	if math.Abs(ab.CoveredWeight-gap.CoveredWeight) > 1e-9 {
+		t.Errorf("CoveredWeight diverged: ABSTAIN %.3f, GAP %.3f — coverage is still measured against the full weight",
+			ab.CoveredWeight, gap.CoveredWeight)
+	}
+}
+
+// The relief must not become the covered-weight renormalisation this file's own
+// comment records as an inversion: on 2026-09-01 dividing by what was actually
+// present put three quant-only foreign listings above the one name all five
+// domains had read.
+//
+// Coverage is still measured against the *full* weight, so the scarce/thin caps
+// keep their grip on a name carried by one loud domain — which is the case those
+// caps were kept for. Three abstaining domains is not a shape today's data path
+// can produce (only sentiment abstains), and that is the point: the bound has to
+// hold if the weights or the abstaining domains change.
+func TestAbstentionReliefCannotInvertThinAgainstThickCoverage(t *testing.T) {
+	got := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "THIN bullish 8", "THICK bullish 4"),
+		domainReport("news", "THICK bullish 6"),
+		domainReport("fundamentals", "THICK bearish 2"),
+		domainReport("sentiment", "THICK bullish 5"),
+	}, shortlistOf("THIN", "THICK"), map[string]map[string]bool{
+		"THIN": {"news": true, "fundamentals": true, "sentiment": true},
+	})
+
+	thin, thick := baseOf(t, got, "THIN"), baseOf(t, got, "THICK")
+	// THIN's relieved scale is 0.33 and its 0.28 vote scores 85 against it — the
+	// runaway. Its covered weight is 0.35, under scarceCoverage, so the cap binds
+	// at 40 and it stays below the four-domain name.
+	if thin.Cap != scarceCap {
+		t.Fatalf("THIN cap = %d, want the scarce cap %d — coverage must still be read off the full weight", thin.Cap, scarceCap)
+	}
+	if thin.Confidence != scarceCap {
+		t.Errorf("THIN confidence = %d, want it held at the scarce cap %d", thin.Confidence, scarceCap)
+	}
+	if thick.Confidence <= thin.Confidence {
+		t.Errorf("relief inverted the ordering: THIN %d, THICK %d", thin.Confidence, thick.Confidence)
+	}
+	if got[0].Ticker != "THICK" {
+		t.Errorf("ranking = %s first, want THICK — four domains read it and one read THIN", got[0].Ticker)
+	}
+}
+
+// A domain that scored the name after all keeps its vote: the score is a
+// stronger statement than the verdict that said it would have nothing to say,
+// and the enforcement pass has already deleted the ones that contradicted it.
+func TestAScoredDomainIsNotRelievedEvenIfItWasListedAsAbstaining(t *testing.T) {
+	with := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "AAA bullish 8"),
+		domainReport("sentiment", "AAA bullish 6"),
+	}, shortlistOf("AAA"), map[string]map[string]bool{"AAA": {"sentiment": true}})
+	without := computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "AAA bullish 8"),
+		domainReport("sentiment", "AAA bullish 6"),
+	}, shortlistOf("AAA"), nil)
+
+	if with[0].Confidence != without[0].Confidence {
+		t.Errorf("a scored domain was relieved anyway: %d vs %d", with[0].Confidence, without[0].Confidence)
+	}
+	if with[0].Abstained != nil {
+		t.Errorf("Abstained = %v, want none — sentiment voted", with[0].Abstained)
+	}
+}
+
+// The Chief has to be able to tell the two apart, or the arithmetic says one
+// thing and the table it reads says another.
+func TestBaseScoreBlockDistinguishesAnAbstentionFromAnAbsence(t *testing.T) {
+	block := baseScoreBlock(computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "AAA bullish 6"),
+	}, shortlistOf("AAA"), map[string]map[string]bool{"AAA": {"sentiment": true}}), 10)
+
+	// quant scored, sentiment stood down, news and fundamentals had nothing.
+	if !strings.Contains(block, "| +6 | · | · | ~ |") {
+		t.Errorf("the row does not separate a stand-down from a gap:\n%s", block)
+	}
+	if !strings.Contains(block, "absence of a reading") {
+		t.Errorf("the header does not tell the Chief what `~` means:\n%s", block)
+	}
+}
+
+// The header the Chief reads has to describe the scale the arithmetic actually
+// produces. It used to promise that a well-supported idea "lands in the 50s–70s
+// rather than the 30s" while the code's own note recorded the highest base
+// anywhere as 45.5 — so the Chief was told every board it ever saw was weak.
+func TestBaseScoreBlockStatesTheMeasuredRange(t *testing.T) {
+	block := baseScoreBlock(computeBaseScores(testWeights, []agents.ReportContext{
+		domainReport("quant", "AAA bullish 6"),
+		domainReport("news", "AAA bullish 6"),
+	}, shortlistOf("AAA"), nil), 10)
+
+	if !strings.Contains(block, "41–67") {
+		t.Errorf("the header does not state the measured top-of-board range:\n%s", block)
+	}
+	if strings.Contains(block, "50s–70s") {
+		t.Errorf("the header still carries the range no run has produced:\n%s", block)
+	}
+	// And it has to say which way to read a number in that range, or restating
+	// the range changes nothing about how the Chief uses it.
+	if !strings.Contains(block, "Rank on the spread between them") {
+		t.Errorf("the header does not tell the Chief how to read the scale:\n%s", block)
 	}
 }

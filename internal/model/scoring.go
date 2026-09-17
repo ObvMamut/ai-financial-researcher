@@ -101,17 +101,31 @@ const defaultReferenceStrength = 8
 // scalar multiply: it changes the scale and never the ordering.
 func ReferenceTotal(w DomainWeights) float64 {
 	total := 0.0
-	for domain, weight := range w.Map() {
-		if weight <= 0 {
-			continue
-		}
-		r, ok := ReferenceStrength[domain]
-		if !ok {
-			r = defaultReferenceStrength
-		}
-		total += weight * float64(r) / 10
+	for domain := range w.Map() {
+		total += ReferenceWeight(w, domain)
 	}
 	return total
+}
+
+// ReferenceWeight is one domain's share of ReferenceTotal: what that domain
+// alone contributes to the strongest joint verdict the rubrics permit. Zero for
+// a domain that does not vote.
+//
+// It exists so a caller can take a domain *out* of the scale for one name. That
+// is not the same operation as a per-name denominator over whatever happened to
+// be covered — see the comment on ReferenceTotal — and the only thing that
+// licenses it is a computed verdict saying the domain looked and found nothing
+// to say. See orchestrator.standDowns.
+func ReferenceWeight(w DomainWeights, domain string) float64 {
+	weight := w.Map()[domain]
+	if weight <= 0 {
+		return 0
+	}
+	r, ok := ReferenceStrength[domain]
+	if !ok {
+		r = defaultReferenceStrength
+	}
+	return weight * float64(r) / 10
 }
 
 // ScaledConfidence re-expresses a set of signed per-domain strengths (−10…+10,
@@ -121,6 +135,13 @@ func ReferenceTotal(w DomainWeights) float64 {
 // The scoreboard uses it to put ideas from different eras of this codebase on
 // one axis: an idea's stored Confidence is on whichever scale its run used, but
 // its DomainScores are raw evidence and can be re-read at any time.
+//
+// It always divides by the full ReferenceTotal, including for a name whose live
+// run relieved a domain that stood down (see ReferenceWeight), so the two figures
+// differ for such a name. That is deliberate. Which domains abstained is not
+// recorded on an idea — a missing domain and a quiet one look identical in
+// DomainScores — and every schema addition to ideas.json so far has reset the
+// replay clock. One constant divisor is the only axis the whole history shares.
 func ScaledConfidence(w DomainWeights, domainScores map[string]int) (int, bool) {
 	if len(domainScores) == 0 {
 		return 0, false

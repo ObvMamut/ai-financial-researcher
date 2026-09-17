@@ -23,14 +23,15 @@ import (
 // every price series, so this inherits the rate limiter, the cache and the TTL.
 // One extra request per distinct currency per run.
 type FXRates struct {
-	yc *YahooClient
+	research map[string]researchFXResult
+	yc       PriceSource
 
 	mu    sync.Mutex
 	rates map[string]float64 // ISO code → USD per unit
 	errs  map[string]error   // codes we already failed on, so we ask once
 }
 
-func NewFXRates(yc *YahooClient) *FXRates {
+func NewFXRates(yc PriceSource) *FXRates {
 	return &FXRates{yc: yc, rates: map[string]float64{"USD": 1}, errs: map[string]error{}}
 }
 

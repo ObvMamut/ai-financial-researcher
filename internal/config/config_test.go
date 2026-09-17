@@ -13,7 +13,13 @@ import (
 // into assertions.
 func clearEnv(t *testing.T) {
 	t.Helper()
+	for _, role := range []string{"TRIAGE", "RESEARCHER", "CHALLENGER", "CHIEF"} {
+		for _, field := range []string{"INPUT_BYTES", "RESPONSE_BYTES"} {
+			t.Setenv("CFR_RESEARCH_"+role+"_"+field, "")
+		}
+	}
 	for _, k := range []string{
+		"CFR_RESEARCH_MODE", "CFR_RESEARCH_ROUNDS", "CFR_RESEARCH_DOCUMENTS", "CFR_RESEARCH_CANDIDATES", "CFR_RESEARCH_SHORTLIST", "CFR_RESEARCH_SOURCES_FILE", "CFR_RESEARCH_HOLIDAYS_FILE",
 		"CFR_RUNS_DIR", "CFR_AGENTS_DIR", "ALPHAVANTAGE_API_KEY", "FRED_API_KEY",
 		"CFR_CONTACT_EMAIL", "CFR_CLAUDE_MODEL", "CFR_GEMINI_MODEL",
 		"CFR_CLAUDE_BIN", "CFR_GEMINI_BIN", "CFR_GEMINI_CONCURRENCY", "CFR_KEEP_RUNS",
@@ -601,5 +607,47 @@ entry_chase_sigma = 0.25
 		if !s.Risk.Set(key) {
 			t.Errorf("%s not recorded as explicitly set", key)
 		}
+	}
+}
+
+func TestThesisConfigPrecedenceAndBudgetValidation(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("research_mode = \"thesis\"\n[research]\nrounds=2\ndocuments=6\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CFR_RESEARCH_ROUNDS", "4")
+	s, e := Load()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if s.ResearchMode != "thesis" || s.Research.Rounds != 4 || s.Research.Documents != 6 || s.Research.Shortlist != 12 {
+		t.Fatalf("wrong resolution: %+v", s.Research)
+	}
+	t.Setenv("CFR_RESEARCH_ROUNDS", "99")
+	if _, e = Load(); e == nil {
+		t.Fatal("accepted unbounded research")
+	}
+}
+
+func TestResearchRoleBudgetPrecedenceAndValidation(t *testing.T) {
+	_, cwd := isolate(t)
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[research.budgets.researcher]\ninput_bytes=65536\nresponse_bytes=16384\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Research.Budgets.Researcher.InputBytes != 65536 || s.Research.Budgets.Chief.InputBytes != 192<<10 {
+		t.Fatal("file/default budget merge failed")
+	}
+	t.Setenv("CFR_RESEARCH_RESEARCHER_INPUT_BYTES", "73728")
+	s, err = Load()
+	if err != nil || s.Research.Budgets.Researcher.InputBytes != 73728 {
+		t.Fatalf("env override: %v", err)
+	}
+	t.Setenv("CFR_RESEARCH_CHIEF_RESPONSE_BYTES", "2097152")
+	if _, err = Load(); err == nil {
+		t.Fatal("invalid response budget accepted")
 	}
 }

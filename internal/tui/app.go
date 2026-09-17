@@ -177,6 +177,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.reports.Init()
 		}
 		a.results = newResultsModel(ideas, msg.dir)
+		if meta, err := store.LoadMeta(msg.dir); err == nil {
+			a.results.meta = meta
+		}
 		a.results.fromHistory = true
 		if a.width > 0 {
 			a.results.width, a.results.height = a.width, a.height
@@ -206,6 +209,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.run, cmd = a.run.Update(msg)
 			if msg.Type == orchestrator.EventComplete && msg.Ideas != nil {
 				a.results = newResultsModel(msg.Ideas, msg.Message)
+				a.results.meta = msg.Meta
 				if a.width > 0 {
 					a.results.width, a.results.height = a.width, a.height
 				}

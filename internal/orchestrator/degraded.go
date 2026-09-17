@@ -17,12 +17,12 @@ import (
 // synthesis. The weighting arithmetic itself lives in basescore.go — it used to
 // be duplicated here, which meant the fallback ranking and the numbers the Chief
 // was shown could drift apart while both looked authoritative.
-func buildDegradedIdeas(cfg Config, reports []agents.ReportContext, shortlist []model.Candidate) *model.IdeasResult {
+func buildDegradedIdeas(cfg Config, reports []agents.ReportContext, shortlist []model.Candidate, stoodDown map[string]map[string]bool) *model.IdeasResult {
 	candidate := make(map[string]model.Candidate, len(shortlist))
 	for _, c := range shortlist {
 		candidate[strings.ToUpper(c.Ticker)] = c
 	}
-	bases := computeBaseScores(cfg.Weights, reports, shortlist)
+	bases := computeBaseScores(cfg.Weights, reports, shortlist, stoodDown)
 
 	result := &model.IdeasResult{
 		Mode:        string(cfg.Mode),

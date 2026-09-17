@@ -128,6 +128,46 @@ func abstainedFor(role string, pack *marketdata.DataPack, tickers []string) []st
 	return out
 }
 
+// standDowns inverts the per-domain abstention lists into the ticker → domain
+// map computeBaseScores needs.
+//
+// A domain that looked at a name and found the market's resting state has no
+// vote being withheld from it: it did not fail to reach the name, it measured
+// the absence of a signal. Leaving its weight in the confidence scale prices
+// that measurement exactly like a fetch that never returned, and sentiment's
+// computed verdict reads "no directional signal" on roughly seven names in ten
+// by design — so the scale charged a flat haircut for the domain working
+// correctly. See computeBaseScores for what is and is not relieved.
+//
+// A *failed* domain's abstentions are not honoured. The positioning verdict is
+// computed in Go and stays true whether or not the agent survived, but a run
+// that lost a domain outright has a real gap in it, and relieving only the
+// abstained names would lift them above the names that same domain would have
+// scored. A degraded run should not flatter a subset of its own shortlist.
+func standDowns(statuses []model.DomainStatus) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, s := range statuses {
+		if s.Status == model.StatusFailed || len(s.Abstained) == 0 {
+			continue
+		}
+		domain := strings.ToLower(strings.TrimSpace(s.Domain))
+		if domain == "" {
+			continue
+		}
+		for _, t := range s.Abstained {
+			u := strings.ToUpper(strings.TrimSpace(t))
+			if u == "" {
+				continue
+			}
+			if out[u] == nil {
+				out[u] = map[string]bool{}
+			}
+			out[u][domain] = true
+		}
+	}
+	return out
+}
+
 // ungroundedFor lists the requested tickers a role has no verified evidence for.
 // This is the set an honest agent must report in its `missing` array.
 func ungroundedFor(role string, pack *marketdata.DataPack, quantPack *quant.Pack, tickers []string) []string {

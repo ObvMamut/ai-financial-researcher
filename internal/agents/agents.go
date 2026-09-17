@@ -127,7 +127,16 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 	// Capability block. It follows the persona because it corrects it: the
 	// personas assume a search-capable engine, and on the HTTP engine that
 	// assumption is what produced fabricated citations.
-	if p.Role != "chief-analyst" {
+	//
+	// The thesis roles get their own: the legacy block instructs an agent to
+	// list gaps in a `missing` array and to attach a low strength score, and
+	// the thesis pipeline has neither. Inheriting it told four roles to emit
+	// fields their schema does not define, in a run where half the payloads
+	// already failed to decode.
+	switch {
+	case thesisRole(p.Role):
+		sb.WriteString(thesisCapabilityBlock())
+	case p.Role != "chief-analyst":
 		sb.WriteString(capabilityBlock(p.Caps))
 	}
 
@@ -234,6 +243,21 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 			sb.WriteString(p.ClosedTradesBlock)
 		}
 
+	case "thesis-triage", "thesis-researcher", "thesis-challenger", "thesis-chief":
+		// No shortlist section: a thesis role is handed its evidence and its
+		// candidate identity in the data block, and the legacy line carries a
+		// scout direction and a pre-screen reason this pipeline deliberately
+		// withholds. An empty "- **Shortlist:** (empty)" told it nothing and
+		// implied a list it should have had.
+		if p.Mode == model.ModeSingle && p.Ticker != "" {
+			sb.WriteString(fmt.Sprintf("- **Ticker:** %s\n", p.Ticker))
+		}
+		if p.DataBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.DataBlock)
+			sb.WriteString("\n")
+		}
+
 	default: // specialists: news, fundamentals, quant, sentiment, macro
 		sb.WriteString(shortlistSection(p.Shortlist, blindToDirection(p.Role)))
 		if p.Mode == model.ModeSingle {
@@ -247,6 +271,41 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+// thesisRole reports whether a role belongs to the thesis pipeline. Those roles
+// share a schema and a citation model with each other and with neither the
+// legacy specialists nor the legacy Chief.
+func thesisRole(role string) bool { return strings.HasPrefix(role, "thesis-") }
+
+// thesisCapabilityBlock states what a thesis role can do and, as importantly,
+// which legacy conventions do not apply to it. The legacy block ends by telling
+// an agent to list ungrounded tickers in a `missing` array with a low strength
+// score; both belong to the weighted-domain pipeline, and a thesis role obeying
+// them emits fields its own decoder does not define.
+func thesisCapabilityBlock() string {
+	return `## Engine capabilities (authoritative — overrides the persona above)
+
+- **Web search: NOT AVAILABLE.** This engine sends your prompt and nothing else.
+  You have no search tool, no browser, and no way to fetch a URL yourself.
+  Anything not written in this prompt is unknown to you.
+- **Retrieval happens in the application, not here.** To read something you do
+  not have, return a request in the ` + "`requests`" + ` array and the application will
+  answer it. Every request is answered — with new evidence, or with the reason
+  none is coming. Do not repeat a request the application has already answered.
+- **Cite by evidence ID only.** Every material claim names one or more ` + "`id`" + `
+  values from the supplied evidence. Do not emit ` + "`[source:domain.com]`" + ` tags, and
+  never cite a document that is not in this prompt. A fabricated citation is
+  worse than an acknowledged gap.
+- **This pipeline has no weighted domain score.** Do not emit ` + "`missing`" + `,
+  ` + "`scores`" + `, ` + "`strength`" + `, ` + "`confidence`" + ` or a numeric probability anywhere. State
+  an unknown as an unresolved question in words, in the field provided for it.
+- **Return exactly one fenced ` + "```json" + ` block**, containing exactly the object
+  your instructions describe, and nothing after it. Field types are part of the
+  contract: a field documented as an array is an array — use ` + "`[]`" + ` for none —
+  and a field documented as a string is a string.
+
+`
 }
 
 // capabilityBlock states the engine's real capabilities and the citation rule

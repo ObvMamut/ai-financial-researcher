@@ -87,6 +87,9 @@ type ControlArm struct {
 	// repeatedly, and an arm scored over the tickets rather than the bets would
 	// report a sample several times larger than the evidence in it.
 	Duplicates int `json:"duplicates"`
+	// Overlapping counts remaining same-ticker windows that overlap even after
+	// weekly deduplication. These observations are not independent samples.
+	Overlapping int `json:"overlapping_calls,omitempty"`
 }
 
 // ControlReport is the three arms plus the runs they were drawn from.
@@ -129,7 +132,7 @@ func Control(ctx context.Context, runsDir string, yc marketdata.PriceSource, hor
 
 	for _, r := range runs {
 		ideas, err := store.LoadIdeas(r.Dir)
-		if err != nil || ideas == nil || len(ideas.Ideas) == 0 {
+		if err != nil || ideas == nil {
 			continue
 		}
 		rep.RunCount++

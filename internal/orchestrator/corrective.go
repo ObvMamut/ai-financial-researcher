@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/mamut/claude-financial-researcher/internal/parse"
@@ -19,7 +21,7 @@ import (
 //
 // Handing back the model's own JSON turns the call into what its name claims: fix
 // these, leave the rest.
-func correctivePrompt(prompt, previous string, reasons []string) string {
+func correctivePrompt(prompt, previous string, reasons []string, bench []BaseScore) string {
 	var b strings.Builder
 	b.WriteString(prompt)
 	b.WriteString("\n\n---\n\n## Corrective pass\n\n")
@@ -64,11 +66,86 @@ func correctivePrompt(prompt, previous string, reasons []string) string {
 	b.WriteString("you to swap or replace something, deleting it and shipping fewer ideas ")
 	b.WriteString("satisfies the finding too, and is the better answer whenever the ")
 	b.WriteString("replacement would be weaker than what it replaces — a name carried by one ")
-	b.WriteString("domain, or one you would not have ranked at all. Do not fill a slot to ")
-	b.WriteString("keep the count. Re-rank the survivors 1..N contiguously and say in ")
-	b.WriteString("`notes` what you dropped and why.\n")
+	b.WriteString("domain, or one you would not have ranked at all. Re-rank the survivors ")
+	b.WriteString("1..N contiguously and say in `notes` what you dropped and why.\n\n")
+
+	// The counterpart to the paragraph above. "Removing is always available"
+	// plus "change only what the findings name" left substitution with no
+	// standing at all, and the two paragraphs together are what took the
+	// 2026-09-05 run from three ideas to two: the only finding was that
+	// STLAM.MI was priced off a superseded bar, the prompt carried no newer bar
+	// to re-price against, so the single satisfying answer was deletion — and
+	// the Chief wrote in `notes` that it "did not backfill the slot".
+	//
+	// A replacement is legitimate when it comes from the same board, already
+	// scored by the same domains, and would have ranked on its own merits. It
+	// is not legitimate as a way to keep the count, which is the failure the
+	// paragraph above exists to prevent — on 2026-09-03 the Chief dropped ORCL
+	// (base 38, five domains) for 035720.KS (base 27, quant only) to satisfy a
+	// beta ceiling and said "the slot had to be filled rather than left empty".
+	// So both answers are offered, with the bar named, and the names are listed
+	// so choosing between them is a judgment rather than a guess.
+	b.WriteString("**Replacing it from the board is the other available answer**, and it is ")
+	b.WriteString("the better one when a name you did not rank would have earned its place on ")
+	b.WriteString("its own evidence. The eligible names are listed below with the base score ")
+	b.WriteString("already computed for them, so a substitution costs no new research. Take ")
+	b.WriteString("one only if you would defend it against the idea it replaces on the ")
+	b.WriteString("evidence — never to keep the count, and never a name a single domain ")
+	b.WriteString("carries. If nothing on that list clears the bar, ship fewer and say so.\n")
+	if block := availableNamesBlock(bench, previous); block != "" {
+		b.WriteString("\n")
+		b.WriteString(block)
+	}
 	return b.String()
 }
+
+// availableNamesBlock lists the scored names not already in the book, so the
+// corrective pass can substitute from evidence it has rather than from memory.
+// Empty when every scored name is already ranked.
+func availableNamesBlock(bench []BaseScore, previous string) string {
+	inBook := tickersInJSON(previous)
+	var rows []string
+	for _, b := range bench {
+		if inBook[strings.ToUpper(b.Ticker)] || b.Direction == "" {
+			continue
+		}
+		domains := make([]string, 0, len(b.Domains))
+		for d, s := range b.Domains {
+			domains = append(domains, fmt.Sprintf("%s %+d", d, s))
+		}
+		sort.Strings(domains)
+		rows = append(rows, fmt.Sprintf("| %s | %s | %d | %.0f%% | %s |",
+			b.Ticker, b.Direction, b.Confidence, b.CoveredWeight*100, strings.Join(domains, ", ")))
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Scored names not in your book\n\n")
+	b.WriteString("| ticker | base dir | base | covered | domains |\n")
+	b.WriteString("|---|---|---|---|---|\n")
+	b.WriteString(strings.Join(rows, "\n"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// tickersInJSON reads the ticker field out of the model's own previous JSON
+// block. It is deliberately a scan rather than a full unmarshal: this runs on
+// output the app has already decided is faulty, and a block that will not parse
+// must still yield "these names are spoken for" rather than an error.
+func tickersInJSON(previous string) map[string]bool {
+	out := map[string]bool{}
+	prior, ok := parse.LastJSONBlock(previous)
+	if !ok {
+		return out
+	}
+	for _, m := range tickerField.FindAllStringSubmatch(prior, -1) {
+		out[strings.ToUpper(m[1])] = true
+	}
+	return out
+}
+
+var tickerField = regexp.MustCompile(`"ticker"\s*:\s*"([^"]+)"`)
 
 // correctedReport is what lands in chief-analyst.md after a corrective pass:
 // the answer that shipped, then the answer that did not, with the findings that

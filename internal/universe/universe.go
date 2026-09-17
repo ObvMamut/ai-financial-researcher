@@ -189,7 +189,7 @@ func Dedupe(candidates []model.Candidate) []model.Candidate {
 			// symbol but keep the tallies already on the row.
 			if osuffixed && !suffixed {
 				kept := out[j]
-				c.Nominations, c.Contested = kept.Nominations, kept.Contested
+				c.Nominations, c.Contested, c.NominatedBy = kept.Nominations, kept.Contested, kept.NominatedBy
 				out[j] = c
 			}
 			return j
@@ -201,6 +201,9 @@ func Dedupe(candidates []model.Candidate) []model.Candidate {
 		k := strings.ToUpper(c.Ticker)
 		if c.Nominations == 0 {
 			c.Nominations = 1
+		}
+		if c.Index != "" && !containsString(c.NominatedBy, c.Index) {
+			c.NominatedBy = append(c.NominatedBy, c.Index)
 		}
 		j := at(k, c)
 		if j < 0 {
@@ -218,6 +221,11 @@ func Dedupe(candidates []model.Candidate) []model.Candidate {
 			continue
 		}
 		out[j].Nominations += c.Nominations
+		for _, idx := range c.NominatedBy {
+			if !containsString(out[j].NominatedBy, idx) {
+				out[j].NominatedBy = append(out[j].NominatedBy, idx)
+			}
+		}
 	}
 	return out
 }
@@ -243,11 +251,32 @@ type MeritCaps struct {
 	// CoverageFloor — the ones the run can only partly grade. Unlike PerIndex
 	// this one is hard, in both passes: a soft cap here would be no cap at all,
 	// since the backfill would refill exactly the slots the first pass had
-	// protected. Zero or less, or a nil Coverage, disables it.
+	// protected.
+	//
+	// Zero admits none of them, which is the useful default rather than an
+	// edge case: a name below the floor is one only the price-derived domains
+	// can score, and the risk gate's evidence floor deletes a price-only idea
+	// outright. Reserving shortlist slots for such names spends five specialist
+	// reports on candidates that cannot reach the output. A **negative** value
+	// disables the cap, as does a nil Coverage.
 	ThinlyCovered int
 	// CoverageFloor is the share of total domain weight below which a name
 	// counts as thinly covered. Zero disables the cap with ThinlyCovered.
 	CoverageFloor float64
+	// PerSector caps one sector's share of the shortlist. Like PerIndex it is a
+	// diversification preference the backfill overrides rather than hand back a
+	// short list, and for the same reason: a thin shortlist is worse than a
+	// concentrated one, because the stage that picks the book can decline a
+	// crowded sector but cannot conjure a name that never reached it.
+	//
+	// It exists because the risk gate already refuses a book with more than two
+	// ideas in one sector, and nothing upstream knew that. On 2026-09-05 the
+	// merit sort — which has no notion of sector at all — returned a shortlist
+	// that was seven-twelfths Information Technology, seven of the eight names
+	// that then cleared the evidence floor were IT, and the gate's own limit cut
+	// the book to two. The funnel was maximising exactly the quantity the gate
+	// forbids. Zero or less disables it.
+	PerSector int
 	// Reserve is how many of Max's slots are held for candidates ReservePredicate
 	// matches, before the ordinary passes fill the rest. Zero disables it.
 	//
@@ -293,7 +322,7 @@ type MeritCaps struct {
 }
 
 func (c MeritCaps) thinlyCovered(cand model.Candidate) bool {
-	return c.ThinlyCovered > 0 && c.CoverageFloor > 0 && c.Coverage != nil &&
+	return c.ThinlyCovered >= 0 && c.CoverageFloor > 0 && c.Coverage != nil &&
 		c.Coverage(cand) < c.CoverageFloor
 }
 
@@ -314,9 +343,9 @@ func (c MeritCaps) thinlyCovered(cand model.Candidate) bool {
 // same unit the base score is computed in. The pre-screen ranking is untouched —
 // this only decides who reaches the specialists.
 //
-// Two passes. The first respects PerIndex, which is what spreads the book across
-// regions. The second fills any slots that cap left empty, in pure score order.
-// Ties keep their input order.
+// Two passes. The first respects PerIndex and PerSector, which are what spread
+// the book across regions and industries. The second fills any slots those caps
+// left empty, in pure score order. Ties keep their input order.
 //
 // The result is always ordered best-first, including when nothing needed
 // trimming: everything downstream — the shortlist block each specialist reads,
@@ -337,6 +366,7 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 	out := make([]model.Candidate, 0, caps.Max)
 	taken := make([]bool, len(ranked))
 	perIndex := map[string]int{}
+	perSector := map[string]int{}
 	thin := 0
 
 	// Pass 0: the archetype reserve. It runs first because a slot held back
@@ -356,6 +386,9 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 			if caps.PerIndex > 0 && perIndex[c.Index] >= caps.PerIndex {
 				continue
 			}
+			if caps.PerSector > 0 && c.Sector != "" && perSector[c.Sector] >= caps.PerSector {
+				continue
+			}
 			if caps.thinlyCovered(c) {
 				if thin >= caps.ThinlyCovered {
 					continue
@@ -363,6 +396,7 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 				thin++
 			}
 			perIndex[c.Index]++
+			perSector[c.Sector]++
 			taken[i] = true
 			out = append(out, c)
 			reserved++
@@ -379,6 +413,9 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 		if caps.PerIndex > 0 && perIndex[c.Index] >= caps.PerIndex {
 			continue
 		}
+		if caps.PerSector > 0 && c.Sector != "" && perSector[c.Sector] >= caps.PerSector {
+			continue
+		}
 		if caps.thinlyCovered(c) {
 			if thin >= caps.ThinlyCovered {
 				continue
@@ -386,6 +423,7 @@ func CapMerit(candidates []model.Candidate, caps MeritCaps) []model.Candidate {
 			thin++
 		}
 		perIndex[c.Index]++
+		perSector[c.Sector]++
 		taken[i] = true
 		out = append(out, c)
 	}
@@ -489,4 +527,19 @@ func parseCSV(f fs.File, indexKey string) ([]model.Constituent, error) {
 		})
 	}
 	return rows, scanner.Err()
+}
+
+// Contains reports whether one index holds a ticker. It answers the question
+// the merge needs and Lookup cannot: Lookup is keyed by ticker alone and returns
+// the first index a name was loaded under, so it cannot say that MU is in both
+// sp500 and nq100 — which is exactly what decides whether two scouts nominating
+// it were reading two candidate pools or one.
+func (u *Universe) Contains(indexKey, ticker string) bool {
+	want := strings.ToUpper(strings.TrimSpace(ticker))
+	for _, c := range u.byIndex[indexKey] {
+		if strings.ToUpper(c.Ticker) == want {
+			return true
+		}
+	}
+	return false
 }

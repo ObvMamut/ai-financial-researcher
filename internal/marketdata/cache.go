@@ -39,10 +39,21 @@ type Cache struct {
 	baseDir string
 	// schema namespaces entries by payload shape; see factSchemaVersion.
 	schema int
+	// now supplies the calendar date entries are scoped to. Injectable so a test
+	// can cross a day boundary, which is the case that matters: keys carry the
+	// UTC date, so Friday's entry and Saturday's are different files.
+	now func() time.Time
 }
 
 func NewCache(baseDir string) *Cache {
-	return &Cache{baseDir: baseDir, schema: factSchemaVersion}
+	return &Cache{baseDir: baseDir, schema: factSchemaVersion, now: time.Now}
+}
+
+func (c *Cache) clock() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
 }
 
 // key derives the on-disk filename for a cache entry. source identifies the
@@ -51,7 +62,14 @@ func NewCache(baseDir string) *Cache {
 // pointed at another — otherwise a fixture/mirror run (CFR_YAHOO_BASE) would
 // poison real runs for the rest of the UTC day.
 func (c *Cache) key(source, provider, fn, ticker string) string {
-	date := time.Now().Format("2006-01-02")
+	return c.keyOn(0, source, provider, fn, ticker)
+}
+
+// keyOn is key for a day daysBack before today. The date is in the hash, so
+// reading an entry written on an earlier day means asking for that day's key
+// explicitly — there is no way to scan for it.
+func (c *Cache) keyOn(daysBack int, source, provider, fn, ticker string) string {
+	date := c.clock().AddDate(0, 0, -daysBack).Format("2006-01-02")
 	h := sha256.New()
 	h.Write([]byte(fmt.Sprintf("v%d|%s|%s|%s|%s|%s", c.schema, source, provider, fn, ticker, date)))
 	return fmt.Sprintf("%x", h.Sum(nil))
@@ -93,7 +111,11 @@ type envelope struct {
 // ttlKey namespaces TTL entries away from the date-scoped ones written by Set,
 // so the two encodings never collide on one path.
 func (c *Cache) ttlKey(source, provider, fn, ticker string) string {
-	return c.key(source, provider, "ttl:"+fn, ticker)
+	return c.ttlKeyOn(0, source, provider, fn, ticker)
+}
+
+func (c *Cache) ttlKeyOn(daysBack int, source, provider, fn, ticker string) string {
+	return c.keyOn(daysBack, source, provider, "ttl:"+fn, ticker)
 }
 
 // GetTTL reads an entry only while it is younger than ttl.
@@ -127,6 +149,30 @@ func (c *Cache) GetTTL(source, provider, fn, ticker string, ttl time.Duration, o
 		return false, err
 	}
 	return true, nil
+}
+
+// PeekTTL reads a TTL entry whatever its age, reporting when it was written.
+//
+// It exists so a caller can compare what it just fetched against what it
+// already had. GetTTL cannot answer that: expiry is the whole question it
+// exists to decide, and a forced refetch passes ttl=0, which it treats as an
+// unconditional miss. A stale entry is still evidence about the world, and
+// discarding it before the comparison is how a good series gets overwritten by
+// a worse one.
+func (c *Cache) PeekTTL(daysBack int, source, provider, fn, ticker string, out interface{}) (time.Time, bool) {
+	path := filepath.Join(c.baseDir, c.ttlKeyOn(daysBack, source, provider, fn, ticker)+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var env envelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return time.Time{}, false
+	}
+	if err := json.Unmarshal(env.Payload, out); err != nil {
+		return time.Time{}, false
+	}
+	return env.FetchedAt, true
 }
 
 // SetTTL writes an entry stamped with the current time, for reading via GetTTL.

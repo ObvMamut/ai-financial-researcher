@@ -1,5 +1,11 @@
 # Scoring & Ranking
 
+These confidence rules apply to `research_mode = "legacy"`. The opt-in
+[`thesis` mode](thesis-research.md) has no weighted score anchor or probability
+display. It retains maximum risk constraints but does not enforce legacy minimum
+stop width, reward:risk or simulated-expectancy floors. Thesis observations are
+excluded from legacy confidence calibration.
+
 How five domain reports become a **confidence score (0–100)** and a **ranked** list of
 ideas.
 
@@ -128,7 +134,10 @@ Two consequences made it worse than merely redundant:
 A weight of zero removes all of it in one place: `computeBaseScores` skips a non-positive
 weight before accumulating, so macro casts no vote, enters neither side of the `Consensus`
 ratio, and adds nothing to covered weight — which also drops an unmapped foreign listing's
-expected coverage to quant alone, where `max_thinly_covered` can see it.
+expected coverage to quant alone, where `max_thinly_covered` can see it. At that cap's
+default of 0 such a name never reaches the shortlist at all: the risk gate's evidence
+floor deletes an idea scored by quant alone, so a slot spent on it buys five specialist
+reports for a candidate that cannot ship.
 
 ### Blinding the price-derived domains
 
@@ -178,7 +187,7 @@ weighted  = Σ wᵈ · signᵈ · strengthᵈ / 10       (over the domains that 
 covered   = Σ wᵈ                                (over the domains that scored it)
 total     = Σ wᵈ                                (over every domain with a positive weight)
 signed    = weighted / total             ∈ [−1, 1]   — the raw figure, kept for audit
-reference = Σ wᵈ · Rᵈ / 10                      (over every domain with a positive weight)
+reference = Σ wᵈ · Rᵈ / 10                      (over every weighted domain that did not stand down on this name)
 base      = weighted / reference         ∈ [−1, 1]   — what confidence is read from
 ```
 
@@ -207,12 +216,56 @@ mediocre and 70 as good. Every idea in every run rendered as a red bar. MRK on 2
 was the strongest three-domain agreement this system can produce — quant +6, news +6,
 fundamentals +6 — and scored 39.
 
-`reference` sums over **all** the weighted domains and is therefore the same constant for
-every name in a run. That matters: it makes the rescale a positive scalar multiply, so it
-changes the scale and provably never the ordering, and it keeps `total`'s guarantee intact.
-A per-name reference over the covered domains would reintroduce exactly the defect above.
-It is also a fixed table rather than the run's own observed maxima, so confidence stays
-comparable across runs — which is what the scoreboard's calibration needs it to be.
+`reference` sums over the weighted domains rather than over the ones that happened to score
+the name, and it is a fixed table rather than the run's own observed maxima, so confidence
+stays comparable across runs — which is what the scoreboard's calibration needs it to be.
+A per-name reference over the *covered* domains would reintroduce exactly the defect above.
+
+### The one thing that leaves the scale: a measured abstention
+
+A domain removes itself from `reference` for one name, and only under one condition: its own
+**computed** verdict said it looked at the name and found nothing directional. Today that is
+sentiment alone (`abstainedFor` over `HasPositioningSignal`), and the app decides it, not the
+agent.
+
+The case for it is that a gap and an abstention were arithmetically identical and are not
+the same fact. Routine scheduled selling and a put/call ratio near 1.0 are the resting state
+of the market; the positioning verdict reads them as no signal on roughly seven names in ten
+**by design**, and every one of those names was then charged sentiment's full 0.17 — a flat
+ceiling haircut of about 21 points — for the domain working correctly. A name three domains
+read and one measured as quiet is better evidenced than a name three domains read and one
+never reached.
+
+The guard rails are three, and they are what keep this from becoming the covered-weight
+renormalisation above:
+
+- **Only `reference` moves.** `signed` and `covered` are still measured against the full
+  `total`, so the thin (0.6) and scarce (0.4) coverage caps read the same number they always
+  did. A name carried by one loud domain plus abstentions still reports low coverage, still
+  hits `scarceCap = 40`, and still cannot climb over a name four domains actually read. Those
+  caps were kept as a redundant floor; this is the case they floor.
+- **A domain that scored the name anyway keeps its vote**, and is not relieved.
+- **A domain whose agent *failed* is not relieved on any name.** The verdict stays true, but
+  a run that lost a domain outright has a real gap in it, and relieving only the abstained
+  subset would rank those names above the ones that domain would have scored.
+
+The Chief sees which is which: a `·` in a per-domain cell is no data, a `~` is a stand-down.
+
+### What the scale actually produces
+
+Re-measured over the 12 stored runs from 2026-08-31 to 2026-09-05, replaying their
+specialist reports through the current arithmetic and weights:
+
+| | old | with abstention relief |
+| --- | --- | --- |
+| best base on a board | 41–64, median 54 | **41–67, median 56** |
+| all scored names (n=144) | median 26, p90 51, max 64 | median 26, p90 53, max 67 |
+
+22% of scored names carry an abstention at all. `baseScoreBlock` states this range to the
+Chief; it used to promise "the 50s–70s rather than the 30s", which described no run this
+codebase has ever had, so every board the Chief saw looked like a weak one. The range is a
+measurement with a vintage — `agents/fundamentals.md` was rewritten straight after it was
+taken — so re-measure before quoting it again.
 
 - **direction** = the sign of `base` (positive → BUY, negative → SELL). Exactly zero, or
   no coverage at all, means no direction and no idea.

@@ -1,0 +1,1179 @@
+{
+  "provenance": "Whitelisted operational fields from runs/2026-09-10T06-49-03; no prompts, configuration, credentials, provider prose or URLs. Truncation errors replaced with a fixed diagnostic.",
+  "meta": {
+    "schema_version": 2,
+    "research_mode": "thesis",
+    "generated_at": "2026-09-10T06:49:03Z",
+    "outcome": "degraded",
+    "domains": [
+      {
+        "domain": "event-discovery-sp500",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 1744,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 105090,
+            "completion_tokens": 1744,
+            "total_tokens": 106834,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 105090
+          }
+        ]
+      },
+      {
+        "domain": "event-discovery-nq100",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 1380,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 39310,
+            "completion_tokens": 1380,
+            "total_tokens": 40690,
+            "prompt_cache_hit_tokens": 512,
+            "prompt_cache_miss_tokens": 38798
+          }
+        ]
+      },
+      {
+        "domain": "event-discovery-eu50",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 1426,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 8021,
+            "completion_tokens": 1426,
+            "total_tokens": 9447,
+            "prompt_cache_hit_tokens": 512,
+            "prompt_cache_miss_tokens": 7509
+          }
+        ]
+      },
+      {
+        "domain": "event-discovery-asia100",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 1495,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 7733,
+            "completion_tokens": 1495,
+            "total_tokens": 9228,
+            "prompt_cache_hit_tokens": 512,
+            "prompt_cache_miss_tokens": 7221
+          }
+        ]
+      },
+      {
+        "domain": "thesis-triage",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 2434,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 27386,
+            "completion_tokens": 2434,
+            "total_tokens": 29820,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 27002
+          }
+        ]
+      },
+      {
+        "domain": "macro",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 1148,
+        "usage": [
+          {
+            "prompt_tokens": 3027,
+            "completion_tokens": 1148,
+            "total_tokens": 4175,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 3027
+          }
+        ]
+      },
+      {
+        "domain": "research-51434f4d-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 14263,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 16450,
+            "completion_tokens": 8192,
+            "total_tokens": 24642,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 16450
+          },
+          {
+            "prompt_tokens": 16450,
+            "completion_tokens": 6071,
+            "total_tokens": 22521,
+            "prompt_cache_hit_tokens": 16256,
+            "prompt_cache_miss_tokens": 194
+          }
+        ]
+      },
+      {
+        "domain": "research-51434f4d-round-2",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 15771,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 25921,
+            "completion_tokens": 8192,
+            "total_tokens": 34113,
+            "prompt_cache_hit_tokens": 1920,
+            "prompt_cache_miss_tokens": 24001
+          },
+          {
+            "prompt_tokens": 25921,
+            "completion_tokens": 7579,
+            "total_tokens": 33500,
+            "prompt_cache_hit_tokens": 25728,
+            "prompt_cache_miss_tokens": 193
+          }
+        ]
+      },
+      {
+        "domain": "research-51434f4d-round-3",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7990,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 28427,
+            "completion_tokens": 7990,
+            "total_tokens": 36417,
+            "prompt_cache_hit_tokens": 2688,
+            "prompt_cache_miss_tokens": 25739
+          }
+        ]
+      },
+      {
+        "domain": "research-51434f4d-challenge",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7177,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 29393,
+            "completion_tokens": 7177,
+            "total_tokens": 36570,
+            "prompt_cache_hit_tokens": 1152,
+            "prompt_cache_miss_tokens": 28241
+          }
+        ]
+      },
+      {
+        "domain": "research-51434f4d-revision",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 37926,
+            "completion_tokens": 8192,
+            "total_tokens": 46118,
+            "prompt_cache_hit_tokens": 2816,
+            "prompt_cache_miss_tokens": 35110
+          },
+          {
+            "prompt_tokens": 37926,
+            "completion_tokens": 8192,
+            "total_tokens": 46118,
+            "prompt_cache_hit_tokens": 37760,
+            "prompt_cache_miss_tokens": 166
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-51434f4d-challenge-final",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 37515,
+            "completion_tokens": 8192,
+            "total_tokens": 45707,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 35211
+          },
+          {
+            "prompt_tokens": 37515,
+            "completion_tokens": 8192,
+            "total_tokens": 45707,
+            "prompt_cache_hit_tokens": 37376,
+            "prompt_cache_miss_tokens": 139
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-425358-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 14839,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 15134,
+            "completion_tokens": 8192,
+            "total_tokens": 23326,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 13598
+          },
+          {
+            "prompt_tokens": 15134,
+            "completion_tokens": 6647,
+            "total_tokens": 21781,
+            "prompt_cache_hit_tokens": 14976,
+            "prompt_cache_miss_tokens": 158
+          }
+        ]
+      },
+      {
+        "domain": "research-425358-round-2",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 24173,
+            "completion_tokens": 8192,
+            "total_tokens": 32365,
+            "prompt_cache_hit_tokens": 2560,
+            "prompt_cache_miss_tokens": 21613
+          },
+          {
+            "prompt_tokens": 24173,
+            "completion_tokens": 8192,
+            "total_tokens": 32365,
+            "prompt_cache_hit_tokens": 23936,
+            "prompt_cache_miss_tokens": 237
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-4745-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 13854,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 15886,
+            "completion_tokens": 8192,
+            "total_tokens": 24078,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 15886
+          },
+          {
+            "prompt_tokens": 15886,
+            "completion_tokens": 5662,
+            "total_tokens": 21548,
+            "prompt_cache_hit_tokens": 15744,
+            "prompt_cache_miss_tokens": 142
+          }
+        ]
+      },
+      {
+        "domain": "research-4745-round-2",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 15115,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 22685,
+            "completion_tokens": 8192,
+            "total_tokens": 30877,
+            "prompt_cache_hit_tokens": 3840,
+            "prompt_cache_miss_tokens": 18845
+          },
+          {
+            "prompt_tokens": 22685,
+            "completion_tokens": 6923,
+            "total_tokens": 29608,
+            "prompt_cache_hit_tokens": 22528,
+            "prompt_cache_miss_tokens": 157
+          }
+        ]
+      },
+      {
+        "domain": "research-4745-round-3",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 15456,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 24374,
+            "completion_tokens": 8192,
+            "total_tokens": 32566,
+            "prompt_cache_hit_tokens": 6784,
+            "prompt_cache_miss_tokens": 17590
+          },
+          {
+            "prompt_tokens": 24374,
+            "completion_tokens": 7264,
+            "total_tokens": 31638,
+            "prompt_cache_hit_tokens": 24192,
+            "prompt_cache_miss_tokens": 182
+          }
+        ]
+      },
+      {
+        "domain": "research-4745-challenge",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 6747,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 24536,
+            "completion_tokens": 6747,
+            "total_tokens": 31283,
+            "prompt_cache_hit_tokens": 1152,
+            "prompt_cache_miss_tokens": 23384
+          }
+        ]
+      },
+      {
+        "domain": "research-4745-revision",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 32647,
+            "completion_tokens": 8192,
+            "total_tokens": 40839,
+            "prompt_cache_hit_tokens": 7808,
+            "prompt_cache_miss_tokens": 24839
+          },
+          {
+            "prompt_tokens": 32647,
+            "completion_tokens": 8192,
+            "total_tokens": 40839,
+            "prompt_cache_hit_tokens": 32512,
+            "prompt_cache_miss_tokens": 135
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-4745-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7363,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 32233,
+            "completion_tokens": 7363,
+            "total_tokens": 39596,
+            "prompt_cache_hit_tokens": 16384,
+            "prompt_cache_miss_tokens": 15849
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-round-1",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 4582,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 12074,
+            "completion_tokens": 4582,
+            "total_tokens": 16656,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 10538
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-challenge",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 4397,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 17949,
+            "completion_tokens": 4397,
+            "total_tokens": 22346,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 17949
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-revision",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 24202,
+            "completion_tokens": 8192,
+            "total_tokens": 32394,
+            "prompt_cache_hit_tokens": 3200,
+            "prompt_cache_miss_tokens": 21002
+          },
+          {
+            "prompt_tokens": 24202,
+            "completion_tokens": 8192,
+            "total_tokens": 32394,
+            "prompt_cache_hit_tokens": 24064,
+            "prompt_cache_miss_tokens": 138
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-5454452e5041-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 5686,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 23792,
+            "completion_tokens": 5686,
+            "total_tokens": 29478,
+            "prompt_cache_hit_tokens": 12800,
+            "prompt_cache_miss_tokens": 10992
+          }
+        ]
+      },
+      {
+        "domain": "research-41534d4c2e4153-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 14206,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 12310,
+            "completion_tokens": 8192,
+            "total_tokens": 20502,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 10774
+          },
+          {
+            "prompt_tokens": 12310,
+            "completion_tokens": 6014,
+            "total_tokens": 18324,
+            "prompt_cache_hit_tokens": 12160,
+            "prompt_cache_miss_tokens": 150
+          }
+        ]
+      },
+      {
+        "domain": "research-41534d4c2e4153-round-2",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 23342,
+            "completion_tokens": 8192,
+            "total_tokens": 31534,
+            "prompt_cache_hit_tokens": 1920,
+            "prompt_cache_miss_tokens": 21422
+          },
+          {
+            "prompt_tokens": 23342,
+            "completion_tokens": 8192,
+            "total_tokens": 31534,
+            "prompt_cache_hit_tokens": 23168,
+            "prompt_cache_miss_tokens": 174
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-4e4554-round-1",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 8070,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 15663,
+            "completion_tokens": 8070,
+            "total_tokens": 23733,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 14127
+          }
+        ]
+      },
+      {
+        "domain": "research-4e4554-round-2",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 25491,
+            "completion_tokens": 8192,
+            "total_tokens": 33683,
+            "prompt_cache_hit_tokens": 2816,
+            "prompt_cache_miss_tokens": 22675
+          },
+          {
+            "prompt_tokens": 25491,
+            "completion_tokens": 8192,
+            "total_tokens": 33683,
+            "prompt_cache_hit_tokens": 25344,
+            "prompt_cache_miss_tokens": 147
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 15941,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 11906,
+            "completion_tokens": 8192,
+            "total_tokens": 20098,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 10370
+          },
+          {
+            "prompt_tokens": 11906,
+            "completion_tokens": 7749,
+            "total_tokens": 19655,
+            "prompt_cache_hit_tokens": 11772,
+            "prompt_cache_miss_tokens": 134
+          }
+        ]
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-round-2",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7106,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 20929,
+            "completion_tokens": 7106,
+            "total_tokens": 28035,
+            "prompt_cache_hit_tokens": 2944,
+            "prompt_cache_miss_tokens": 17985
+          }
+        ]
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-challenge",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7371,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 20483,
+            "completion_tokens": 7371,
+            "total_tokens": 27854,
+            "prompt_cache_hit_tokens": 1152,
+            "prompt_cache_miss_tokens": 19331
+          }
+        ]
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-revision",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 29377,
+            "completion_tokens": 8192,
+            "total_tokens": 37569,
+            "prompt_cache_hit_tokens": 12544,
+            "prompt_cache_miss_tokens": 16833
+          },
+          {
+            "prompt_tokens": 29377,
+            "completion_tokens": 8192,
+            "total_tokens": 37569,
+            "prompt_cache_hit_tokens": 29184,
+            "prompt_cache_miss_tokens": 193
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7230,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 28972,
+            "completion_tokens": 7230,
+            "total_tokens": 36202,
+            "prompt_cache_hit_tokens": 12160,
+            "prompt_cache_miss_tokens": 16812
+          }
+        ]
+      },
+      {
+        "domain": "research-323333302e5457-round-1",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 5825,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 15074,
+            "completion_tokens": 5825,
+            "total_tokens": 20899,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 13538
+          }
+        ]
+      },
+      {
+        "domain": "research-323333302e5457-round-2",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 15984,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 24880,
+            "completion_tokens": 8192,
+            "total_tokens": 33072,
+            "prompt_cache_hit_tokens": 2944,
+            "prompt_cache_miss_tokens": 21936
+          },
+          {
+            "prompt_tokens": 24880,
+            "completion_tokens": 7792,
+            "total_tokens": 32672,
+            "prompt_cache_hit_tokens": 24704,
+            "prompt_cache_miss_tokens": 176
+          }
+        ]
+      },
+      {
+        "domain": "research-323333302e5457-round-3",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 30089,
+            "completion_tokens": 8192,
+            "total_tokens": 38281,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 27913
+          },
+          {
+            "prompt_tokens": 30089,
+            "completion_tokens": 8192,
+            "total_tokens": 38281,
+            "prompt_cache_hit_tokens": 29952,
+            "prompt_cache_miss_tokens": 137
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "research-4248502e4158-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 13620,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 10215,
+            "completion_tokens": 8192,
+            "total_tokens": 18407,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 8679
+          },
+          {
+            "prompt_tokens": 10215,
+            "completion_tokens": 5428,
+            "total_tokens": 15643,
+            "prompt_cache_hit_tokens": 9984,
+            "prompt_cache_miss_tokens": 231
+          }
+        ]
+      },
+      {
+        "domain": "research-4248502e4158-challenge",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 4246,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 17208,
+            "completion_tokens": 4246,
+            "total_tokens": 21454,
+            "prompt_cache_hit_tokens": 1152,
+            "prompt_cache_miss_tokens": 16056
+          }
+        ]
+      },
+      {
+        "domain": "research-4248502e4158-revision",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 7650,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 22792,
+            "completion_tokens": 7650,
+            "total_tokens": 30442,
+            "prompt_cache_hit_tokens": 3072,
+            "prompt_cache_miss_tokens": 19720
+          }
+        ]
+      },
+      {
+        "domain": "research-4248502e4158-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 5651,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 24682,
+            "completion_tokens": 5651,
+            "total_tokens": 30333,
+            "prompt_cache_hit_tokens": 6784,
+            "prompt_cache_miss_tokens": 17898
+          }
+        ]
+      },
+      {
+        "domain": "research-393938382e484b-round-1",
+        "status": "done",
+        "attempts": 2,
+        "tokens": 14434,
+        "payload": "ok",
+        "usage": [
+          {
+            "prompt_tokens": 14343,
+            "completion_tokens": 8192,
+            "total_tokens": 22535,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 12807
+          },
+          {
+            "prompt_tokens": 14343,
+            "completion_tokens": 6242,
+            "total_tokens": 20585,
+            "prompt_cache_hit_tokens": 14208,
+            "prompt_cache_miss_tokens": 135
+          }
+        ]
+      },
+      {
+        "domain": "research-393938382e484b-round-2",
+        "status": "failed",
+        "attempts": 2,
+        "tokens": 16384,
+        "payload": "invalid",
+        "usage": [
+          {
+            "prompt_tokens": 24227,
+            "completion_tokens": 8192,
+            "total_tokens": 32419,
+            "prompt_cache_hit_tokens": 2944,
+            "prompt_cache_miss_tokens": 21283
+          },
+          {
+            "prompt_tokens": 24227,
+            "completion_tokens": 8192,
+            "total_tokens": 32419,
+            "prompt_cache_hit_tokens": 24064,
+            "prompt_cache_miss_tokens": 163
+          }
+        ],
+        "err": "api engine: response truncated at the 8192-token limit"
+      },
+      {
+        "domain": "chief-analyst",
+        "status": "failed",
+        "attempts": 1,
+        "usage": [
+          {
+            "incomplete": true,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0
+          }
+        ]
+      },
+      {
+        "domain": "chief-analyst-fallback",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 4954,
+        "usage": [
+          {
+            "prompt_tokens": 257339,
+            "completion_tokens": 4954,
+            "total_tokens": 262293,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 257339,
+            "completion_tokens_details": {
+              "reasoning_tokens": 3175
+            }
+          }
+        ]
+      }
+    ],
+    "research_outcomes": [
+      {
+        "ticker": "ORCL",
+        "transport": "not_run",
+        "parsing": "not_run",
+        "evidence": "documents",
+        "review": "not_run",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "ADBE",
+        "transport": "not_run",
+        "parsing": "not_run",
+        "evidence": "documents",
+        "review": "not_run",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "QCOM",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "BSX",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "GE",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "revise",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "TTE.PA",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "revise",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "ASML.AS",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "NET",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "NOKIA.HE",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "revise",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "2330.TW",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "BHP.AX",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "reject",
+        "decision": "rejected"
+      },
+      {
+        "ticker": "9988.HK",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      }
+    ]
+  },
+  "results": [
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "already attempted"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "already attempted"
+    }
+  ]
+}

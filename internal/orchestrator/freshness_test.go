@@ -175,3 +175,58 @@ func TestAStaleIdeaBecomesACorrectiveFinding(t *testing.T) {
 		}
 	}
 }
+
+// A name priced off a superseded close cannot produce an actionable idea, and
+// the pipeline knew that one stage before it spent five specialist reports on
+// it. It used only to append a caveat: the Chief still ranked and priced the
+// name, and the risk gate raised the problem afterwards as a *soft* finding
+// asking it to "re-price against the newest bar in the quant block". On
+// 2026-09-05 the block held no newer bar, so the corrective pass's only
+// available answer was deletion, and the run shipped two ideas instead of three.
+func TestStalePricedNamesLeaveTheShortlistBeforeTheResearchIsPaidFor(t *testing.T) {
+	shortlist := []model.Candidate{
+		{Ticker: "MU", Index: "nq100"},
+		{Ticker: "STLAM.MI", Index: "eu50"},
+		{Ticker: "BAYN.DE", Index: "eu50"},
+		{Ticker: "SNPS", Index: "sp500"},
+	}
+	newPack := func() *quant.Pack {
+		p := quant.NewPack()
+		for _, c := range shortlist {
+			p.ByTicker[strings.ToUpper(c.Ticker)] = quant.Metrics{Symbol: c.Ticker}
+		}
+		p.Stale = []string{"STLAM.MI", "BAYN.DE"}
+		return p
+	}
+
+	pack := newPack()
+	kept, dropped := dropStalePriced(model.ModeIndependent, shortlist, pack)
+	if got := tickerNames(kept); !equalStrings(got, []string{"MU", "SNPS"}) {
+		t.Errorf("shortlist = %v, want the two priceable names", got)
+	}
+	if !equalStrings(dropped, []string{"STLAM.MI", "BAYN.DE"}) {
+		t.Errorf("dropped = %v, want both stale names named so the log can report them", dropped)
+	}
+	// The pack travels into the Chief's prompt, so a dropped name must not
+	// survive there as a compact line for a ticker no longer on the shortlist.
+	for _, gone := range []string{"STLAM.MI", "BAYN.DE"} {
+		if _, ok := pack.ByTicker[gone]; ok {
+			t.Errorf("%s stayed in the quant pack after being dropped", gone)
+		}
+	}
+
+	// Single-stock mode never drops: the user named the ticker, there is no
+	// alternative to fall back to, and the flag on the price is the honest answer.
+	one := []model.Candidate{{Ticker: "STLAM.MI", Index: "eu50"}}
+	if kept, dropped := dropStalePriced(model.ModeSingle, one, newPack()); len(dropped) != 0 || len(kept) != 1 {
+		t.Errorf("single-stock mode dropped %v — it has nothing to fall back to", dropped)
+	}
+
+	// Nor does a drop that would empty the shortlist: a run that ships flagged
+	// ideas is worth more than one that ships none.
+	all := newPack()
+	all.Stale = []string{"MU", "STLAM.MI", "BAYN.DE", "SNPS"}
+	if kept, dropped := dropStalePriced(model.ModeIndependent, shortlist, all); len(dropped) != 0 || len(kept) != 4 {
+		t.Errorf("an all-stale shortlist was emptied: kept %v, dropped %v", tickerNames(kept), dropped)
+	}
+}

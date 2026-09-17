@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/mamut/claude-financial-researcher/internal/config"
@@ -20,22 +22,60 @@ func runScoreboard(settings *config.Settings, args []string) int {
 	fs := flag.NewFlagSet("scoreboard", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print the scoreboard as JSON on stdout")
 	legacy := fs.Bool("legacy", false, "use the old mark-to-current-price math instead of the path replay")
+	researchCompare := fs.Bool("research-compare", false, "compare research engine vintages and controls over 10 and 15 sessions")
+	researchPairs := fs.String("research-pairs", "", "audit explicitly declared run pairs from a JSON manifest (requires --research-compare)")
+	researchCost := fs.String("research-cost-bps", "", "assumed round-trip execution cost in basis points (requires --research-compare)")
+	offline := fs.Bool("offline", false, "use saved price snapshots only (requires --research-compare)")
 	control := fs.Bool("control", false, "compare what shipped against the pre-screen composite alone and against the funnel's own shortlist")
 	horizon := fs.Int("horizon", scoreboard.DefaultControlHorizon, "sessions each control arm is scored over")
 	fillWindow := fs.Int("fill-window", settings.FillWindowDays, "sessions a limit entry stays live before the idea counts as unfilled")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *control && *legacy {
-		fmt.Fprintln(os.Stderr, "error: --control and --legacy measure different things; pick one")
+	if (*control && *legacy) || (*researchCompare && (*control || *legacy)) {
+		fmt.Fprintln(os.Stderr, "error: choose one of --research-compare, --control or --legacy")
 		return 2
+	}
+	if fs.NArg() > 0 || (!*researchCompare && (*researchPairs != "" || *researchCost != "" || *offline)) {
+		fmt.Fprintln(os.Stderr, "error: research comparison options require --research-compare; positional arguments are not accepted")
+		return 2
+	}
+	options := scoreboard.ResearchComparisonOptions{PairManifest: *researchPairs, FillWindowDays: *fillWindow}
+	if *researchCost != "" {
+		cost, err := strconv.ParseFloat(*researchCost, 64)
+		if err != nil || cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
+			fmt.Fprintln(os.Stderr, "error: research-cost-bps must be finite and nonnegative")
+			return 2
+		}
+		options.RoundTripCostBPS = &cost
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	yc := marketdata.NewPrices(settings.Providers.AlpacaKeyID, settings.Providers.AlpacaSecret, marketdata.NewCache(settings.DataDir))
+	var yc marketdata.PriceSource
+	if !*offline {
+		yc = marketdata.NewPrices(settings.Providers.AlpacaKeyID, settings.Providers.AlpacaSecret, marketdata.NewCache(settings.DataDir))
+	}
 
+	if *researchCompare {
+		rep, err := scoreboard.CompareResearchWithOptions(ctx, settings.RunsDir, yc, options)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if *asJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(rep); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		} else {
+			fmt.Print(rep.FormatText())
+		}
+		return 0
+	}
 	// The control arms answer a different question from the scoreboard proper —
 	// whether the model stages beat the arithmetic they sit on — so they get
 	// their own output and are never folded into the stored track record.

@@ -138,6 +138,17 @@ same view.
 Each of these is a reason you may name. Use the smallest magnitude that fits, and state it
 in the Confluence Math line. The total across all of them is capped at ±10.
 
+**The menu below has a debit and a credit side, and they are meant to be reachable in the
+same proportion.** They were not: the list used to offer about −25 points of deductions
+against +6 of credits, two of which needed a track record that does not exist yet. So every
+adjustment in the 2026-09-05 run was negative — −3, −3, −4, −3 — and of MU's clean return
+distribution the analyst wrote, correctly, *"There is no positive adjustment in the rubric
+for that, so I take none."* A rubric that can only subtract is not a calibration, it is a
+discount. If the evidence for an idea is better than the base score's arithmetic could see,
+say so and pay for it.
+
+**Debits**
+
 - **−3 to −6 — chasing:** the quant line shows the name is extended — `p/52wH` at or above
   **0.98**, or `str21` above **1.5** (the last month's move in units of the name's own
   21-day volatility) — with the recent move running *with* the trend rather than against
@@ -150,24 +161,57 @@ in the Confluence Math line. The total across all of them is capped at ±10.
   No penalty when the name is in the **Pullback** or **Base** archetype and the levels
   reflect it — those shapes are defined by *not* being extended, and charging them here
   would double-count the thing that made them attractive.
-- **+3 — undervalued growth:** a cheap-relative-to-growth multiple with real, ideally
-  accelerating growth and a sound balance sheet, where the quant read is merely neutral.
-  A base or pullback is a valid swing entry.
 - **−3 to −6 — unstable levels:** expanding realized vol (`volTrend` well above 1), fat
   tails (high kurtosis, a large worst-day), or a `flags:` caveat on the quant line. The
   thesis may be right and the levels still unplaceable.
 - **−5 to −10 — unhedged binary event:** a verified earnings date or comparable scheduled
   event inside the timeframe, not addressed in `position_note`. (The app also subtracts 10
   on its own if you say nothing about one, so say something.)
-- **±3 — report contradiction the scores could not carry:** two domains agree in sign but
-  one of them says the opposite in prose, or a single fact in a report plainly changes the
-  read. Quote it.
 - **−3 to −5 — the track record says otherwise:** a "Track record" block is in this prompt
   and this idea's stated confidence bucket has a realized win rate well below the
   confidence it claims. Name the bucket and its number.
-- **±3 to −5 — a lesson applies to this construction:** a "Lessons" block is in this
-  prompt and one of its lessons names a setup cell this idea sits in. Quote the lesson and
-  its `n`.
+
+**Credits**
+
+- **+2 to +4 — placeable levels:** the mirror of unstable levels, and it is a real finding
+  rather than the absence of a penalty. Realized vol flat or contracting (`volTrend` at or
+  below about 1), excess kurtosis modest, a worst-day that your stop distance comfortably
+  clears, and no `flags:` on the quant line. It says the stop is where you put it rather
+  than where the next ordinary session puts it, which is the difference between a thesis
+  and a trade.
+- **+2 to +5 — a live filing reaction on your side:** the "Verified earnings reactions"
+  table shows a `gap` in this idea's direction and a `since` that has not taken it back.
+  Prices continue in the direction of an earnings surprise for weeks, and weeks is this
+  system's whole horizon — it is the one dated, verified, forward-looking fact in the
+  prompt. Quote the `gap`, the `since` and the filing date.
+
+  **Cap this at +2 where the shortlist line reads `setup: drift`.** There the reaction is
+  the same fact that selected the name, and paying full price for it is paying twice for
+  one event.
+- **+2 to +4 — the counter-trend shape held:** the name is in the **Pullback** or **Base**
+  archetype, the quant line agrees it is not extended (`p/52wH` well clear of 0.98, `str21`
+  modest; for a base, `volTrend` at or below 1), and your levels are placed for that shape
+  rather than for a breakout. Escaping the chasing penalty is not the same as earning
+  something: an entry that does not require the move to continue before it works is a
+  better-constructed idea than one that does.
+- **+3 — undervalued growth:** a cheap-relative-to-growth multiple with real, ideally
+  accelerating growth and a sound balance sheet, where the quant read is merely neutral.
+  A base or pullback is a valid swing entry.
+- **+3 to +5 — the track record says so:** a "Track record" block is in this prompt and
+  this idea's stated confidence bucket has a realized win rate well *above* the confidence
+  it claims, or a domain carrying this idea has a record well above 50%. Name the bucket or
+  the domain and its number. Same evidence as its debit twin and the same standard of
+  proof — see the small-n rule below.
+
+**Either way**
+
+- **±3 — report contradiction the scores could not carry:** two domains agree in sign but
+  one of them says the opposite in prose, or a single fact in a report plainly changes the
+  read, in either direction. Quote it.
+- **±5 — a lesson applies to this construction:** a "Lessons" block is in this prompt and
+  one of its lessons names a setup cell this idea sits in. It cuts both ways: a cell this
+  pipeline has done *well* in is as much of a finding as one it has done badly in. Quote
+  the lesson and its `n`.
 
 ### When the prompt carries a track record
 It is this pipeline's own measured results, from replaying past ideas through their daily

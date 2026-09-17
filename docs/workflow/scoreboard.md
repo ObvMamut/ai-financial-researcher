@@ -1,5 +1,12 @@
 # Scoreboard
 
+For opt-in thesis runs, use `--research-compare` to separate research mode,
+schema/model/persona cohorts and compare calls at both 10 and 15 sessions.
+See [thesis evaluation](thesis-research.md#evaluation). Ordinary thesis replay
+respects the absolute entry and thesis deadlines rather than restarting the
+holding window after a late fill. Thesis observations have an unscored confidence
+bucket and are excluded from legacy calibration.
+
 How past trade ideas are measured against reality. Implemented in
 `internal/scoreboard`; surfaced in the TUI ("Scoreboard" on the home screen) and
 headless via `cfr scoreboard [--json] [--legacy] [--fill-window N]`.
@@ -367,3 +374,25 @@ number becomes readable rather than preferences: `MinClosedForPostMortem` (**10*
 trades before any lesson is drawn) and `MinCellN` (**5** closed trades before a cell may be
 shown or written about). `DefaultDedupeWindowDays` (**7**) and `MinArmN` (**30**) are
 constants for the same reason: they say when a count is a sample, not what anyone prefers.
+
+## Research evaluation
+
+`--research-compare` now reports per-run failures, available regional coverage,
+latency, token-accounting completeness and overlapping call windows alongside
+cohort returns. Missing result artifacts are retained as failures; valid empty
+runs remain separate. Optional `--research-pairs <manifest>` audits named
+legacy/thesis pairs and declared input-snapshot hashes. `--offline` restricts
+this comparison to saved prices. `--research-cost-bps <number>` adds an explicitly
+assumed execution-cost scenario for closed barrier replays, separate from
+10/15-session directional calls. These flags require `--research-compare` and
+never update calibration. See the [pairing contract and manifest example](thesis-research.md#explicit-pairing-and-evaluation-diagnostics).
+
+
+Research diagnostics separately report attempted versus deferred companies,
+readable research with substantive challenge versus failure, explicit versus
+historically inferred truncations, capacity failures, per-stage usage and request
+outcomes. `attempts_with_incomplete_usage` prevents absent historical telemetry
+from being interpreted as known zero usage. Primary Chief failure and fallback
+success are separate fields; invalid fallback JSON is not success. Source-host
+counts describe delivery endpoints and must not be presented as independent
+reporting origins.

@@ -9,6 +9,7 @@ import (
 )
 
 type resultsModel struct {
+	meta        *model.RunMeta
 	ideas       *model.IdeasResult
 	runDir      string
 	cursor      int // which idea is selected (for keyboard nav)
@@ -98,6 +99,18 @@ func (m resultsModel) View() string {
 		m.ideas.GeneratedAt, m.ideas.Mode)))
 	sb.WriteString("\n\n")
 
+	if m.ideas.ResearchMode == "thesis" {
+		summary := m.ideas.ResearchSummary
+		if summary == nil && m.meta != nil {
+			summary = model.SummarizeResearch(m.meta.ResearchOutcomes, m.ideas.Decisions)
+		}
+		if summary != nil {
+			sb.WriteString(summary.String() + "\n\n")
+		}
+		for _, issue := range model.ResearchRunIssues(m.meta) {
+			sb.WriteString(issue + "\n")
+		}
+	}
 	if len(m.ideas.Ideas) == 0 {
 		sb.WriteString(mutedStyle.Render("  No ideas returned."))
 	} else {
@@ -106,6 +119,13 @@ func (m resultsModel) View() string {
 		}
 	}
 
+	if m.ideas.ResearchMode == "thesis" {
+		for _, d := range m.ideas.Decisions {
+			if d.Status == "watchlist" || d.Status == "rejected" {
+				sb.WriteString(fmt.Sprintf("\n  %s · %s: %s\n", d.Ticker, decisionLabel(d), truncate(decisionReason(d), 180)))
+			}
+		}
+	}
 	if m.ideas.Notes != "" {
 		sb.WriteString("\n")
 		sb.WriteString(mutedStyle.Render("  Notes: " + truncate(m.ideas.Notes, 100)))
@@ -151,6 +171,9 @@ func (m resultsModel) renderIdea(sb *strings.Builder, idea model.TradeIdea, sele
 		idea.Confidence,
 	)
 
+	if idea.Thesis != nil {
+		header = fmt.Sprintf("%s#%d  %s  %-8s  %s · evidence %s", prefix, idea.Rank, dirStr, idea.Ticker, idea.Status, idea.Thesis.EvidenceQuality)
+	}
 	if selected {
 		sb.WriteString(selectedStyle.Render(header))
 	} else {
@@ -166,6 +189,9 @@ func (m resultsModel) renderIdea(sb *strings.Builder, idea model.TradeIdea, sele
 		sb.WriteString("\n")
 	}
 
+	if idea.Thesis != nil {
+		sb.WriteString(mutedStyle.Render("      Why now: " + truncate(idea.Thesis.WhyNow, 100) + "\n      Invalidated by: " + truncate(idea.Thesis.Invalidation, 100) + "\n      Entry expires " + idea.Thesis.EntryExpiresOn + " · exit by " + idea.Thesis.ExpiresOn + "\n"))
+	}
 	// Why (indented)
 	if idea.Why != "" {
 		sb.WriteString("      ")
@@ -207,4 +233,18 @@ func confidenceBar(conf int) string {
 	default:
 		return failedStyle.Render(bar)
 	}
+}
+
+func decisionLabel(d model.SelectionDecision) string {
+	if d.Blocked == model.BlockedResearchFailure {
+		return "research failed"
+	}
+	return d.Status
+}
+
+func decisionReason(d model.SelectionDecision) string {
+	if d.Blocked == model.BlockedResearchFailure && d.ReviewReason != "" {
+		return d.ReviewReason
+	}
+	return d.Reason
 }

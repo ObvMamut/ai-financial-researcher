@@ -8,6 +8,7 @@ import (
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
 // row builds a scorable pre-screen row with sane defaults, so each test only
@@ -124,16 +125,16 @@ func TestMeritScoreUsesTheCandidatesOwnIndex(t *testing.T) {
 	}
 
 	bull := model.Candidate{Ticker: "MU", Index: "nq100", Bias: model.BiasBullish}
-	if got := meritScore(ps, bull); math.Abs(got-2.59) > 1e-9 {
+	if got := meritScore(ps, nil, bull); math.Abs(got-2.59) > 1e-9 {
 		t.Errorf("bullish nq100 nomination scored %+.2f, want +2.59 — it took sp500's row", got)
 	}
 
 	// The bearish half of the asymmetry: negating the *right* index's score.
 	bear := model.Candidate{Ticker: "MU", Index: "nq100", Bias: model.BiasBearish}
-	if got := meritScore(ps, bear); math.Abs(got+2.59) > 1e-9 {
+	if got := meritScore(ps, nil, bear); math.Abs(got+2.59) > 1e-9 {
 		t.Errorf("bearish nq100 nomination scored %+.2f, want -2.59", got)
 	}
-	if got := meritScore(ps, model.Candidate{Ticker: "MU", Index: "sp500", Bias: model.BiasBearish}); math.Abs(got+3.73) > 1e-9 {
+	if got := meritScore(ps, nil, model.Candidate{Ticker: "MU", Index: "sp500", Bias: model.BiasBearish}); math.Abs(got+3.73) > 1e-9 {
 		t.Errorf("bearish sp500 nomination scored %+.2f, want -3.73", got)
 	}
 
@@ -417,28 +418,28 @@ func TestMeritScoreCountsScoutAgreementAndDisagreement(t *testing.T) {
 	})}
 
 	solo := model.Candidate{Ticker: "REGN", Index: "sp500", Bias: model.BiasBullish, Nominations: 1}
-	if got := meritScore(ps, solo); math.Abs(got-0.702) > 1e-9 {
+	if got := meritScore(ps, nil, solo); math.Abs(got-0.702) > 1e-9 {
 		t.Errorf("one nomination scored %+.3f, want the bare composite +0.702", got)
 	}
 
 	agreed := solo
 	agreed.Nominations = 2
-	if got := meritScore(ps, agreed); math.Abs(got-(0.702+meritAgreementBonus)) > 1e-9 {
+	if got := meritScore(ps, nil, agreed); math.Abs(got-(0.702+meritAgreementBonus)) > 1e-9 {
 		t.Errorf("two agreeing scouts scored %+.3f, want +%.3f", got, 0.702+meritAgreementBonus)
 	}
-	if meritScore(ps, agreed) <= meritScore(ps, solo) {
+	if meritScore(ps, nil, agreed) <= meritScore(ps, nil, solo) {
 		t.Error("a name two scouts wanted did not outrank the same name one scout wanted")
 	}
 
 	contested := model.Candidate{Ticker: "QCOM", Index: "sp500", Bias: model.BiasBearish,
 		Nominations: 1, Contested: []string{"nq100"}}
 	want := 1.770 - meritContestedPenalty
-	if got := meritScore(ps, contested); math.Abs(got-want) > 1e-9 {
+	if got := meritScore(ps, nil, contested); math.Abs(got-want) > 1e-9 {
 		t.Errorf("a contested nomination scored %+.3f, want %+.3f", got, want)
 	}
 	// The penalty is a tie-break, not a veto: a strongly-supported contested
 	// name still outranks a weak uncontested one.
-	if meritScore(ps, contested) <= meritScore(ps, solo) {
+	if meritScore(ps, nil, contested) <= meritScore(ps, nil, solo) {
 		t.Error("a 1.77 contested read fell below a 0.70 uncontested one — the penalty is a veto")
 	}
 }
@@ -848,4 +849,124 @@ func TestZScoresTreatsAConstantSampleAsNoInformation(t *testing.T) {
 	if got[0] >= 0 || got[len(got)-1] <= 0 {
 		t.Errorf("a genuine spread was flattened: %v", got)
 	}
+}
+
+// The composite is computed from prices and says nothing about whether the run
+// can research the name. Left alone the merit sort therefore ranked a candidate
+// three domains must abstain on exactly as high as one all four can grade — and
+// because the composite's extremes sit on idiosyncratic mid-caps rather than on
+// the ADR-listed large caps, it preferred the unresearchable one. On 2026-09-05
+// the eu50 scout nominated ASML.AS, BBVA.MC and DBK.DE, all reachable through
+// their US lines; merit dropped all three for BAYN.DE, BMW.DE and DSFIR.AS,
+// which are not, and the evidence floor then deleted every one of those.
+func TestMeritScoreChargesForCoverageItCannotReach(t *testing.T) {
+	ps := &Prescreen{Rows: sortPrescreenRows([]PrescreenRow{
+		row("BAYN.DE", "eu50", func(r *PrescreenRow) { r.Score = 2.75 }),
+		row("BBVA.MC", "eu50", func(r *PrescreenRow) { r.Score = 1.58 }),
+	})}
+	// The real shape of expectedCoverage under this run's weights: a US line
+	// reaches every domain, an unmapped listing reaches quant alone.
+	coverage := func(ticker string) float64 {
+		if ticker == "BAYN.DE" {
+			return 0.35
+		}
+		return 1.0
+	}
+	unreachable := model.Candidate{Ticker: "BAYN.DE", Index: "eu50", Bias: model.BiasBullish}
+	reachable := model.Candidate{Ticker: "BBVA.MC", Index: "eu50", Bias: model.BiasBullish}
+
+	if a, b := meritScore(ps, nil, unreachable), meritScore(ps, nil, reachable); a <= b {
+		t.Fatalf("fixture is wrong: uncharged merit should still favour BAYN.DE (%+.2f vs %+.2f)", a, b)
+	}
+	charged, clean := meritScore(ps, coverage, unreachable), meritScore(ps, coverage, reachable)
+	if charged >= clean {
+		t.Errorf("BAYN.DE scored %+.2f against BBVA.MC's %+.2f — the coverage charge did not reorder them", charged, clean)
+	}
+	// Scaled, not docked: a 2.75 the run can evidence over 35% of the weight is
+	// a 2.75 that is 35% evidenced. A fully covered name is untouched.
+	if want := 2.75 * 0.35; math.Abs(charged-want) > 1e-9 {
+		t.Errorf("charged merit = %+.4f, want %+.4f (35%% of the domain weight reachable)", charged, want)
+	}
+	if math.Abs(clean-1.58) > 1e-9 {
+		t.Errorf("a fully covered name scored %+.4f, want its bare composite +1.58", clean)
+	}
+
+	// Scaling never touches the sign: a short of an unresearchable name is worse
+	// evidenced than a short of a researchable one, not turned into a long.
+	short := model.Candidate{Ticker: "BAYN.DE", Index: "eu50", Bias: model.BiasBearish}
+	if want := -2.75 * 0.35; math.Abs(meritScore(ps, coverage, short)-want) > 1e-9 {
+		t.Errorf("bearish charged merit = %+.4f, want %+.4f", meritScore(ps, coverage, short), want)
+	}
+
+	// The scout terms sit outside the scaling: two scouts wanting the same name
+	// is a fact about the screening stage, as true for an unmapped listing as
+	// for a US one.
+	agreed := unreachable
+	agreed.Nominations = 2
+	if want := 2.75*0.35 + meritAgreementBonus; math.Abs(meritScore(ps, coverage, agreed)-want) > 1e-9 {
+		t.Errorf("agreement bonus was scaled by coverage: got %+.4f, want %+.4f",
+			meritScore(ps, coverage, agreed), want)
+	}
+}
+
+// The merit sort pays an agreement bonus per extra nomination because "two
+// scouts reaching the same name from different index tables is independent
+// evidence". 35 of the 56 names in nq100 are also in sp500, so for those the two
+// scouts are choosing one ticker out of two overlapping pools built from one
+// price history — and on 2026-09-05 all four dual-nominated names (MU, PANW,
+// QCOM, SNPS) were in that overlap. Each collected a bonus for it, and the
+// shortlist came out seven-twelfths Information Technology against a book limit
+// of two ideas per sector.
+func TestOverlappingIndicesDoNotCountAsScoutAgreement(t *testing.T) {
+	uni, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !uni.Contains("sp500", "MU") || !uni.Contains("nq100", "MU") {
+		t.Skip("fixture assumes MU sits in both US index samples")
+	}
+	if uni.Contains("sp500", "OKTA") {
+		t.Skip("fixture assumes OKTA is nq100-only")
+	}
+
+	shortlist := []model.Candidate{
+		{Ticker: "MU", Index: "nq100", Bias: model.BiasBullish, Nominations: 2,
+			NominatedBy: []string{"sp500", "nq100"}},
+		// A name only one of the two indices holds: whatever the second scout
+		// read, it was not that index's row, so the agreement stands.
+		{Ticker: "OKTA", Index: "nq100", Bias: model.BiasBullish, Nominations: 2,
+			NominatedBy: []string{"nq100", "eu50"}},
+		{Ticker: "CRM", Index: "sp500", Bias: model.BiasBullish, Nominations: 1,
+			NominatedBy: []string{"sp500"}},
+	}
+	changed := collapseOverlappingNominations(uni, shortlist)
+
+	if got := shortlist[0].Nominations; got != 1 {
+		t.Errorf("MU kept %d nominations, want 1 — both indices hold it", got)
+	}
+	if got := shortlist[1].Nominations; got != 2 {
+		t.Errorf("OKTA was collapsed to %d, want 2 — eu50 does not hold it", got)
+	}
+	if got := shortlist[2].Nominations; got != 1 {
+		t.Errorf("a single nomination became %d", got)
+	}
+	if len(changed) != 1 || changed[0].Ticker != "MU" {
+		t.Errorf("changed = %v, want only MU so the run log names what it collapsed", tickerNames(changed))
+	}
+
+	// And the bonus follows: the merit sort must see the collapsed count.
+	ps := &Prescreen{Rows: sortPrescreenRows([]PrescreenRow{
+		row("MU", "nq100", func(r *PrescreenRow) { r.Score = 2.59 }),
+	})}
+	if got := meritScore(ps, nil, shortlist[0]); math.Abs(got-2.59) > 1e-9 {
+		t.Errorf("MU still carries an agreement bonus: merit %+.4f, want its bare composite +2.59", got)
+	}
+}
+
+func tickerNames(cs []model.Candidate) []string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.Ticker)
+	}
+	return out
 }

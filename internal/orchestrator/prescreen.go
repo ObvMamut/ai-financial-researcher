@@ -956,7 +956,7 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSourc
 	// window, since the window is counted in sessions and this walk is not.
 	var reportDates map[string]time.Time
 	if reports != nil {
-		since := time.Now().UTC().AddDate(0, 0, -driftWindowSessions*7/5-7)
+		since := researchTime(ctx).UTC().AddDate(0, 0, -driftWindowSessions*7/5-7)
 		reportDates = reports.ReportDates(ctx, warm, since)
 		if len(reportDates) > 0 {
 			log(ch, fmt.Sprintf("pre-screen: %d of %d names filed a 10-Q/10-K in the last %d sessions",
@@ -1069,13 +1069,46 @@ func plural(n int, format string) string {
 // the data argues against, which is the point — this breaks ties between names
 // the composite has already ranked closely, and this run's cut ran through
 // twelve nominations inside 1.1 z of each other.
+//
+// Under all of it, the composite is *scaled by the coverage the run can actually
+// bring to the name*, before either scout term is applied.
+//
+// A composite is computed from prices. It says how far the name has moved
+// relative to its index and nothing whatever about whether this run can research
+// it, so left alone the merit sort ranked a candidate three domains must abstain
+// on exactly as high as one all four can grade. That is not neutral: because the
+// composite's extremes sit on idiosyncratic mid-caps rather than on the
+// ADR-listed large caps, it systematically preferred the unresearchable one. On
+// 2026-09-05 the eu50 scout nominated ASML.AS, BBVA.MC and DBK.DE, all three
+// reachable through their US lines, and merit dropped all three for BAYN.DE,
+// BMW.DE and DSFIR.AS, which are not — and the evidence floor then deleted every
+// one of the three that got through.
+//
+// Scaling rather than subtracting a penalty is what makes this dimensionally
+// honest, and it is why there is no third constant to tune. A z-score the run
+// can evidence over 35% of the domain weight is not a 2.75 that should be
+// docked; it is a 2.75 that is 35% evidenced, and 0.96 says so on the same axis
+// every other candidate is ranked on. The sign is untouched, so a short of a
+// thinly covered name stays a short, and a fully covered name is unchanged.
+//
+// The scout terms are added afterwards, unscaled: two scouts wanting the same
+// name is a fact about the screening stage, and it is neither more nor less true
+// because EDGAR has no filer for the ticker.
 const (
 	meritAgreementBonus   = 0.35
 	meritContestedPenalty = 0.65
 )
 
-func meritScore(ps *Prescreen, c model.Candidate) float64 {
+// meritScore ranks one nomination. coverage reports the share of total domain
+// weight the run can ground for a ticker; a nil func means the caller cannot
+// answer, and the composite stands unscaled.
+func meritScore(ps *Prescreen, coverage func(string) float64, c model.Candidate) float64 {
 	base := meritComposite(ps, c)
+	if coverage != nil {
+		if share := coverage(c.Ticker); share > 0 && share < 1 {
+			base *= share
+		}
+	}
 	if n := c.Nominations; n > 1 {
 		base += float64(n-1) * meritAgreementBonus
 	}

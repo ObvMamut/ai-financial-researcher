@@ -12,16 +12,19 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 // Settings is the fully resolved configuration.
 type Settings struct {
-	AgentsDir string
-	RunsDir   string
-	DataDir   string
-	KeepRuns  int
-	Workers   int
-	Indices   []string
+	ResearchMode string
+	Research     model.ResearchConfig
+	AgentsDir    string
+	RunsDir      string
+	DataDir      string
+	KeepRuns     int
+	Workers      int
+	Indices      []string
 
 	// PriceTTL is how long a cached daily price series is served before being
 	// refetched. The cache used to be scoped to the UTC calendar day and nothing
@@ -38,7 +41,10 @@ type Settings struct {
 	// MaxShortlist caps the merged shortlist, MaxPerIndex caps one index's
 	// share of it, and MaxThinlyCovered caps the names the run's sources can
 	// ground less than 60% of the domain weight for. Zero means the
-	// orchestrator's defaults (15 / 12 / 5 / 4).
+	// orchestrator's defaults (15 / 12 / 5), and for MaxThinlyCovered zero is
+	// itself the default — such a name cannot clear the risk gate's evidence
+	// floor, so a slot spent on one is a slot spent on a guaranteed deletion.
+	// A negative value re-admits them for an experiment.
 	PrescreenTopPerIndex int
 	// PrescreenPullbackPerIndex and PrescreenBasePerIndex size the archetype
 	// sections the scout table carries alongside the top-of-ranking one, **per
@@ -103,12 +109,14 @@ type Settings struct {
 
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
 type fileFormat struct {
-	AgentsDir string   `toml:"agents_dir"`
-	RunsDir   string   `toml:"runs_dir"`
-	DataDir   string   `toml:"data_dir"`
-	KeepRuns  int      `toml:"keep_runs"`
-	Workers   int      `toml:"workers"`
-	Indices   []string `toml:"indices"`
+	ResearchMode string               `toml:"research_mode"`
+	Research     model.ResearchConfig `toml:"research"`
+	AgentsDir    string               `toml:"agents_dir"`
+	RunsDir      string               `toml:"runs_dir"`
+	DataDir      string               `toml:"data_dir"`
+	KeepRuns     int                  `toml:"keep_runs"`
+	Workers      int                  `toml:"workers"`
+	Indices      []string             `toml:"indices"`
 
 	PriceTTL      string `toml:"price_ttl"`       // Go duration, e.g. "4h"
 	DataCacheDays int    `toml:"data_cache_days"` // 0 disables pruning
@@ -192,6 +200,7 @@ type fileFormat struct {
 		ADVMinUSD          float64 `toml:"adv_min_usd"`
 		MaxPairCorr        float64 `toml:"max_pair_corr"`
 		MaxPortfolioBeta   float64 `toml:"max_portfolio_beta"`
+		MaxPerSector       int     `toml:"max_per_sector"`
 		EdgeSigmaDaily     float64 `toml:"edge_sigma_daily"`
 		MinExpectancyR     float64 `toml:"min_expectancy_r"`
 		MinExpectancyBps   float64 `toml:"min_expectancy_bps"`
@@ -261,10 +270,41 @@ func Load() (*Settings, error) {
 		}
 	}
 	s.applyEnv()
+	if s.ResearchMode == "" {
+		s.ResearchMode = "legacy"
+	}
+	if s.ResearchMode != "legacy" && s.ResearchMode != "thesis" {
+		return nil, fmt.Errorf("research_mode must be legacy or thesis")
+	}
+	s.Research = s.Research.Defaults()
+	if err := s.Research.Budgets.Validate(); err != nil {
+		return nil, err
+	}
+	if s.Research.Rounds < 1 || s.Research.Rounds > 6 || s.Research.Documents < 1 || s.Research.Documents > 32 || s.Research.Candidates < 1 || s.Research.Candidates > 48 || s.Research.Shortlist < 1 || s.Research.Shortlist > s.Research.Candidates {
+		return nil, fmt.Errorf("invalid research budgets")
+	}
 	if err := s.validateRisk(); err != nil {
 		return nil, err
 	}
+	s.registerSecrets()
 	return s, nil
+}
+
+// registerSecrets is the one place that knows every configured credential, so
+// it is the one place that can tell the sinks what to keep out of artifacts,
+// prompts and logs. Providers echo their own request back on failure; without
+// this a key travelled into metadata.json and into a researcher's retrieval
+// diagnostics block. See internal/redact.
+func (s *Settings) registerSecrets() {
+	redact.Register(
+		s.Providers.AlphaVantageKey,
+		s.Providers.FredKey,
+		s.Providers.AlpacaKeyID,
+		s.Providers.AlpacaSecret,
+		s.API.APIKey,
+		s.Local.APIKey,
+		s.ChiefFallback.APIKey,
+	)
 }
 
 // validateRisk refuses the risk settings that cannot mean anything, so that
@@ -293,6 +333,7 @@ func (s *Settings) validateRisk() error {
 		{"entry_chase_sigma", s.Risk.EntryChaseSigma},
 		{"max_pair_corr", s.Risk.MaxPairCorr},
 		{"max_portfolio_beta", s.Risk.MaxPortfolioBeta},
+		{"max_per_sector", float64(s.Risk.MaxPerSector)},
 	}
 	for _, c := range ceilings {
 		if s.Risk.Set(c.key) && c.v <= 0 {
@@ -343,6 +384,21 @@ func (s *Settings) applyFile(path string) error {
 			*dst = v
 		}
 	}
+	setStr(&s.ResearchMode, f.ResearchMode)
+	setInt(&s.Research.Rounds, f.Research.Rounds)
+	setInt(&s.Research.Documents, f.Research.Documents)
+	setInt(&s.Research.Candidates, f.Research.Candidates)
+	setInt(&s.Research.Shortlist, f.Research.Shortlist)
+	setStr(&s.Research.SourcesFile, f.Research.SourcesFile)
+	setStr(&s.Research.HolidaysFile, f.Research.HolidaysFile)
+	setInt(&s.Research.Budgets.Triage.InputBytes, f.Research.Budgets.Triage.InputBytes)
+	setInt(&s.Research.Budgets.Triage.ResponseBytes, f.Research.Budgets.Triage.ResponseBytes)
+	setInt(&s.Research.Budgets.Researcher.InputBytes, f.Research.Budgets.Researcher.InputBytes)
+	setInt(&s.Research.Budgets.Researcher.ResponseBytes, f.Research.Budgets.Researcher.ResponseBytes)
+	setInt(&s.Research.Budgets.Challenger.InputBytes, f.Research.Budgets.Challenger.InputBytes)
+	setInt(&s.Research.Budgets.Challenger.ResponseBytes, f.Research.Budgets.Challenger.ResponseBytes)
+	setInt(&s.Research.Budgets.Chief.InputBytes, f.Research.Budgets.Chief.InputBytes)
+	setInt(&s.Research.Budgets.Chief.ResponseBytes, f.Research.Budgets.Chief.ResponseBytes)
 	setStr(&s.AgentsDir, f.AgentsDir)
 	setStr(&s.RunsDir, f.RunsDir)
 	setStr(&s.DataDir, f.DataDir)
@@ -361,7 +417,12 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.PrescreenDriftPerIndex, f.PrescreenDriftPerIndex)
 	setInt(&s.MaxShortlist, f.MaxShortlist)
 	setInt(&s.MaxPerIndex, f.MaxPerIndex)
-	setInt(&s.MaxThinlyCovered, f.MaxThinlyCovered)
+	// Not setInt: zero is the default and means "admit no thinly-covered name",
+	// so a negative value is the documented way to turn the cap off and sign
+	// cannot decide whether the key was set.
+	if md.IsDefined("max_thinly_covered") {
+		s.MaxThinlyCovered = f.MaxThinlyCovered
+	}
 	// Not setInt: a negative shortlist_reserve is the documented way to turn the
 	// archetype reserve off, so sign cannot decide whether the key was set.
 	if f.ShortlistReserve != 0 {
@@ -389,6 +450,19 @@ func (s *Settings) applyFile(path string) error {
 		}
 		s.Risk.Explicit[key] = true
 	}
+	// A count, not a ratio, so it needs its own setter: everything else under
+	// [risk] is a float64.
+	setRiskInt := func(dst *int, key string, v int) {
+		if !md.IsDefined("risk", key) {
+			return
+		}
+		*dst = v
+		if s.Risk.Explicit == nil {
+			s.Risk.Explicit = map[string]bool{}
+		}
+		s.Risk.Explicit[key] = true
+	}
+	setRiskInt(&s.Risk.MaxPerSector, "max_per_sector", f.Risk.MaxPerSector)
 	setRisk(&s.Risk.AccountEquity, "account_equity", f.Risk.AccountEquity)
 	setRisk(&s.Risk.RiskPerTradePct, "risk_per_trade_pct", f.Risk.RiskPerTradePct)
 	setRisk(&s.Risk.CostBps, "cost_bps", f.Risk.CostBps)
@@ -513,6 +587,21 @@ func (s *Settings) applyEnv() {
 			}
 		}
 	}
+	setStr(&s.ResearchMode, "CFR_RESEARCH_MODE")
+	setStr(&s.Research.SourcesFile, "CFR_RESEARCH_SOURCES_FILE")
+	setStr(&s.Research.HolidaysFile, "CFR_RESEARCH_HOLIDAYS_FILE")
+	setPosInt(&s.Research.Rounds, "CFR_RESEARCH_ROUNDS")
+	setPosInt(&s.Research.Documents, "CFR_RESEARCH_DOCUMENTS")
+	setPosInt(&s.Research.Candidates, "CFR_RESEARCH_CANDIDATES")
+	setPosInt(&s.Research.Shortlist, "CFR_RESEARCH_SHORTLIST")
+	setPosInt(&s.Research.Budgets.Triage.InputBytes, "CFR_RESEARCH_TRIAGE_INPUT_BYTES")
+	setPosInt(&s.Research.Budgets.Triage.ResponseBytes, "CFR_RESEARCH_TRIAGE_RESPONSE_BYTES")
+	setPosInt(&s.Research.Budgets.Researcher.InputBytes, "CFR_RESEARCH_RESEARCHER_INPUT_BYTES")
+	setPosInt(&s.Research.Budgets.Researcher.ResponseBytes, "CFR_RESEARCH_RESEARCHER_RESPONSE_BYTES")
+	setPosInt(&s.Research.Budgets.Challenger.InputBytes, "CFR_RESEARCH_CHALLENGER_INPUT_BYTES")
+	setPosInt(&s.Research.Budgets.Challenger.ResponseBytes, "CFR_RESEARCH_CHALLENGER_RESPONSE_BYTES")
+	setPosInt(&s.Research.Budgets.Chief.InputBytes, "CFR_RESEARCH_CHIEF_INPUT_BYTES")
+	setPosInt(&s.Research.Budgets.Chief.ResponseBytes, "CFR_RESEARCH_CHIEF_RESPONSE_BYTES")
 	setStr(&s.RunsDir, "CFR_RUNS_DIR")
 	setStr(&s.AgentsDir, "CFR_AGENTS_DIR")
 	setStr(&s.Providers.AlphaVantageKey, "ALPHAVANTAGE_API_KEY")
@@ -635,7 +724,13 @@ func (s *Settings) applyEnv() {
 	}
 	setPosInt(&s.MaxShortlist, "CFR_MAX_SHORTLIST")
 	setPosInt(&s.MaxPerIndex, "CFR_MAX_PER_INDEX")
-	setPosInt(&s.MaxThinlyCovered, "CFR_MAX_THINLY_COVERED")
+	// Signed, not setPosInt: 0 admits no thinly-covered name and a negative
+	// value turns the cap off, so both have to survive the parse.
+	if v := os.Getenv("CFR_MAX_THINLY_COVERED"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			s.MaxThinlyCovered = n
+		}
+	}
 	setPosInt(&s.ChiefAdjustBand, "CFR_CHIEF_ADJUST_BAND")
 	// Presence, not sign, decides an override here too — see setRisk in
 	// applyFile. A var that is set and parses wins at whatever value it holds,
@@ -667,6 +762,15 @@ func (s *Settings) applyEnv() {
 	envRisk(&s.Risk.EntryChaseSigma, "entry_chase_sigma", "CFR_ENTRY_CHASE_SIGMA")
 	envRisk(&s.Risk.MaxPairCorr, "max_pair_corr", "CFR_MAX_PAIR_CORR")
 	envRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", "CFR_MAX_PORTFOLIO_BETA")
+	if v, ok := os.LookupEnv("CFR_MAX_PER_SECTOR"); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			s.Risk.MaxPerSector = n
+			if s.Risk.Explicit == nil {
+				s.Risk.Explicit = map[string]bool{}
+			}
+			s.Risk.Explicit["max_per_sector"] = true
+		}
+	}
 	envRisk(&s.Risk.EdgeSigmaDaily, "edge_sigma_daily", "CFR_EDGE_SIGMA_DAILY")
 	envRisk(&s.Risk.MinExpectancyR, "min_expectancy_r", "CFR_MIN_EXPECTANCY_R")
 	envRisk(&s.Risk.MinExpectancyBps, "min_expectancy_bps", "CFR_MIN_EXPECTANCY_BPS")

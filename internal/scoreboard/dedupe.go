@@ -76,7 +76,7 @@ func DedupeMask(entries []Entry, windowDays int) (kept []bool, dropped int) {
 	}
 	window := time.Duration(windowDays) * 24 * time.Hour
 
-	type key struct{ ticker, direction string }
+	type key struct{ ticker, direction, research string }
 	// Sort a copy by time so "earliest wins" is decided by the clock rather
 	// than by directory order.
 	idx := make([]int, len(entries))
@@ -102,7 +102,7 @@ func DedupeMask(entries []Entry, windowDays int) (kept []bool, dropped int) {
 			kept[i] = true
 			continue
 		}
-		k := key{strings.ToUpper(strings.TrimSpace(entries[i].Ticker)), entries[i].Direction}
+		k := key{strings.ToUpper(strings.TrimSpace(entries[i].Ticker)), entries[i].Direction, entries[i].ResearchMode}
 		if prev, seen := last[k]; seen && at[i].Sub(prev) < window {
 			dropped++
 			continue

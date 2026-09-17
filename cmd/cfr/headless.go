@@ -23,6 +23,7 @@ func runHeadless(settings *config.Settings, args []string) int {
 	mode := fs.String("mode", "independent", "run mode: independent | single")
 	ticker := fs.String("ticker", "", "ticker for single-stock mode (implies --mode single)")
 	indices := fs.String("indices", "", "comma-separated index keys to screen (e.g. sp500,eu50); empty = all")
+	researchMode := fs.String("research-mode", settings.ResearchMode, "research mode: legacy or thesis")
 	asJSON := fs.Bool("json", false, "print the final IdeasResult as JSON on stdout")
 	quiet := fs.Bool("quiet", false, "suppress progress output on stderr")
 	if err := fs.Parse(args); err != nil {
@@ -57,6 +58,13 @@ func runHeadless(settings *config.Settings, args []string) int {
 		return 1
 	}
 
+	if *researchMode != "legacy" && *researchMode != "thesis" {
+		fmt.Fprintln(os.Stderr, "research-mode must be legacy or thesis")
+		return 2
+	}
+	settingsCopy := *settings
+	settingsCopy.ResearchMode = *researchMode
+	settings = &settingsCopy
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -115,12 +123,35 @@ func runHeadless(settings *config.Settings, args []string) int {
 // printIdeasText renders the final ideas as a human-readable summary.
 func printIdeasText(res *model.IdeasResult, meta *model.RunMeta) {
 	fmt.Printf("%d idea(s) — mode %s, generated %s\n", len(res.Ideas), res.Mode, res.GeneratedAt)
+	if res.ResearchMode == "thesis" {
+		summary := res.ResearchSummary
+		if summary == nil && meta != nil {
+			summary = model.SummarizeResearch(meta.ResearchOutcomes, res.Decisions)
+		}
+		if summary != nil {
+			fmt.Println(summary.String())
+		}
+		for _, issue := range model.ResearchRunIssues(meta) {
+			fmt.Println(issue)
+		}
+	}
 	if meta != nil && meta.Outcome != "" && meta.Outcome != "complete" {
 		fmt.Printf("outcome: %s\n", meta.Outcome)
 	}
 	fmt.Println()
 	for _, idea := range res.Ideas {
-		fmt.Printf("%d. %s %s (%s) — confidence %d\n", idea.Rank, idea.Direction, idea.Ticker, idea.Name, idea.Confidence)
+		if idea.Thesis != nil {
+			fmt.Printf("%d. %s %s (%s) — %s · evidence %s\n", idea.Rank, idea.Direction, idea.Ticker, idea.Name, idea.Status, idea.Thesis.EvidenceQuality)
+			fmt.Printf("   Why now: %s\n   Invalidation: %s\n   Entry expires %s; exit by %s\n", idea.Thesis.WhyNow, idea.Thesis.Invalidation, idea.Thesis.EntryExpiresOn, idea.Thesis.ExpiresOn)
+			for _, note := range idea.Thesis.Monitoring {
+				fmt.Printf("   Monitor: %s\n", note)
+			}
+			for _, p := range idea.Thesis.Prerequisites {
+				fmt.Printf("   Before entry: %s\n", p)
+			}
+		} else {
+			fmt.Printf("%d. %s %s (%s) — confidence %d\n", idea.Rank, idea.Direction, idea.Ticker, idea.Name, idea.Confidence)
+		}
 		if idea.Entry > 0 {
 			fmt.Printf("   entry %.2f · stop %.2f · target %.2f · RR %.2f · %dd\n",
 				idea.Entry, idea.Stop, idea.Target, idea.RiskReward, idea.TimeframeDays)
@@ -128,6 +159,20 @@ func printIdeasText(res *model.IdeasResult, meta *model.RunMeta) {
 		fmt.Printf("   %s\n", idea.Why)
 		if idea.PositionNote != "" {
 			fmt.Printf("   note: %s\n", idea.PositionNote)
+		}
+	}
+	if res.ResearchMode == "thesis" {
+		for _, d := range res.Decisions {
+			if d.Status == "watchlist" || d.Status == "rejected" {
+				label, reason := d.Status, d.Reason
+				if d.Blocked == model.BlockedResearchFailure {
+					label = "research failed"
+					if d.ReviewReason != "" {
+						reason = d.ReviewReason
+					}
+				}
+				fmt.Printf("%s · %s: %s\n", d.Ticker, label, reason)
+			}
 		}
 	}
 	if res.Notes != "" {
