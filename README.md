@@ -5,9 +5,11 @@ large-cap samples of the **S&P 500, Nasdaq 100, EuroStoxx 50, and Asia** (98 / 5
 names respectively — representative samples, not full index memberships; add rows to
 `internal/universe/data/*.csv` to widen them).
 
-It runs the `claude` and `agy` (Antigravity/Gemini) CLIs as subprocesses — **no model API
-keys required**. Gemini does the cheap, parallel research; Claude does the heavy synthesis
-and scoring. Price history comes from the keyless Yahoo Finance chart API, and every trade
+By default, it runs the `claude` and `agy` (Antigravity/Gemini) CLIs as subprocesses
+with **no model API keys required**. Gemini does the cheap, parallel research; Claude does
+the heavy synthesis and scoring. The Chief Analyst engine is selectable: `chief_engine=api`
+routes synthesis through an OpenAI-compatible API (e.g., DeepSeek) with dedicated credentials
+instead. Price history comes from the keyless Yahoo Finance chart API, and every trade
 level is checked against **verified, locally computed statistics** (momentum, Yang-Zhang
 volatility, variance ratios — no chart TA).
 
@@ -40,13 +42,21 @@ assumed execution-cost scenarios are described in the
 ## Requirements
 
 - [Go](https://go.dev/) 1.26.3+ (see `go.mod`)
-- [`claude`](https://claude.com/claude-code) CLI, logged in
-- [`agy`](https://antigravity.google/) CLI, logged in (override with `CFR_GEMINI_BIN`)
+- **Chief Analyst:** `claude` CLI (omitting `chief_engine` or `chief_engine=claude`
+  requires `claude` logged in; `chief_engine=api` does not)
+- **Cheap research:** `agy` CLI, logged in, unless `cheap_engine=api` or `cheap_engine=local`
+  (override `agy` binary with `CFR_GEMINI_BIN`)
 
-Verify they are on your `PATH`:
+For the default configuration (Claude CLI + agy CLI):
 
 ```bash
 go version && claude --version && agy --version
+```
+
+For API-only (no Claude CLI needed):
+
+```bash
+go version
 ```
 
 ## Usage
@@ -71,7 +81,7 @@ Configuration is optional: copy `cfr.toml.example` to `./cfr.toml` or
 
 ```
 TUI / cfr run ──▶ Orchestrator ──▶ scouts (agy) ──▶ quant stage (in-process, Yahoo OHLCV)
-                                 ──▶ specialists (agy, parallel) ──▶ chief analyst (claude)
+                                 ──▶ specialists (agy, parallel) ──▶ chief analyst (claude | api)
 ```
 
 See `docs/workflow/` for the full pipeline, scoring rubric, and output schema, and

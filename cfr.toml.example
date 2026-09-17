@@ -464,7 +464,7 @@
 #min_expectancy_bps = 0
 
 # Thesis research budgets. Extra challenger/revision calls use the cheap engine;
-# Claude CLI remains the final selector. No paid search provider is required.
+# the Chief Analyst remains the final selector, on the engine `chief_engine` names. No paid search provider is required.
 # See docs/workflow/thesis-research.md for evidence and calendar limitations.
 #[research]
 #rounds = 3          # 1–6 ordinary rounds, plus at most one challenge revision

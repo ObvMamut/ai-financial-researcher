@@ -57,10 +57,12 @@ and market data → five specialist reports → computed base scores → Chief A
 starts from the supplied ticker and skips scouting. The target is up to five ideas
 in independent mode and one in single-stock mode; risk checks may remove ideas.
 
-- The normal Chief Analyst engine remains the Claude CLI. Cheap research supports
-  `gemini` (agy CLI), `api`, or `local`. The optional Chief API fallback has its own
-  credentials and is disabled by default. Using Codex to develop this repository
-  does not change these runtime engine contracts.
+- The Chief Analyst engine is selected by `chief_engine` (`claude` | `api`; omitted
+  means `claude`), and the cheap-research engine by `cheap_engine` (gemini/api/local).
+  An API Chief needs dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`), never
+  inherited from `[api]` or `[local]`. The optional Chief API fallback is Claude-only
+  and has its own credentials. Using Codex to develop this repository does not change
+  these runtime engine contracts.
 - Preserve graceful degradation, cancellation, bounded concurrency, and defensive
   JSON parsing. Model output must pass Go-side validation.
 - Quant and Macro are blinded to scout direction; Macro is contextual and carries

@@ -20,20 +20,25 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
 
 ## Hard constraints
 
-- **Model access: CLI subprocess by default; a keyed API is allowed for the *cheap-research
-  role*, and, as a reviewed reliability exception, for a *last-resort Chief Analyst
-  fallback*.** Heavy synthesis (Chief Analyst) primarily stays a `claude` CLI shell-out in
-  headless/print mode (`-p`) — do not add an SDK or HTTP call for the synthesis role's normal
-  path. The one deliberate exception is `chief_fallback`: an off-by-default HTTP call on the
-  same `apiengine.go` engine (`internal/orchestrator/fallback.go`'s `attemptChiefFallback`),
-  gated on its own `api_key` alone, that fires only after the primary `claude` call has
-  exhausted its own attempt budget (`synthesis_max_attempts`, default 1) or its JSON failed to
-  parse — sitting strictly before the mechanical `buildDegradedIdeas` fallback. It defaults to
-  DeepSeek's `deepseek-reasoner` (a smarter tier than the cheap role's `deepseek-chat`, since
-  this is a resilience call for the single most important step in the pipeline) and needs its
-  own dedicated credentials (`[chief_fallback]` / `CFR_CHIEF_FALLBACK_*`) — never inherited
-  from `[api]`/`[local]`, so turning on `cheap_engine=api` can never silently also enable this
-  spend. The cheap-research role (scouts + specialists) may run on either a CLI or an
+- **Model access: the Chief Analyst engine is selected by `chief_engine`; the
+  cheap-research role is selected by `cheap_engine`.** Heavy synthesis (Chief
+  Analyst) runs either as a `claude` CLI shell-out in headless/print mode (`-p`)
+  or through the OpenAI-compatible HTTP engine in `internal/orchestrator/apiengine.go`,
+  chosen by `chief_engine` (`claude` | `api`; omitted means `claude`). This
+  project currently selects `api` with DeepSeek, because Claude subscription
+  access is paused; `chief_engine=claude` switches back in one setting. An API
+  Chief needs its own dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`),
+  **never** inherited from `[api]`, `[local]` or `DEEPSEEK_API_KEY`, so turning
+  on `cheap_engine=api` can never silently also spend on synthesis. Do not add
+  an SDK — the API Chief reuses the existing stdlib HTTP engine.
+  The separate off-by-default `chief_fallback` engine
+  (`internal/orchestrator/fallback.go`'s `attemptChiefFallback`) is unchanged and
+  remains a Claude-primary-only resilience call: it fires after the primary
+  `claude` call exhausts `synthesis_max_attempts` or its JSON fails to parse,
+  strictly before the mechanical `buildDegradedIdeas` fallback, and it is never
+  attempted when `chief_engine=api`. `[chief_fallback].enabled` distinguishes
+  an omitted key (fallback stays enabled when credentials are present, as
+  before) from an explicit `false`. The cheap-research role (scouts + specialists) may run on either a CLI or an
   OpenAI-compatible HTTP endpoint, chosen by `cheap_engine`:
   - `cheap_engine = "gemini"` (default) — the `agy` (Antigravity) CLI. Google discontinued
     the free `gemini` CLI tier ("IneligibleTierError… migrate to Antigravity"); `agy`
@@ -67,6 +72,10 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   and in the common case (no `chief_fallback` configured, or the primary call succeeding)
   it holds exactly as before — the DeepSeek fallback is a reviewed reliability exception for
   when that single heavy call fails, not an abandonment of the split.
+  The split is about *which model does which work*, not about which transport
+  carries it: an API Chief is still one heavy synthesis call on a strong model,
+  addressed through its own credentials and its own cap, never the cheap
+  research model.
 - Agent personas live in `agents/*.md` and are loaded at runtime — they are *data*, not
   Go source. Editing a persona must not require recompiling.
 
