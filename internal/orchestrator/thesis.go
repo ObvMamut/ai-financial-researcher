@@ -86,9 +86,16 @@ func (t *thesisRunner) call(ctx context.Context, role, name, data string, target
 	if err := ctx.Err(); err != nil {
 		return model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, FailureKind: "cancelled", Err: err.Error()}, err
 	}
-	outputTokens := target.API.MaxTokens
-	if outputTokens <= 0 {
-		outputTokens = defaultMaxTokens
+	// Only a CLIApi call actually has a max_tokens parameter; a CLI subprocess
+	// (gemini/claude) has no such cap, and the profile must not claim one for
+	// a call that has none — an absent/zero OutputTokenLimit means
+	// "unrecorded," never a measured value.
+	outputTokens := 0
+	if target.CLI == model.CLIApi {
+		outputTokens = target.API.MaxTokens
+		if outputTokens <= 0 {
+			outputTokens = defaultMaxTokens
+		}
 	}
 	prompt, profile, e := t.preparePrompt(role, name, data, outputTokens)
 	if e != nil {

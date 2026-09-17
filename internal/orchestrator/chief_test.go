@@ -280,3 +280,65 @@ func TestAPIChiefKeepsSynthesisTimeoutAndStage(t *testing.T) {
 		t.Errorf("server saw %d requests, want 2", attempts)
 	}
 }
+
+// TestOutputTokenLimitIsRecordedOnlyForAPICalls guards ruling R10: a CLI
+// subprocess (gemini/claude) has no max_tokens parameter, so nothing sends
+// one anywhere, and PromptProfile.OutputTokenLimit must record no cap at
+// all for such a call rather than defaultMaxTokens — an absent/zero value
+// means "unrecorded," never a measured one. Only a CLIApi call's own
+// resolved cap belongs there, and a Chief-on-API call's cap must be its own,
+// never leaked from the cheap engine's config.
+func TestOutputTokenLimitIsRecordedOnlyForAPICalls(t *testing.T) {
+	apiSrv, _ := newRoutingServer(t, "probe response")
+
+	run, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := agents.Load("../../agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &thesisRunner{cfg: Config{AgentsDir: "../../agents"}, ch: make(chan Event, 10), run: run, reg: reg, cheap: model.CLIGemini}
+
+	// A cheap CLI target (gemini): no max_tokens parameter exists on a
+	// subprocess call, so the profile must record none.
+	cliBin := filepath.Join(t.TempDir(), "gemini")
+	if err := os.WriteFile(cliBin, []byte("#!/bin/sh\necho 'cli response'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cliTarget := callTarget{CLI: model.CLIGemini, Binary: cliBin, Stage: model.StageAnalysis, Timeout: 5 * time.Second, Retry: model.RetryPolicy{MaxAttempts: 1}}
+	cliReport, err := runner.call(context.Background(), "macro", "cli-probe", "{}", cliTarget)
+	if err != nil || cliReport.Prompt == nil {
+		t.Fatalf("cli call: %v (%+v)", err, cliReport)
+	}
+	if cliReport.Prompt.OutputTokenLimit != 0 {
+		t.Errorf("CLI OutputTokenLimit = %d, want 0 — a subprocess call has no max_tokens", cliReport.Prompt.OutputTokenLimit)
+	}
+
+	// A cheap API target: its own resolved max_tokens is recorded.
+	cheapAPITarget := callTarget{CLI: model.CLIApi, API: model.APIConfig{BaseURL: apiSrv.URL, Model: "cheap-model", APIKey: "k", MaxTokens: 4096}, Stage: model.StageAnalysis, Timeout: 5 * time.Second, Retry: model.RetryPolicy{MaxAttempts: 1}}
+	cheapReport, err := runner.call(context.Background(), "macro", "cheap-api-probe", "{}", cheapAPITarget)
+	if err != nil || cheapReport.Prompt == nil {
+		t.Fatalf("cheap api call: %v (%+v)", err, cheapReport)
+	}
+	if cheapReport.Prompt.OutputTokenLimit != 4096 {
+		t.Errorf("cheap API OutputTokenLimit = %d, want 4096", cheapReport.Prompt.OutputTokenLimit)
+	}
+
+	// A Chief API target: its cap is its own (defaultMaxTokens, since
+	// ChiefAPI.MaxTokens is left unset here), never the cheap value above.
+	cfg := Config{AgentsDir: "../../agents", ChiefEngine: "api", ChiefAPI: model.APIConfig{BaseURL: apiSrv.URL, Model: "chief-model", APIKey: "chief-key"},
+		Timeouts: model.StageTimeouts{Synthesis: 5 * time.Second}, Retry: model.RetryPolicy{MaxAttempts: 1}, SynthesisMaxAttempts: 1}
+	chiefE, err := resolveChiefEngine(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chiefReport, err := runner.call(context.Background(), "thesis-chief", "chief-probe", "{}", chiefTarget(chiefE, cfg, chiefInitial))
+	if err != nil || chiefReport.Prompt == nil {
+		t.Fatalf("chief api call: %v (%+v)", err, chiefReport)
+	}
+	if chiefReport.Prompt.OutputTokenLimit != defaultMaxTokens {
+		t.Errorf("Chief OutputTokenLimit = %d, want %d (its own cap, not the cheap engine's 4096)", chiefReport.Prompt.OutputTokenLimit, defaultMaxTokens)
+	}
+}
