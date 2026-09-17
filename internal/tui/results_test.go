@@ -31,11 +31,13 @@ func chiefAgreementFixture() (*model.RunMeta, *model.IdeasResult) {
 		},
 	}
 	ideas := &model.IdeasResult{
-		ResearchMode: "thesis",
-		Mode:         "independent",
-		GeneratedAt:  "2026-09-17T00:00:00Z",
-		Ideas:        []model.TradeIdea{},
-		Decisions:    []model.SelectionDecision{{Ticker: "BBB", Status: "watchlist", Reason: "wait for confirmation"}},
+		ResearchMode:  "thesis",
+		Mode:          "independent",
+		GeneratedAt:   "2026-09-17T00:00:00Z",
+		Ideas:         []model.TradeIdea{},
+		Decisions:     []model.SelectionDecision{{Ticker: "BBB", Status: "watchlist", Reason: "wait for confirmation"}},
+		ChiefEngine:   meta.ChiefEngine,
+		ChiefAccepted: meta.ChiefAccepted,
 	}
 	return meta, ideas
 }

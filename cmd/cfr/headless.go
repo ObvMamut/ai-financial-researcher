@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -115,9 +116,7 @@ func runHeadless(settings *config.Settings, args []string) int {
 	}
 
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(ideas); err != nil {
+		if err := writeIdeasJSON(os.Stdout, ideas); err != nil {
 			fmt.Fprintf(os.Stderr, "error: encode result: %v\n", err)
 			return 1
 		}
@@ -129,6 +128,16 @@ func runHeadless(settings *config.Settings, args []string) int {
 		return 3
 	}
 	return 0
+}
+
+// writeIdeasJSON is the exact encoding `cfr run --json` writes to stdout —
+// factored out so tests can exercise the real wire format (including
+// IdeasResult's compact Chief provenance, ChiefEngine/ChiefAccepted) rather
+// than reimplementing the encode call.
+func writeIdeasJSON(w io.Writer, ideas *model.IdeasResult) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(ideas)
 }
 
 // printIdeasText renders the final ideas as a human-readable summary.

@@ -345,6 +345,25 @@ type IdeasResult struct {
 	GeneratedAt     string              `json:"generated_at"`
 	Ideas           []TradeIdea         `json:"ideas"`
 	Notes           string              `json:"notes"`
+
+	// ChiefEngine and ChiefAccepted are Go-computed run metadata attached to
+	// the Chief's parsed output, the same way ResearchSummary already is:
+	// `cfr run --json` encodes only this struct on stdout (never RunMeta), so
+	// without these two fields an operator reading that stdout had no way to
+	// tell "five ideas" from "five ideas, from DeepSeek after Claude failed."
+	// This is a deliberately compact subset of RunMeta's full four-field
+	// provenance quartet (ChiefEngine/ChiefModel/ChiefAttempted/ChiefAccepted)
+	// — an operator on stdout needs the configured primary and which engine's
+	// output shipped; the model name and the full attempt trail stay in
+	// RunMeta/metadata.json rather than being duplicated here.
+	//
+	// ChiefEngine present with ChiefAccepted empty is a known fact: a Chief
+	// ran (or was deliberately skipped, e.g. thesis's all-research-failed
+	// path) and nothing was accepted. ChiefEngine ALSO empty is a different
+	// fact: this run predates these fields entirely and is unrecorded — see
+	// RunMeta.ChiefEngine's own doc comment for the same distinction.
+	ChiefEngine   string `json:"chief_engine,omitempty"`
+	ChiefAccepted string `json:"chief_accepted,omitempty"`
 }
 
 // StageTimeouts defines per-stage durations.
@@ -569,17 +588,31 @@ type RunMeta struct {
 	//     path, which skips synthesis entirely).
 	//   - ChiefAccepted names the single engine whose output shipped — empty
 	//     when neither the primary nor an attempted fallback produced usable
-	//     ideas (the mechanical buildDegradedIdeas/empty-board path).
+	//     ideas (the mechanical buildDegradedIdeas/empty-board path, or
+	//     thesis's all-research-failed path, which skips the Chief entirely).
 	//
 	// A successful fallback must never erase the primary's failure: that stays
 	// recorded in Domains ("chief-analyst", status failed) exactly as before;
-	// these fields are additive context, not a replacement for it. Absent on
-	// a historical run (predating Task 6) means unrecorded — never backfilled,
-	// never a default substituted after the fact. Historical runs could only
-	// ever have run the Chief on the claude CLI (chief_engine did not exist
-	// yet), so an absent ChiefEngine is display-labeled "claude (unrecorded)"
-	// by callers, not confused with an explicit "claude" — see
-	// ChiefProvenanceLine and the scoreboard cohort key.
+	// these fields are additive context, not a replacement for it.
+	//
+	// An empty ChiefAccepted is deliberately not disambiguated by giving it a
+	// second value (e.g. a "none" sentinel) — empty plus omitempty already
+	// means "absent," and a second vocabulary word would need defining
+	// everywhere the field is read. The disambiguation instead lives in
+	// ChiefEngine, which the reader MUST check alongside ChiefAccepted rather
+	// than inferring from ChiefAccepted alone:
+	//
+	//   - ChiefEngine present, ChiefAccepted empty: a KNOWN fact — a Chief
+	//     ran (or was deliberately skipped, e.g. thesis's all-failed path)
+	//     and nothing was accepted. The run recorded provenance; nothing
+	//     shipped from a model.
+	//   - ChiefEngine ALSO empty: this run predates these fields entirely —
+	//     UNRECORDED, never backfilled, never a default substituted after the
+	//     fact. Historical runs could only ever have run the Chief on the
+	//     claude CLI (chief_engine did not exist yet), so this case is
+	//     display-labeled "claude (unrecorded)" by callers rather than shown
+	//     as a bare "claude" or left to look like the first case — see
+	//     ChiefProvenanceLine and the scoreboard cohort key.
 	ChiefEngine    string `json:"chief_engine,omitempty"`
 	ChiefModel     string `json:"chief_model,omitempty"`
 	ChiefAttempted string `json:"chief_attempted,omitempty"`

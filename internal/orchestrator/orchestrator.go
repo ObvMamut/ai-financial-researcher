@@ -1467,6 +1467,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if cfg.Frozen != nil {
 		ideas.GeneratedAt = cfg.Frozen.AsOf.UTC().Format(time.RFC3339)
 	}
+	// Compact Chief provenance on the parsed output itself (mirrors
+	// thesis.go): `cfr run --json` encodes only this struct on stdout, never
+	// RunMeta, so an operator there needs at least the configured primary and
+	// which engine's output shipped. The full trail stays on RunMeta below.
+	ideas.ChiefEngine = string(chiefE.CLI)
+	ideas.ChiefAccepted = chiefAcceptedEngine
 	if err := run.WriteIdeas(ideas); err != nil {
 		log(ch, fmt.Sprintf("warn: write ideas.json: %v", err))
 	}

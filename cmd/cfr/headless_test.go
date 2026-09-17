@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -12,14 +13,19 @@ import (
 
 // chiefAgreementFixture builds the one fixture run
 // TestJSONTextAndTUIAgreeOnChiefAndResearchCounts uses to check that the text
-// renderer (printIdeasText, below), the JSON artifact (metadata.json/
-// ideas.json — simulated here by an actual json.Marshal/Unmarshal round trip)
-// and the TUI results view (internal/tui/results_test.go's own copy of this
-// test) all report the same facts about which Chief engine answered and how
-// research went. The two test files build this exact fixture independently
-// (cmd/cfr is package main and cannot be imported by internal/tui, nor vice
-// versa) rather than sharing a helper across that boundary — keep them in
-// sync if you change one.
+// renderer (printIdeasText, below), `cfr run --json`'s stdout encoding
+// (writeIdeasJSON, headless.go) and the TUI results view (internal/tui/
+// results_test.go's own copy of this test) all report the same facts about
+// which Chief engine answered and how research went. The two test files
+// build this exact fixture independently (cmd/cfr is package main and cannot
+// be imported by internal/tui, nor vice versa) rather than sharing a helper
+// across that boundary — keep them in sync if you change one.
+//
+// ideas.ChiefEngine/ChiefAccepted mirror meta.ChiefEngine/ChiefAccepted
+// exactly as orchestrator.go and thesis.go set them in production (both call
+// sites write the ideas-result copy from the same variables that build the
+// RunMeta one) — this fixture is not inventing independent facts, it is
+// pinning that the two copies must agree.
 func chiefAgreementFixture() (*model.RunMeta, *model.IdeasResult) {
 	meta := &model.RunMeta{
 		ChiefEngine:    "claude",
@@ -36,25 +42,38 @@ func chiefAgreementFixture() (*model.RunMeta, *model.IdeasResult) {
 		},
 	}
 	ideas := &model.IdeasResult{
-		ResearchMode: "thesis",
-		Mode:         "independent",
-		GeneratedAt:  "2026-09-17T00:00:00Z",
-		Ideas:        []model.TradeIdea{},
-		Decisions:    []model.SelectionDecision{{Ticker: "BBB", Status: "watchlist", Reason: "wait for confirmation"}},
+		ResearchMode:  "thesis",
+		Mode:          "independent",
+		GeneratedAt:   "2026-09-17T00:00:00Z",
+		Ideas:         []model.TradeIdea{},
+		Decisions:     []model.SelectionDecision{{Ticker: "BBB", Status: "watchlist", Reason: "wait for confirmation"}},
+		ChiefEngine:   meta.ChiefEngine,
+		ChiefAccepted: meta.ChiefAccepted,
 	}
 	return meta, ideas
 }
 
-// TestJSONTextAndTUIAgreeOnChiefAndResearchCounts asserts headless's text
-// renderer reports exactly the facts the JSON artifact (metadata.json/
-// ideas.json, simulated here by a real marshal/unmarshal round trip) carries:
-// the primary engine (and what was attempted/accepted), recovered failures,
-// and the research/decision counts. Before Task 6 neither surface said
-// anything at all about which engine answered — this pins that they now
-// agree, not just that each independently prints something.
+// TestJSONTextAndTUIAgreeOnChiefAndResearchCounts asserts three surfaces
+// report the same facts from one fixture run: `cfr run --json`'s actual
+// stdout wire format (via writeIdeasJSON — the same function runHeadless
+// calls, not a hand-rolled json.Marshal), headless's text renderer, and the
+// persisted metadata.json/ideas.json artifacts (simulated by a real
+// marshal/unmarshal round trip). The facts checked: the primary engine (and
+// what was attempted/accepted), recovered failures, and the research/decision
+// counts.
+//
+// R12 fixed a defect in the original criterion: `cfr run --json` encodes only
+// *model.IdeasResult on stdout, which carried no engine field at all, making
+// "JSON, text and TUI agree on primary engine" unsatisfiable by construction.
+// The fix was IdeasResult.ChiefEngine/ChiefAccepted (types.go) — a compact,
+// Go-computed subset of RunMeta's full provenance quartet, following the
+// precedent ResearchSummary already set on the same struct — not a weaker
+// test.
 func TestJSONTextAndTUIAgreeOnChiefAndResearchCounts(t *testing.T) {
 	meta, ideas := chiefAgreementFixture()
 
+	// The persisted-artifact view: metadata.json/ideas.json, simulated by a
+	// real round trip so a typo in a json struct tag would be caught here.
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +104,28 @@ func TestJSONTextAndTUIAgreeOnChiefAndResearchCounts(t *testing.T) {
 		t.Fatal("fixture produced no recovered-failure issues")
 	}
 
+	// The `cfr run --json` STDOUT view: the actual encoder runHeadless calls,
+	// not a bare json.Marshal, so this is the wire format an operator piping
+	// `cfr run --json` actually receives.
+	var stdout bytes.Buffer
+	if err := writeIdeasJSON(&stdout, ideas); err != nil {
+		t.Fatal(err)
+	}
+	var stdoutIdeas model.IdeasResult
+	if err := json.Unmarshal(stdout.Bytes(), &stdoutIdeas); err != nil {
+		t.Fatal(err)
+	}
+	if stdoutIdeas.ChiefEngine == "" {
+		t.Fatalf("cfr run --json stdout carries no chief_engine at all:\n%s", stdout.String())
+	}
+	if stdoutIdeas.ChiefEngine != roundTrippedMeta.ChiefEngine {
+		t.Errorf("stdout ChiefEngine = %q, want %q (metadata.json's configured primary)", stdoutIdeas.ChiefEngine, roundTrippedMeta.ChiefEngine)
+	}
+	if stdoutIdeas.ChiefAccepted != roundTrippedMeta.ChiefAccepted {
+		t.Errorf("stdout ChiefAccepted = %q, want %q (metadata.json's accepted engine)", stdoutIdeas.ChiefAccepted, roundTrippedMeta.ChiefAccepted)
+	}
+
+	// The text view: capture printIdeasText's stdout.
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +143,11 @@ func TestJSONTextAndTUIAgreeOnChiefAndResearchCounts(t *testing.T) {
 
 	if !strings.Contains(text, jsonLine) {
 		t.Errorf("text renderer missing Chief provenance line %q:\n%s", jsonLine, text)
+	}
+	// The text line must agree with what --json's stdout actually carries,
+	// not just with the in-memory meta the test happened to build.
+	if !strings.Contains(text, stdoutIdeas.ChiefEngine) {
+		t.Errorf("text renderer's engine does not match stdout ChiefEngine %q:\n%s", stdoutIdeas.ChiefEngine, text)
 	}
 	if !strings.Contains(text, jsonSummary.String()) {
 		t.Errorf("text renderer missing research summary %q:\n%s", jsonSummary.String(), text)

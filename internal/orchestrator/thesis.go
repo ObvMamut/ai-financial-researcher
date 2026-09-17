@@ -345,6 +345,14 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 		outcomes = append(outcomes, research[i].Outcome)
 	}
 	result.ResearchSummary = model.SummarizeResearch(outcomes, result.Decisions)
+	// Compact Chief provenance on the parsed output itself, mirroring
+	// ResearchSummary right above: `cfr run --json` encodes only this struct
+	// on stdout, never RunMeta, so an operator there needs at least the
+	// configured primary and which engine's output shipped without opening
+	// metadata.json. The full four-field trail (including ChiefModel and
+	// ChiefAttempted) stays on RunMeta below.
+	result.ChiefEngine = string(chiefE.CLI)
+	result.ChiefAccepted = chiefAcceptedEngine
 	meta := model.RunMeta{ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: chiefModel, ChiefEngine: string(chiefE.CLI), ChiefModel: chiefModel, ChiefAttempted: strings.Join(chiefAttemptedEngines, ","), ChiefAccepted: chiefAcceptedEngine, PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir)}
 	for _, s := range statuses {
 		if s.Domain == "chief-analyst-fallback" {

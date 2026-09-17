@@ -68,6 +68,16 @@ func TestChiefProvenanceDistinguishesConfiguredAttemptedAccepted(t *testing.T) {
 		if !foundFailedPrimary {
 			t.Errorf("primary chief-analyst failure not recorded alongside the successful fallback: %+v", meta.Domains)
 		}
+
+		// R12: `cfr run --json` encodes complete.Ideas, never Meta — so the
+		// same two facts must also be on IdeasResult, and must agree with
+		// RunMeta's copy.
+		if complete.Ideas.ChiefEngine != meta.ChiefEngine {
+			t.Errorf("Ideas.ChiefEngine = %q, want %q (must agree with metadata.json)", complete.Ideas.ChiefEngine, meta.ChiefEngine)
+		}
+		if complete.Ideas.ChiefAccepted != meta.ChiefAccepted {
+			t.Errorf("Ideas.ChiefAccepted = %q, want %q (must agree with metadata.json)", complete.Ideas.ChiefAccepted, meta.ChiefAccepted)
+		}
 	})
 
 	t.Run("api_primary_succeeds", func(t *testing.T) {
@@ -106,6 +116,14 @@ func TestChiefProvenanceDistinguishesConfiguredAttemptedAccepted(t *testing.T) {
 		}
 		if meta.SynthesisModel != "chief-model" {
 			t.Errorf("SynthesisModel = %q, want %q", meta.SynthesisModel, "chief-model")
+		}
+
+		// R12: same cross-check as the fallback subtest above.
+		if complete.Ideas.ChiefEngine != meta.ChiefEngine {
+			t.Errorf("Ideas.ChiefEngine = %q, want %q (must agree with metadata.json)", complete.Ideas.ChiefEngine, meta.ChiefEngine)
+		}
+		if complete.Ideas.ChiefAccepted != meta.ChiefAccepted {
+			t.Errorf("Ideas.ChiefAccepted = %q, want %q (must agree with metadata.json)", complete.Ideas.ChiefAccepted, meta.ChiefAccepted)
 		}
 	})
 }

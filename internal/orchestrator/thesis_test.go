@@ -345,6 +345,16 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 	if err != nil {
 		t.Fatal(err)
 	}
+	// R12: `cfr run --json` encodes ideas.json, never metadata.json, so the
+	// same compact Chief provenance must be on IdeasResult too, and must
+	// agree with RunMeta's copy in every scenario (all-failed, capacity,
+	// fallback and clean success alike).
+	if ideas.ChiefEngine != meta.ChiefEngine {
+		t.Errorf("ideas.ChiefEngine = %q, want %q (must agree with metadata.json)", ideas.ChiefEngine, meta.ChiefEngine)
+	}
+	if ideas.ChiefAccepted != meta.ChiefAccepted {
+		t.Errorf("ideas.ChiefAccepted = %q, want %q (must agree with metadata.json)", ideas.ChiefAccepted, meta.ChiefAccepted)
+	}
 	if scenario == "conditional" {
 		idea := ideas.Ideas[0]
 		if idea.Status != "conditional" || idea.Shares <= 0 || !slices.Contains(idea.Thesis.Prerequisites, "Confirm an executable quote before entry") || len(idea.Thesis.Monitoring) != 1 {
