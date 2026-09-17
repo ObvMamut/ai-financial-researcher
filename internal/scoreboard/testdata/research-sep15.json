@@ -1,0 +1,1230 @@
+{
+  "provenance": "Whitelisted operational fields from runs/2026-09-15T17-00-30; no prompts, configuration, credentials, provider prose, source text or URLs retained. Domain status/attempts/contract/recovery/failure_kind/payload/tokens/usage kept verbatim (all mechanical byte-count or role-name diagnostics, no source content); prompt profiles, writing_diagnostics and original_narratives dropped entirely. research_outcomes keep only ticker/contract/transport/parsing/evidence/review/decision. results[] is JNJ's request-outcome sequence reduced to outcome only (research-4a4e4a.json), matching research-sep10.json's convention. synthesis_model is recorded as observed (\"opus\") even though chief-analyst failed on an authentication error and chief-analyst-fallback (DeepSeek) produced the accepted output; this is the pre-existing metadata provenance bug a later task fixes, not corrected here.",
+  "meta": {
+    "schema_version": 2,
+    "research_mode": "thesis",
+    "generated_at": "2026-09-15T17:00:30Z",
+    "outcome": "degraded",
+    "engine": "api",
+    "engine_model": "deepseek-chat",
+    "synthesis_model": "opus",
+    "synthesis_fallback_engine": "deepseek-v4-pro",
+    "domains": [
+      {
+        "domain": "event-discovery-sp500",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 1435,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 26593,
+            "completion_tokens": 1435,
+            "total_tokens": 28028,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 26209
+          }
+        ]
+      },
+      {
+        "domain": "event-discovery-nq100",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 1229,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 9916,
+            "completion_tokens": 1229,
+            "total_tokens": 11145,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 9532
+          }
+        ]
+      },
+      {
+        "domain": "event-discovery-eu50",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 1038,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 2841,
+            "completion_tokens": 1038,
+            "total_tokens": 3879,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 2457
+          }
+        ]
+      },
+      {
+        "domain": "event-discovery-asia100",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 1104,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 3564,
+            "completion_tokens": 1104,
+            "total_tokens": 4668,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 3180
+          }
+        ]
+      },
+      {
+        "domain": "thesis-triage",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2441,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 21704,
+            "completion_tokens": 2441,
+            "total_tokens": 24145,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 21320
+          }
+        ]
+      },
+      {
+        "domain": "macro",
+        "status": "done",
+        "attempts": 1,
+        "tokens": 1135,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 2859,
+            "completion_tokens": 1135,
+            "total_tokens": 3994,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 683
+          }
+        ]
+      },
+      {
+        "domain": "research-4a4e4a-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "repaired",
+        "tokens": 4483,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 18642,
+            "completion_tokens": 4483,
+            "total_tokens": 23125,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 16466
+          }
+        ]
+      },
+      {
+        "domain": "research-4a4e4a-round-1-schema-repair",
+        "status": "done",
+        "attempts": 1,
+        "recovery": "schema_repair",
+        "payload": "repaired",
+        "tokens": 4483,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 7037,
+            "completion_tokens": 4483,
+            "total_tokens": 11520,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 4861
+          }
+        ]
+      },
+      {
+        "domain": "research-4a4e4a-challenge",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2973,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 21566,
+            "completion_tokens": 2973,
+            "total_tokens": 24539,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 20030
+          }
+        ]
+      },
+      {
+        "domain": "research-4a4e4a-revision",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 4599,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 26033,
+            "completion_tokens": 4599,
+            "total_tokens": 30632,
+            "prompt_cache_hit_tokens": 4224,
+            "prompt_cache_miss_tokens": 21809
+          }
+        ]
+      },
+      {
+        "domain": "research-4a4e4a-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2285,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 25386,
+            "completion_tokens": 2285,
+            "total_tokens": 27671,
+            "prompt_cache_hit_tokens": 3584,
+            "prompt_cache_miss_tokens": 21802
+          }
+        ]
+      },
+      {
+        "domain": "research-4c4c59-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 3942,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 18668,
+            "completion_tokens": 3942,
+            "total_tokens": 22610,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 16492
+          }
+        ]
+      },
+      {
+        "domain": "research-4c4c59-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "failed",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6288,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 23320,
+            "completion_tokens": 6288,
+            "total_tokens": 29608,
+            "prompt_cache_hit_tokens": 3456,
+            "prompt_cache_miss_tokens": 19864
+          }
+        ],
+        "err": "response capacity exceeded: 21050 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-4c4c59-round-2-compaction",
+        "status": "failed",
+        "attempts": 1,
+        "contract": "failed",
+        "recovery": "compaction",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6179,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8864,
+            "completion_tokens": 6179,
+            "total_tokens": 15043,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6560
+          }
+        ],
+        "err": "response capacity exceeded: 20493 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-424143-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 6735,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 18114,
+            "completion_tokens": 6735,
+            "total_tokens": 24849,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 15938
+          }
+        ],
+        "err": "response capacity exceeded: 22552 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-424143-round-1-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5965,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 9311,
+            "completion_tokens": 5965,
+            "total_tokens": 15276,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 7007
+          }
+        ]
+      },
+      {
+        "domain": "research-424143-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "failed",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6939,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 26934,
+            "completion_tokens": 6939,
+            "total_tokens": 33873,
+            "prompt_cache_hit_tokens": 2944,
+            "prompt_cache_miss_tokens": 23990
+          }
+        ],
+        "err": "response capacity exceeded: 22471 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-424143-round-2-compaction",
+        "status": "failed",
+        "attempts": 1,
+        "contract": "failed",
+        "recovery": "compaction",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6622,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 9515,
+            "completion_tokens": 6622,
+            "total_tokens": 16137,
+            "prompt_cache_hit_tokens": 2432,
+            "prompt_cache_miss_tokens": 7083
+          }
+        ],
+        "err": "response capacity exceeded: 21289 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-4f4b5441-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 6126,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 18271,
+            "completion_tokens": 6126,
+            "total_tokens": 24397,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 16095
+          }
+        ],
+        "err": "response capacity exceeded: 21006 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-4f4b5441-round-1-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5812,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8702,
+            "completion_tokens": 5812,
+            "total_tokens": 14514,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6398
+          }
+        ]
+      },
+      {
+        "domain": "research-4f4b5441-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5608,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 24857,
+            "completion_tokens": 5608,
+            "total_tokens": 30465,
+            "prompt_cache_hit_tokens": 4096,
+            "prompt_cache_miss_tokens": 20761
+          }
+        ]
+      },
+      {
+        "domain": "research-4f4b5441-round-3",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5573,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 25628,
+            "completion_tokens": 5573,
+            "total_tokens": 31201,
+            "prompt_cache_hit_tokens": 3584,
+            "prompt_cache_miss_tokens": 22044
+          }
+        ]
+      },
+      {
+        "domain": "research-4f4b5441-challenge",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2438,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 25274,
+            "completion_tokens": 2438,
+            "total_tokens": 27712,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 23738
+          }
+        ]
+      },
+      {
+        "domain": "research-4f4b5441-revision",
+        "status": "failed",
+        "attempts": 0,
+        "failure_kind": "input_capacity",
+        "payload": "invalid",
+        "err": "input capacity exceeded for thesis-researcher: 103077 > 98304 bytes; required context cannot be omitted"
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 4760,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 14100,
+            "completion_tokens": 4760,
+            "total_tokens": 18860,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 13716
+          }
+        ]
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "failed",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6300,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 19603,
+            "completion_tokens": 6300,
+            "total_tokens": 25903,
+            "prompt_cache_hit_tokens": 2816,
+            "prompt_cache_miss_tokens": 16787
+          }
+        ],
+        "err": "response capacity exceeded: 22866 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-4e4f4b49412e4845-round-2-compaction",
+        "status": "failed",
+        "attempts": 1,
+        "contract": "failed",
+        "recovery": "compaction",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 5869,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8876,
+            "completion_tokens": 5869,
+            "total_tokens": 14745,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6572
+          }
+        ],
+        "err": "response capacity exceeded: 20795 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-41534d4c2e4153-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 6213,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 14474,
+            "completion_tokens": 6213,
+            "total_tokens": 20687,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 12298
+          }
+        ],
+        "err": "response capacity exceeded: 21120 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-41534d4c2e4153-round-1-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5890,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8789,
+            "completion_tokens": 5890,
+            "total_tokens": 14679,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6485
+          }
+        ]
+      },
+      {
+        "domain": "research-41534d4c2e4153-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5506,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 21365,
+            "completion_tokens": 5506,
+            "total_tokens": 26871,
+            "prompt_cache_hit_tokens": 2688,
+            "prompt_cache_miss_tokens": 18677
+          }
+        ]
+      },
+      {
+        "domain": "research-41534d4c2e4153-challenge",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2476,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 20434,
+            "completion_tokens": 2476,
+            "total_tokens": 22910,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 18898
+          }
+        ]
+      },
+      {
+        "domain": "research-41534d4c2e4153-revision",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 5836,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 23865,
+            "completion_tokens": 5836,
+            "total_tokens": 29701,
+            "prompt_cache_hit_tokens": 4224,
+            "prompt_cache_miss_tokens": 19641
+          }
+        ],
+        "err": "response capacity exceeded: 20502 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-41534d4c2e4153-revision-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5542,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8412,
+            "completion_tokens": 5542,
+            "total_tokens": 13954,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6108
+          }
+        ]
+      },
+      {
+        "domain": "research-41534d4c2e4153-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2319,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 24781,
+            "completion_tokens": 2319,
+            "total_tokens": 27100,
+            "prompt_cache_hit_tokens": 3968,
+            "prompt_cache_miss_tokens": 20813
+          }
+        ]
+      },
+      {
+        "domain": "research-534e4f57-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 5824,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 18415,
+            "completion_tokens": 5824,
+            "total_tokens": 24239,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 16239
+          }
+        ],
+        "err": "response capacity exceeded: 21084 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-534e4f57-round-1-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5589,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8400,
+            "completion_tokens": 5589,
+            "total_tokens": 13989,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6096
+          }
+        ]
+      },
+      {
+        "domain": "research-534e4f57-challenge",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 1755,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 25013,
+            "completion_tokens": 1755,
+            "total_tokens": 26768,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 23477
+          }
+        ]
+      },
+      {
+        "domain": "research-534e4f57-revision",
+        "status": "failed",
+        "attempts": 0,
+        "failure_kind": "input_capacity",
+        "payload": "invalid",
+        "err": "input capacity exceeded for thesis-researcher: 98396 > 98304 bytes; required context cannot be omitted"
+      },
+      {
+        "domain": "research-5454452e5041-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5425,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 13417,
+            "completion_tokens": 5425,
+            "total_tokens": 18842,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 11241
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5573,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 20275,
+            "completion_tokens": 5573,
+            "total_tokens": 25848,
+            "prompt_cache_hit_tokens": 2816,
+            "prompt_cache_miss_tokens": 17459
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-challenge",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2571,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 19631,
+            "completion_tokens": 2571,
+            "total_tokens": 22202,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 19631
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-revision",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 6259,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 23127,
+            "completion_tokens": 6259,
+            "total_tokens": 29386,
+            "prompt_cache_hit_tokens": 5120,
+            "prompt_cache_miss_tokens": 18007
+          }
+        ],
+        "err": "response capacity exceeded: 21066 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-5454452e5041-revision-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5887,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8835,
+            "completion_tokens": 5887,
+            "total_tokens": 14722,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6531
+          }
+        ]
+      },
+      {
+        "domain": "research-5454452e5041-challenge-final",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 2695,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 24306,
+            "completion_tokens": 2695,
+            "total_tokens": 27001,
+            "prompt_cache_hit_tokens": 3456,
+            "prompt_cache_miss_tokens": 20850
+          }
+        ]
+      },
+      {
+        "domain": "research-4f52434c-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5737,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 17624,
+            "completion_tokens": 5737,
+            "total_tokens": 23361,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 15448
+          }
+        ]
+      },
+      {
+        "domain": "research-4f52434c-round-2",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "ok",
+        "tokens": 5509,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 23150,
+            "completion_tokens": 5509,
+            "total_tokens": 28659,
+            "prompt_cache_hit_tokens": 2688,
+            "prompt_cache_miss_tokens": 20462
+          }
+        ]
+      },
+      {
+        "domain": "research-4f52434c-challenge",
+        "status": "done",
+        "attempts": 1,
+        "contract": "ok",
+        "payload": "repaired",
+        "tokens": 3053,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 22513,
+            "completion_tokens": 3053,
+            "total_tokens": 25566,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 20977
+          }
+        ]
+      },
+      {
+        "domain": "research-4f52434c-challenge-schema-repair",
+        "status": "done",
+        "attempts": 1,
+        "recovery": "schema_repair",
+        "payload": "repaired",
+        "tokens": 3050,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 4946,
+            "completion_tokens": 3050,
+            "total_tokens": 7996,
+            "prompt_cache_hit_tokens": 1536,
+            "prompt_cache_miss_tokens": 3410
+          }
+        ]
+      },
+      {
+        "domain": "research-4f52434c-revision",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "failure_kind": "response_capacity",
+        "payload": "ok",
+        "tokens": 6073,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 29077,
+            "completion_tokens": 6073,
+            "total_tokens": 35150,
+            "prompt_cache_hit_tokens": 2432,
+            "prompt_cache_miss_tokens": 26645
+          }
+        ],
+        "err": "response capacity exceeded: 21268 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-4f52434c-revision-compaction",
+        "status": "done",
+        "attempts": 1,
+        "contract": "compacted",
+        "recovery": "compaction",
+        "payload": "ok",
+        "tokens": 5806,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 8649,
+            "completion_tokens": 5806,
+            "total_tokens": 14455,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6345
+          }
+        ]
+      },
+      {
+        "domain": "research-4f52434c-challenge-final",
+        "status": "failed",
+        "attempts": 0,
+        "failure_kind": "input_capacity",
+        "payload": "invalid",
+        "err": "input capacity exceeded for thesis-challenger: 102413 > 98304 bytes; required context cannot be omitted"
+      },
+      {
+        "domain": "research-545444-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "failed",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6836,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 15004,
+            "completion_tokens": 6836,
+            "total_tokens": 21840,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 12828
+          }
+        ],
+        "err": "response capacity exceeded: 24681 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-545444-round-1-compaction",
+        "status": "failed",
+        "attempts": 1,
+        "contract": "failed",
+        "recovery": "compaction",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6633,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 9412,
+            "completion_tokens": 6633,
+            "total_tokens": 16045,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 7236
+          }
+        ],
+        "err": "response capacity exceeded: 23583 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-5245474e-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "failed",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6827,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 14494,
+            "completion_tokens": 6827,
+            "total_tokens": 21321,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 12318
+          }
+        ],
+        "err": "response capacity exceeded: 23363 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-5245474e-round-1-compaction",
+        "status": "failed",
+        "attempts": 1,
+        "contract": "failed",
+        "recovery": "compaction",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6494,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 9403,
+            "completion_tokens": 6494,
+            "total_tokens": 15897,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 7099
+          }
+        ],
+        "err": "response capacity exceeded: 21990 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-393938382e484b-round-1",
+        "status": "done",
+        "attempts": 1,
+        "contract": "failed",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6594,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 17352,
+            "completion_tokens": 6594,
+            "total_tokens": 23946,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 15176
+          }
+        ],
+        "err": "response capacity exceeded: 23253 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "research-393938382e484b-round-1-compaction",
+        "status": "failed",
+        "attempts": 1,
+        "contract": "failed",
+        "recovery": "compaction",
+        "failure_kind": "response_capacity",
+        "payload": "invalid",
+        "tokens": 6193,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 9170,
+            "completion_tokens": 6193,
+            "total_tokens": 15363,
+            "prompt_cache_hit_tokens": 2304,
+            "prompt_cache_miss_tokens": 6866
+          }
+        ],
+        "err": "response capacity exceeded: 21328 > 20480 bytes; complete response retained for audit"
+      },
+      {
+        "domain": "chief-analyst",
+        "status": "failed",
+        "attempts": 1,
+        "failure_kind": "authentication",
+        "usage": [
+          {
+            "incomplete": true,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0
+          }
+        ],
+        "err": "exit status 1\nClaude result success: Your organization has disabled Claude subscription access for Claude Code \u00b7 Use an Anthropic API key instead, or ask your admin to enable access"
+      },
+      {
+        "domain": "chief-analyst-fallback",
+        "status": "done",
+        "attempts": 1,
+        "payload": "ok",
+        "tokens": 2690,
+        "usage": [
+          {
+            "finish_reason": "stop",
+            "prompt_tokens": 47815,
+            "completion_tokens": 2690,
+            "total_tokens": 50505,
+            "prompt_cache_hit_tokens": 384,
+            "prompt_cache_miss_tokens": 47431,
+            "completion_tokens_details": {
+              "reasoning_tokens": 1558
+            }
+          }
+        ]
+      }
+    ],
+    "research_outcomes": [
+      {
+        "ticker": "JNJ",
+        "contract": "ok",
+        "transport": "ok",
+        "parsing": "repaired",
+        "evidence": "documents",
+        "review": "revise",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "LLY",
+        "contract": "failed",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "BAC",
+        "contract": "failed",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "OKTA",
+        "contract": "compacted",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "NOKIA.HE",
+        "contract": "failed",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "ASML.AS",
+        "contract": "compacted",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "reject",
+        "decision": "rejected"
+      },
+      {
+        "ticker": "SNOW",
+        "contract": "compacted",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "TTE.PA",
+        "contract": "compacted",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "revise",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "ORCL",
+        "contract": "compacted",
+        "transport": "failed",
+        "parsing": "failed",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "TTD",
+        "contract": "failed",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "REGN",
+        "contract": "failed",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      },
+      {
+        "ticker": "9988.HK",
+        "contract": "failed",
+        "transport": "ok",
+        "parsing": "ok",
+        "evidence": "documents",
+        "review": "unavailable",
+        "decision": "watchlist"
+      }
+    ]
+  },
+  "results": [
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "fulfilled"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unavailable"
+    },
+    {
+      "outcome": "unsupported"
+    },
+    {
+      "outcome": "already attempted"
+    }
+  ]
+}

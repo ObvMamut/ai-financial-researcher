@@ -1,0 +1,16 @@
+{
+  "provenance": "captured byte sizes from runs/2026-09-15T17-00-30 (six failed-compaction response payloads plus three zero-attempt input-capacity prompts); payloads not retained. response_bytes/compact_bytes were re-measured directly against the run's own research-<hex>-<stage>-compaction.md files with Go's encoding/json.Compact over the ```json-fenced payload (parse.LastJSONBlock, matching production's own extraction); the original audit used jq for the same measurement and every value agrees to the byte, so no divergence is recorded. input_bytes cases are the exact byte counts metadata.json's own input_capacity error messages reported (len(prompt) compared against the input budget before any subprocess ran); those prompts were never persisted as separate compaction artifacts, so no compact_bytes exists for them.",
+  "response_limit": 20480,
+  "input_limit": 98304,
+  "cases": [
+    {"ticker": "LLY", "kind": "response", "raw_bytes": 20493, "compact_bytes": 20326},
+    {"ticker": "BAC", "kind": "response", "raw_bytes": 21289, "compact_bytes": 20894},
+    {"ticker": "NOKIA.HE", "kind": "response", "raw_bytes": 20795, "compact_bytes": 20735},
+    {"ticker": "TTD", "kind": "response", "raw_bytes": 23583, "compact_bytes": 21766},
+    {"ticker": "REGN", "kind": "response", "raw_bytes": 21990, "compact_bytes": 21071},
+    {"ticker": "9988.HK", "kind": "response", "raw_bytes": 21328, "compact_bytes": 21224},
+    {"ticker": "SNOW", "kind": "input", "raw_bytes": 98396},
+    {"ticker": "OKTA", "kind": "input", "raw_bytes": 103077},
+    {"ticker": "ORCL", "kind": "input", "raw_bytes": 102413}
+  ]
+}

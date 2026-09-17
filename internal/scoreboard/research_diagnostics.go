@@ -26,16 +26,36 @@ type ResearchUsage struct {
 }
 
 type ResearchRunDiagnostics struct {
-	LogicalCalls              int                       `json:"logical_calls"`
-	AttemptedCompanies        int                       `json:"attempted_companies"`
-	DeferredCompanies         int                       `json:"deferred_companies"`
-	CompletedResearch         int                       `json:"completed_research"`
-	FailedResearch            int                       `json:"failed_research"`
-	TruncatedCalls            int                       `json:"truncated_calls"`
-	TruncatedAttempts         int                       `json:"truncated_attempts"`
-	InferredTruncations       int                       `json:"historically_inferred_truncated_calls"`
-	CapacityFailures          int                       `json:"capacity_failures"`
-	RecoveryAttempts          int                       `json:"recovery_attempts"`
+	LogicalCalls        int `json:"logical_calls"`
+	AttemptedCompanies  int `json:"attempted_companies"`
+	DeferredCompanies   int `json:"deferred_companies"`
+	CompletedResearch   int `json:"completed_research"`
+	FailedResearch      int `json:"failed_research"`
+	TruncatedCalls      int `json:"truncated_calls"`
+	TruncatedAttempts   int `json:"truncated_attempts"`
+	InferredTruncations int `json:"historically_inferred_truncated_calls"`
+	CapacityFailures    int `json:"capacity_failures"`
+	RecoveryAttempts    int `json:"recovery_attempts"`
+	// DispatchedAttempts sums DomainStatus.Attempts (subprocess attempts Go
+	// actually made) across every logical call. A zero-attempt call (input
+	// capacity rejected the prompt before a subprocess ever ran) is a logical
+	// call that never dispatched, so this is always <= LogicalCalls and the gap
+	// between them is exactly the zero-attempt failures below.
+	DispatchedAttempts int `json:"dispatched_attempts"`
+	// CompactionCalls and SchemaRepairs split DomainStatus.Recovery's two
+	// values into separate counts. RecoveryAttempts already merges them (any
+	// recovery with attempts>0); this is the September 15 audit's own split,
+	// since the plan's later tasks change compaction behavior specifically and
+	// must not be graded against schema-repair calls they never touch.
+	CompactionCalls int `json:"compaction_calls"`
+	SchemaRepairs   int `json:"schema_repairs"`
+	// InputCapacityFailures counts calls that never dispatched a subprocess
+	// because the assembled prompt itself exceeded the input byte budget
+	// (DomainStatus.FailureKind == "input_capacity" with zero attempts). These
+	// are distinct from a response that dispatched and then overflowed on the
+	// way back (CapacityFailures / response_capacity): nothing here can be
+	// recovered by compacting a reply, because no reply was ever requested.
+	InputCapacityFailures     int                       `json:"input_capacity_failures"`
 	ResearchOutcomesAvailable bool                      `json:"research_outcomes_available"`
 	Requests                  int                       `json:"request_results"`
 	RequestRepeats            int                       `json:"request_repeats"`
@@ -64,6 +84,15 @@ type ResearchRunDiagnostics struct {
 	MeasurementIssues  []string                                 `json:"measurement_issues,omitempty"`
 	Arms               map[string]ControlArm                    `json:"arms"`
 	Execution          []ResearchExecution                      `json:"execution_scenario,omitempty"`
+
+	// CompletedReviews counts researched candidates whose independent challenge
+	// actually rendered a verdict (supported, revise or reject) rather than
+	// "unavailable" or "not_run". It is the numerator CompletedResearch already
+	// requires as one of several conditions; recorded on its own because a run
+	// can complete research contracts without ever reaching challenge (a
+	// capacity failure downstream of a usable dossier), and the September 15
+	// audit needed that fact isolated rather than folded into one pass/fail bit.
+	CompletedReviews int `json:"completed_reviews"`
 }
 
 type ResearchExecution struct {
@@ -115,10 +144,14 @@ func researchDiagnostics(r store.RunSummary, ideas *model.IdeasResult, resultErr
 				continue
 			}
 			d.AttemptedCompanies++
-			if o.Contract != model.OutcomeFailed && o.Evidence != model.EvidenceNone && o.Transport == model.OutcomeOK && (o.Parsing == model.OutcomeOK || o.Parsing == model.OutcomeRepaired) && o.Review != "" && o.Review != model.ReviewUnavailable && o.Review != model.OutcomeNotRun {
+			reviewed := o.Review != "" && o.Review != model.ReviewUnavailable && o.Review != model.OutcomeNotRun
+			if o.Contract != model.OutcomeFailed && o.Evidence != model.EvidenceNone && o.Transport == model.OutcomeOK && (o.Parsing == model.OutcomeOK || o.Parsing == model.OutcomeRepaired) && reviewed {
 				d.CompletedResearch++
 			} else {
 				d.FailedResearch++
+			}
+			if reviewed {
+				d.CompletedReviews++
 			}
 		}
 		for _, call := range meta.Domains {
@@ -127,6 +160,16 @@ func researchDiagnostics(r store.RunSummary, ideas *model.IdeasResult, resultErr
 				d.StageUsage[stage] = &ResearchUsage{}
 			}
 			d.StageUsage[stage].add(call)
+			d.DispatchedAttempts += call.Attempts
+			switch call.Recovery {
+			case "compaction":
+				d.CompactionCalls++
+			case "schema_repair":
+				d.SchemaRepairs++
+			}
+			if call.Attempts == 0 && call.FailureKind == "input_capacity" {
+				d.InputCapacityFailures++
+			}
 			truncated := call.FailureKind == "output_limit"
 			n := 0
 			for _, u := range call.Usage {
