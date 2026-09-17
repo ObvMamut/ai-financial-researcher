@@ -24,12 +24,13 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   cheap-research role is selected by `cheap_engine`.** Heavy synthesis (Chief
   Analyst) runs either as a `claude` CLI shell-out in headless/print mode (`-p`)
   or through the OpenAI-compatible HTTP engine in `internal/orchestrator/apiengine.go`,
-  chosen by `chief_engine` (`claude` | `api`; omitted means `claude`). The
+  chosen by `chief_engine` (`claude` | `api`; omitted means `claude`, so a
+  configuration that does not set it behaves exactly as it did before). The
   selector exists and is tested; this project's local `cfr.toml` still
   resolves to the default (`claude`). Switching it to `api` with DeepSeek is a
   separate operator step, because it writes real credentials into an untracked
-  file. `chief_engine=claude` switches back in one setting whenever it is. An API
-  Chief needs its own dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`),
+  file. If it is ever switched, `chief_engine=claude` switches it back in one
+  setting. An API Chief needs its own dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`),
   **never** inherited from `[api]`, `[local]` or `DEEPSEEK_API_KEY`, so turning
   on `cheap_engine=api` can never silently also spend on synthesis. Do not add
   an SDK — the API Chief reuses the existing stdlib HTTP engine.

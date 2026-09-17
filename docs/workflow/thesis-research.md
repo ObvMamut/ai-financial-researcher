@@ -16,8 +16,9 @@ go run ./cmd/cfr scoreboard --research-compare
 Set top-level `research_mode = "thesis"` in `cfr.toml`, or
 `CFR_RESEARCH_MODE=thesis`, to use it from the TUI too. Model access is governed
 by two selectors: `cheap_engine` picks the research model (gemini/api/local), and
-`chief_engine` picks the Chief Analyst (claude | api; omitted means claude). The API
-Chief needs dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`), never inherited
+`chief_engine` picks the Chief Analyst (claude | api; omitted means claude, so
+existing configurations behave exactly as before). The API Chief needs dedicated
+credentials (`[chief_api]` / `CFR_CHIEF_API_*`), never inherited
 from `[api]` or `[local]`. Engine selection changes neither persona: `chief-analyst`
 for legacy mode, `thesis-chief` for thesis. The separate Chief API fallback remains
 optional and disabled without its own credentials. There is no paid search dependency.

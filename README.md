@@ -9,9 +9,9 @@ By default, it runs the `claude` and `agy` (Antigravity/Gemini) CLIs as subproce
 with **no model API keys required**. Gemini does the cheap, parallel research; Claude does
 the heavy synthesis and scoring. The Chief Analyst engine is selectable: `chief_engine=api`
 routes synthesis through an OpenAI-compatible API (e.g., DeepSeek) with dedicated credentials
-instead. Price history comes from the keyless Yahoo Finance chart API, and every trade
-level is checked against **verified, locally computed statistics** (momentum, Yang-Zhang
-volatility, variance ratios — no chart TA).
+instead; omitting this setting preserves the default behaviour. Price history comes from the
+keyless Yahoo Finance chart API, and every trade level is checked against **verified, locally
+computed statistics** (momentum, Yang-Zhang volatility, variance ratios — no chart TA).
 
 ## What it does
 

@@ -58,7 +58,8 @@ starts from the supplied ticker and skips scouting. The target is up to five ide
 in independent mode and one in single-stock mode; risk checks may remove ideas.
 
 - The Chief Analyst engine is selected by `chief_engine` (`claude` | `api`; omitted
-  means `claude`), and the cheap-research engine by `cheap_engine` (gemini/api/local).
+  means `claude`, preserving existing behaviour), and the cheap-research engine by
+  `cheap_engine` (gemini/api/local).
   An API Chief needs dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`), never
   inherited from `[api]` or `[local]`. The optional Chief API fallback is Claude-only
   and has its own credentials. Using Codex to develop this repository does not change
