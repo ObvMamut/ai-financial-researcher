@@ -169,6 +169,18 @@ type Config struct {
 	// and never inherited from API/Local: turning on cheap_engine=api must never
 	// silently also enable Chief Analyst fallback spend.
 	ChiefFallback model.APIConfig
+
+	// ChiefEngine selects the Chief Analyst synthesis engine: "claude" (the
+	// claude CLI, default — "" is equivalent) or "api" (ChiefAPI below).
+	// Resolved once per run by resolveChiefEngine (chief.go), never inferred
+	// per-call from the CLI value alone, since chief_engine="api" and
+	// cheap_engine="api"/"local" can both resolve to model.CLIApi while
+	// pointing at entirely different endpoints.
+	ChiefEngine string
+	// ChiefAPI is the Chief's own dedicated OpenAI-compatible credentials, read
+	// only when ChiefEngine == "api". It deliberately never inherits from
+	// API/Local/ChiefFallback — see Settings.ChiefAPI's doc comment.
+	ChiefAPI model.APIConfig
 }
 
 func (c *Config) applyDefaults() {
@@ -217,6 +229,13 @@ func (c *Config) applyDefaults() {
 	// OpenAI-compatible HTTP engine.
 	if c.CheapEngine == "" {
 		c.CheapEngine = model.CLIGemini
+	}
+	// Chief Analyst engine defaults to the claude CLI — the pipeline's existing
+	// behavior — mirroring Settings.ValidateChiefEngine's own "" == "claude"
+	// contract so a bare Config{} (every pre-Task-4 test, every call site that
+	// predates chief_engine) still resolves the way it always did.
+	if c.ChiefEngine == "" {
+		c.ChiefEngine = "claude"
 	}
 	if c.API.Model == "" {
 		c.API.Model = "deepseek-chat"
@@ -479,6 +498,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if err != nil {
 		return err
 	}
+	// Resolve + validate the Chief Analyst's own engine up front too, for the
+	// same fail-fast reason as the cheap engine above: a misconfigured
+	// chief_engine=api should surface before Stage 0.5's universe-wide fetch
+	// (and, in thesis mode, before any research spend), not after it.
+	chiefE, err := resolveChiefEngine(cfg)
+	if err != nil {
+		return err
+	}
 	// What the cheap engine can actually do. Every scout/specialist prompt states
 	// this, and reports are checked against it afterwards — the personas assume a
 	// search-capable CLI, which is false on the HTTP engine.
@@ -659,7 +686,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 
 	if cfg.ResearchMode == "thesis" {
-		return runThesis(ctx, cfg, ch, run, reg, uni, p, cheapCLI, dataSvc, prices, fx, prescreen, indices, start, stageMS)
+		return runThesis(ctx, cfg, ch, run, reg, uni, p, cheapCLI, chiefE, dataSvc, prices, fx, prescreen, indices, start, stageMS)
 	}
 
 	// ── Stage 1: Scouts (independent research only) ────────────────────────────
@@ -1205,12 +1232,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// means "too slow," not "flaky," so retrying identically just delays
 	// reaching the DeepSeek fallback below. cfg.Retry (still governing
 	// screening/analysis, and the fallback's own transient-error retries) is
-	// left untouched.
-	synthRetry := cfg.Retry
-	synthRetry.MaxAttempts = cfg.SynthesisMaxAttempts
+	// left untouched. chiefTarget bakes this into every purpose and both
+	// engines, so it is computed once here and reused for the corrective call.
+	chiefT := chiefTarget(chiefE, cfg, chiefInitial)
 
 	agentStatus(ch, "chief-analyst", model.StatusRunning, nil)
-	r := runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), prompt, cfg.Timeouts.Synthesis, synthRetry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
+	r := runAgent(ctx, chiefT.CLI, "chief-analyst", string(chiefT.Stage), prompt, chiefT.Timeout, chiefT.Retry, chiefT.Model, chiefT.Binary, chiefT.API)
 	r.Path = fmt.Sprintf("%s/chief-analyst.md", run.Dir)
 	if err := run.WriteReport("chief-analyst", r.Stdout); err != nil {
 		log(ch, fmt.Sprintf("warn: write chief-analyst report: %v", err))
@@ -1302,7 +1329,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				log(ch, "Validation failed — attempting corrective re-prompt…")
 				first := r
 				reprompt := correctivePrompt(prompt, first.Stdout, repromptReasons, bases)
-				r = runAgent(ctx, model.CLIClaude, "chief-analyst", string(model.StageSynthesis), reprompt, cfg.Timeouts.Synthesis, synthRetry, cfg.Models[model.CLIClaude], cfg.Binaries[model.CLIClaude], model.APIConfig{})
+				correctiveT := chiefTarget(chiefE, cfg, chiefCorrective)
+				r = runAgent(ctx, correctiveT.CLI, "chief-analyst", string(correctiveT.Stage), reprompt, correctiveT.Timeout, correctiveT.Retry, correctiveT.Model, correctiveT.Binary, correctiveT.API)
 				r.Path = first.Path // same artifact; the corrected pass is written over it
 
 				// The second call is part of the same synthesis step, so it lands

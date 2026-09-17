@@ -69,7 +69,7 @@ func compactionPreservesEvidence(before, after string) error {
 
 func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string, out *model.CandidateDossier) (model.DomainStatus, error) {
 	prompt := "Compact this complete dossier to fit the response byte budget. This consumes the one repair allowance; there is no further repair. Shorten only these narrative fields: " + strings.Join(dossierNarrativeFields, ", ") + ". Aim for under 400 characters each. Preserve all qualifications and counterarguments. Every other field, including unknown fields, claims, exact quotations, evidence IDs, numerical values, requests, unresolved questions, conditions, events and status must remain unchanged. Do not add findings or upgrade the verdict. Return one complete fenced JSON object.\nOriginal response:\n" + raw
-	r, err := t.call(ctx, role, name+"-compaction", prompt, t.cheap)
+	r, err := t.call(ctx, role, name+"-compaction", prompt, t.cheapTarget())
 	s := reportStatus(r)
 	s.Recovery, s.Contract, s.Payload = "compaction", model.OutcomeFailed, "invalid"
 	if err != nil {

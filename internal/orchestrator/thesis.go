@@ -82,35 +82,34 @@ func validateResearchBudgets(c model.ResearchConfig) error {
 	}
 	return c.Budgets.Defaults().Validate()
 }
-func (t *thesisRunner) call(ctx context.Context, role, name, data string, cli model.CLI) (model.Report, error) {
+func (t *thesisRunner) call(ctx context.Context, role, name, data string, target callTarget) (model.Report, error) {
 	if err := ctx.Err(); err != nil {
-		return model.Report{Agent: name, CLI: cli, Status: model.StatusFailed, FailureKind: "cancelled", Err: err.Error()}, err
+		return model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, FailureKind: "cancelled", Err: err.Error()}, err
 	}
-	outputTokens := 0
-	if cli == model.CLIApi {
-		outputTokens = t.pool.api.MaxTokens
-		if outputTokens <= 0 {
-			outputTokens = defaultMaxTokens
-		}
+	outputTokens := target.API.MaxTokens
+	if outputTokens <= 0 {
+		outputTokens = defaultMaxTokens
 	}
 	prompt, profile, e := t.preparePrompt(role, name, data, outputTokens)
 	if e != nil {
-		r := model.Report{Agent: name, CLI: cli, Status: model.StatusFailed, Err: e.Error(), FailureKind: promptFailureKind(e), Prompt: profile}
+		r := model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, Err: e.Error(), FailureKind: promptFailureKind(e), Prompt: profile}
 		agentStatus(t.ch, name, r.Status, &r)
 		return r, e
 	}
-	timeout := t.cfg.Timeouts.Analysis
-	retry := t.cfg.Retry
-	if cli == model.CLIClaude {
-		timeout = t.cfg.Timeouts.Synthesis
-		retry.MaxAttempts = t.cfg.SynthesisMaxAttempts
-	}
 	agentStatus(t.ch, name, model.StatusRunning, nil)
-	stage := model.StageAnalysis
-	if cli == model.CLIClaude {
-		stage = model.StageSynthesis
+	var r model.Report
+	if target.throttled {
+		// Cheap calls still go through the shared pool, so its cheap-engine
+		// throttle (agy keyring contention / a single local GPU) keeps
+		// applying exactly as before.
+		r = <-t.pool.submit(target.CLI, name, string(target.Stage), prompt, target.Timeout, target.Retry)
+	} else {
+		// The Chief never goes through the pool: its Model/Binary/API are its
+		// own, resolved by resolveChiefEngine, and must never be re-resolved
+		// through the pool's per-CLI maps (which belong to the cheap engine
+		// and can share model.CLIApi's value with a Chief routed to "api").
+		r = runAgent(ctx, target.CLI, name, string(target.Stage), prompt, target.Timeout, target.Retry, target.Model, target.Binary, target.API)
 	}
-	r := <-t.pool.submit(cli, name, string(stage), prompt, timeout, retry)
 	responseCapacity(&r, profile)
 	if e = t.run.WriteReport(name, r.Stdout); e != nil {
 		return r, e
@@ -124,7 +123,7 @@ func (t *thesisRunner) call(ctx context.Context, role, name, data string, cli mo
 func reportStatus(r model.Report) model.DomainStatus {
 	return model.DomainStatus{FailureKind: r.FailureKind, Prompt: r.Prompt, Domain: r.Agent, Status: r.Status, Err: r.Err, Attempts: r.Attempts, Duration: r.Duration, Tokens: r.Tokens, Usage: r.Usage}
 }
-func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run, reg *agents.Registry, uni *universe.Universe, p *pool, cheap model.CLI, svc *marketdata.Service, prices marketdata.PriceSource, fx *marketdata.FXRates, ps *Prescreen, indices []string, start time.Time, stages map[string]int64) error {
+func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run, reg *agents.Registry, uni *universe.Universe, p *pool, cheap model.CLI, chiefE chiefEngine, svc *marketdata.Service, prices marketdata.PriceSource, fx *marketdata.FXRates, ps *Prescreen, indices []string, start time.Time, stages map[string]int64) error {
 	if err := validateResearchBudgets(cfg.Research); err != nil {
 		return err
 	}
@@ -184,7 +183,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	if e = run.WriteDataPack("macro", macro); e != nil {
 		return e
 	}
-	macroR, macroErr := t.call(ctx, "macro", "macro", macro.Markdown()+qp.RegimeBlock(), cheap)
+	macroR, macroErr := t.call(ctx, "macro", "macro", macro.Markdown()+qp.RegimeBlock(), t.cheapTarget())
 	statuses = append(statuses, reportStatus(macroR))
 	if macroErr != nil {
 		errs = append(errs, macroErr.Error())
@@ -236,7 +235,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 		}
 	}
 	if usableDossiers > 0 {
-		r, err := t.call(ctx, "thesis-chief", "chief-analyst", chiefData, model.CLIClaude)
+		r, err := t.call(ctx, "thesis-chief", "chief-analyst", chiefData, chiefTarget(chiefE, cfg, chiefInitial))
 		statuses = append(statuses, reportStatus(r))
 		if err == nil {
 			result, err = parseThesisIdeas(r.Stdout)
@@ -281,7 +280,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	findings = append(findings, planFindings...)
 	statuses = append(statuses, planReports...)
 	if len(findings) > 0 && len(result.Ideas) > 0 {
-		r, err := t.call(ctx, "thesis-chief", "chief-analyst-corrective", chiefData+"\nRevise or reject these unsupported constructions. Do not stretch targets.\n"+jsonText(findings)+"\nPrevious response:\n"+jsonText(result), model.CLIClaude)
+		r, err := t.call(ctx, "thesis-chief", "chief-analyst-corrective", chiefData+"\nRevise or reject these unsupported constructions. Do not stretch targets.\n"+jsonText(findings)+"\nPrevious response:\n"+jsonText(result), chiefTarget(chiefE, cfg, chiefCorrective))
 		statuses = append(statuses, reportStatus(r))
 		if err == nil {
 			if corrected, pe := parseThesisIdeas(r.Stdout); pe == nil {

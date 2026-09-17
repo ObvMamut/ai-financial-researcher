@@ -322,7 +322,11 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 	fx := marketdata.NewFXRates(marketdata.NewYahooClient(cache))
 	ps := &Prescreen{Rows: []PrescreenRow{{Ticker: "AAA", Name: "Company", Index: "sp500", Score: 1, Close: 100, Setup: SetupContinuation}}}
 	ch := make(chan Event, 100)
-	err = runThesis(ctx, cfg, ch, run, reg, uni, p, model.CLIApi, marketdata.NewService(nil, researchFixtureProvider{}), prices, fx, ps, []string{"sp500"}, time.Now(), map[string]int64{})
+	chiefE, err := resolveChiefEngine(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runThesis(ctx, cfg, ch, run, reg, uni, p, model.CLIApi, chiefE, marketdata.NewService(nil, researchFixtureProvider{}), prices, fx, ps, []string{"sp500"}, time.Now(), map[string]int64{})
 	if err != nil {
 		t.Fatal(err)
 	}

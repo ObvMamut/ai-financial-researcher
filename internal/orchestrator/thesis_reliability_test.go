@@ -104,7 +104,7 @@ func TestRoleBudgetsRejectBeforeDispatchAndKeepTwelveOutcomes(t *testing.T) {
 	calls := 0
 	runner, _, done := thesisFixture(t, func(string, int) string { calls++; return "unused" })
 	defer done()
-	_, err := runner.call(context.Background(), "thesis-researcher", "oversize", strings.Repeat("x", 100<<10), model.CLIApi)
+	_, err := runner.call(context.Background(), "thesis-researcher", "oversize", strings.Repeat("x", 100<<10), runner.cheapTarget())
 	if err == nil || calls != 0 {
 		t.Fatal("oversized input reached engine")
 	}
@@ -300,7 +300,7 @@ func TestCancelledThesisCallDoesNotDispatch(t *testing.T) {
 	defer done()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r, err := runner.call(ctx, "thesis-researcher", "cancelled", "data", model.CLIApi)
+	r, err := runner.call(ctx, "thesis-researcher", "cancelled", "data", runner.cheapTarget())
 	if err == nil || calls != 0 || r.Attempts != 0 || r.Status != model.StatusFailed {
 		t.Fatal("cancelled request dispatched")
 	}

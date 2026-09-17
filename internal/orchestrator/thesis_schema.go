@@ -196,7 +196,7 @@ func decodeOrRepair[T any](ctx context.Context, t *thesisRunner, role, name, raw
 		return model.OutcomeFailed, nil, err
 	}
 	first := err
-	r, callErr := t.call(ctx, role, name+"-schema-repair", schemaRepairPrompt(first, raw), t.cheap)
+	r, callErr := t.call(ctx, role, name+"-schema-repair", schemaRepairPrompt(first, raw), t.cheapTarget())
 	status := reportStatus(r)
 	status.Recovery = "schema_repair"
 	status.Payload = "invalid"
@@ -220,7 +220,7 @@ func decodeOrRepair[T any](ctx context.Context, t *thesisRunner, role, name, raw
 // Payload "invalid". That is the distinction; the run's outcome reads both.
 func researchCall[T any](ctx context.Context, t *thesisRunner, role, name, data string, v *T, check func(*T) []string) (reports []model.DomainStatus, transport, parsing string, err error) {
 	check = currentResearchSchema(check)
-	r, callErr := t.call(ctx, role, name, data, t.cheap)
+	r, callErr := t.call(ctx, role, name, data, t.cheapTarget())
 	status := reportStatus(r)
 	if r.FailureKind == "response_capacity" {
 		// The engine returned a complete response. Its byte-budget failure is
