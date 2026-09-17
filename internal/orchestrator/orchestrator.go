@@ -1278,17 +1278,26 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 	}
 
+	// chiefAttemptedEngines/chiefAcceptedEngine track Task 6's provenance
+	// distinction: the primary is always dispatched first (recorded below,
+	// once, regardless of outcome), a fallback attempt is appended only if it
+	// is actually dispatched, and "accepted" names whichever one's output
+	// shipped — empty if neither did (the mechanical buildDegradedIdeas path).
 	var synthesisFallbackEngine string
+	chiefAttemptedEngines := []string{string(chiefE.CLI)}
+	var chiefAcceptedEngine string
 	if r.Status == model.StatusFailed {
 		agentStatus(ch, "chief-analyst", model.StatusFailed, &r)
 		fellBack := false
 		if fallbackOK {
+			chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
 			fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, r.Err, verifiedCtx)
 			domainStatuses = append(domainStatuses, fbStatus)
 			if ok {
 				ideas = fbIdeas
 				warnings = fbWarnings
 				synthesisFallbackEngine = fallbackAPI.Model
+				chiefAcceptedEngine = string(model.CLIApi)
 				fellBack = true
 			}
 		}
@@ -1303,6 +1312,11 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		var parseErr error
 		ideas, parseErr = parseIdeas(r.Stdout)
 		if parseErr == nil {
+			// The primary's output is what ships from here on, whatever the
+			// (optional) corrective re-prompt below does to it — a corrective
+			// call that fails or returns unparseable JSON keeps this pass, it
+			// never falls through to the DeepSeek fallback.
+			chiefAcceptedEngine = string(chiefE.CLI)
 			warnings = validateIdeas(ideas, cfg, verifiedCtx)
 			findings := applyRiskGate(ideas, verifiedCtx, cfg.Risk)
 
@@ -1421,12 +1435,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			log(ch, fmt.Sprintf("warn: parse ideas JSON: %v", parseErr))
 			fellBack := false
 			if fallbackOK {
+				chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
 				fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, fmt.Sprintf("unparseable JSON: %v", parseErr), verifiedCtx)
 				domainStatuses = append(domainStatuses, fbStatus)
 				if ok {
 					ideas = fbIdeas
 					warnings = fbWarnings
 					synthesisFallbackEngine = fallbackAPI.Model
+					chiefAcceptedEngine = string(model.CLIApi)
 					fellBack = true
 				}
 			}
@@ -1497,6 +1513,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	stage("synthesis", synthStart)
 
+	// chiefModel is the model of whichever engine's output actually shipped
+	// (the fallback's, if it rescued the run) — never
+	// cfg.Models[model.CLIClaude] unconditionally, which is the Task 6 bug:
+	// it reported "opus" for a run a DeepSeek call answered. SynthesisModel
+	// keeps its historical name and place (the scoreboard cohort key already
+	// reads it) but carries this same corrected value going forward.
+	chiefModel := chiefE.Model
+	if synthesisFallbackEngine != "" {
+		chiefModel = synthesisFallbackEngine
+	}
 	meta := model.RunMeta{
 		Mode:          string(cfg.Mode),
 		Ticker:        cfg.Ticker,
@@ -1512,8 +1538,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 		Engine:                  string(cfg.CheapEngine),
 		EngineModel:             cheapModelName(cfg),
-		SynthesisModel:          cfg.Models[model.CLIClaude],
+		SynthesisModel:          chiefModel,
 		SynthesisFallbackEngine: synthesisFallbackEngine,
+		ChiefEngine:             string(chiefE.CLI),
+		ChiefModel:              chiefModel,
+		ChiefAttempted:          strings.Join(chiefAttemptedEngines, ","),
+		ChiefAccepted:           chiefAcceptedEngine,
 		Stages:                  stageMS,
 		DataErrors:              dataErrors,
 		PersonaSHA:              reg.PersonaSHA(),

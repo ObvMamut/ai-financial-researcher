@@ -533,13 +533,57 @@ type RunMeta struct {
 
 	// Engine names the cheap-research engine the scouts and specialists ran on
 	// ("gemini" | "api"), and EngineModel the model it was pointed at.
-	// SynthesisModel is the Claude model the Chief Analyst used. Without these,
+	// SynthesisModel is the model the Chief Analyst call whose output shipped
+	// actually ran on — Claude's configured model on an ordinary run, or the
+	// DeepSeek fallback's model when the primary failed and the fallback
+	// rescued it. It is no longer assumed to be Claude: before Task 6 this was
+	// unconditionally cfg.Models[model.CLIClaude], which reported "opus" for a
+	// run chief_engine="api" or the fallback actually answered. Without these,
 	// a run's artifacts do not record what produced them: two runs five hours
 	// apart with wildly different macro reads were indistinguishable in
 	// metadata.json.
 	Engine         string `json:"engine,omitempty"`
 	EngineModel    string `json:"engine_model,omitempty"`
 	SynthesisModel string `json:"synthesis_model,omitempty"`
+
+	// ChiefEngine, ChiefModel, ChiefAttempted and ChiefAccepted are Task 6's
+	// additive provenance quartet, kept alongside SynthesisModel (never
+	// replacing it — old readers and the scoreboard cohort key keep working
+	// unchanged) because "which engine produced this run's ideas" is three
+	// genuinely different facts, not one:
+	//
+	//   - ChiefEngine is the CONFIGURED primary ("claude" or "api", from
+	//     resolveChiefEngine/cfg.ChiefEngine). It never changes because a
+	//     fallback happened to rescue the run — a successful DeepSeek rescue
+	//     does not retroactively make "api" the primary.
+	//   - ChiefModel is the model name of whichever engine's output actually
+	//     shipped: the primary's resolved model normally, or the fallback's
+	//     model when the primary failed and the fallback's output was
+	//     accepted. Equal to SynthesisModel going forward; grouped here with
+	//     the other three for a reader who wants the whole trail in one place.
+	//   - ChiefAttempted lists, comma-joined in call order, every engine
+	//     actually dispatched: just the primary ("claude") on an ordinary run,
+	//     or "claude,api" when the primary failed (or its JSON did not parse)
+	//     and the DeepSeek fallback was attempted after it. Empty when the
+	//     Chief was never dispatched at all (e.g. thesis's all-research-failed
+	//     path, which skips synthesis entirely).
+	//   - ChiefAccepted names the single engine whose output shipped — empty
+	//     when neither the primary nor an attempted fallback produced usable
+	//     ideas (the mechanical buildDegradedIdeas/empty-board path).
+	//
+	// A successful fallback must never erase the primary's failure: that stays
+	// recorded in Domains ("chief-analyst", status failed) exactly as before;
+	// these fields are additive context, not a replacement for it. Absent on
+	// a historical run (predating Task 6) means unrecorded — never backfilled,
+	// never a default substituted after the fact. Historical runs could only
+	// ever have run the Chief on the claude CLI (chief_engine did not exist
+	// yet), so an absent ChiefEngine is display-labeled "claude (unrecorded)"
+	// by callers, not confused with an explicit "claude" — see
+	// ChiefProvenanceLine and the scoreboard cohort key.
+	ChiefEngine    string `json:"chief_engine,omitempty"`
+	ChiefModel     string `json:"chief_model,omitempty"`
+	ChiefAttempted string `json:"chief_attempted,omitempty"`
+	ChiefAccepted  string `json:"chief_accepted,omitempty"`
 
 	// SynthesisFallbackEngine names the model the DeepSeek resilience fallback
 	// actually ran on, set only when attemptChiefFallback was invoked (the

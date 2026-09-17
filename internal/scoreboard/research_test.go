@@ -114,6 +114,76 @@ func TestThesisCalibrationDoesNotContaminateLegacy(t *testing.T) {
 	}
 }
 
+// TestScoreboardCohortSeparatesChiefEngines pins the consequence Task 6's own
+// context note calls out: the cohort key (research.go) already folds in
+// meta.SynthesisModel, so fixing that value (Task 6's main fix) separates a
+// claude-Chief run from an api-Chief run "for free" whenever their model
+// names differ, which they do in this fixture (opus vs chief-model).
+//
+// The case the model name alone CANNOT resolve is the third run here: a
+// historical run predating chief_engine (no chief_engine field at all) that
+// happens to record the same "opus" SynthesisModel as an explicit,
+// post-fix claude run. The historical value is not trustworthy provenance —
+// the sep15 fixture (testdata/research-sep15.json) is a run where "opus" was
+// recorded despite the DeepSeek fallback producing the accepted output, which
+// is exactly the bug Task 6 fixes going forward. Pooling that fixture's kind
+// of run with a confidently-labeled new "claude" run would silently attribute
+// possibly-DeepSeek-answered results to a Claude cohort, so the cohort key
+// must carry the engine label (falling back to "claude (unrecorded)" when the
+// field is absent) rather than relying on SynthesisModel string equality
+// alone.
+func TestScoreboardCohortSeparatesChiefEngines(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 8, 3, 22, 0, 0, 0, time.UTC)
+	mk := func(i int, meta model.RunMeta) *store.Run {
+		ts := start.AddDate(0, 0, i)
+		run := &store.Run{Dir: filepath.Join(dir, ts.Format("2006-01-02T15-04-05")), TS: ts}
+		if err := os.MkdirAll(run.Dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := run.WriteIdeas(&model.IdeasResult{GeneratedAt: ts.Format(time.RFC3339), Ideas: []model.TradeIdea{}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := run.WriteMeta(meta); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	// Run 0: explicit claude primary, correctly recorded post-fix.
+	mk(0, model.RunMeta{ChiefEngine: "claude", ChiefModel: "opus", ChiefAttempted: "claude", ChiefAccepted: "claude", SynthesisModel: "opus"})
+	// Run 1: explicit api primary, a genuinely different engine and model.
+	mk(1, model.RunMeta{ChiefEngine: "api", ChiefModel: "chief-model", ChiefAttempted: "api", ChiefAccepted: "api", SynthesisModel: "chief-model"})
+	// Run 2: a historical run predating chief_engine (field entirely absent),
+	// recording the same "opus" SynthesisModel value as run 0 by coincidence
+	// (or, as in the real sep15 fixture, because a fallback silently answered
+	// instead). Model-name equality with run 0 must not merge them.
+	mk(2, model.RunMeta{SynthesisModel: "opus"})
+
+	report, err := CompareResearchWithOptions(context.Background(), dir, nil, ResearchComparisonOptions{AsOf: start.AddDate(0, 1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Cohorts) != 3 {
+		t.Fatalf("want 3 separate cohorts (claude, api, claude-unrecorded), got %d: %+v", len(report.Cohorts), report.Cohorts)
+	}
+	sawUnrecorded := false
+	sawExplicitClaude := false
+	for _, c := range report.Cohorts {
+		if strings.Contains(c.Key, "chief:claude (unrecorded)") {
+			sawUnrecorded = true
+		}
+		if strings.Contains(c.Key, "chief:claude/") {
+			sawExplicitClaude = true
+		}
+	}
+	if !sawUnrecorded {
+		t.Fatalf("a run with no chief_engine field must read as \"claude (unrecorded)\", never silently merged into either new cohort: %+v", report.Cohorts)
+	}
+	if !sawExplicitClaude {
+		t.Fatalf("an explicit chief_engine=claude run must keep its own distinct label: %+v", report.Cohorts)
+	}
+}
+
 func TestResearchTextDoesNotPresentUnmeasuredReturnsAsZero(t *testing.T) {
 	for _, arm := range []ControlArm{{Pending: 1}, {Unmeasurable: 1}, {}} {
 		report := ResearchComparison{Cohorts: []ResearchCohort{{Arms: map[string]ControlArm{"shipped/10": arm}}}}

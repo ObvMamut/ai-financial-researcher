@@ -369,6 +369,18 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 				t.Fatal("empty research board reached Chief/fallback")
 			}
 		}
+		// The Chief was never dispatched (usableDossiers == 0): nothing was
+		// attempted and nothing was accepted, even though the primary engine
+		// is still the one configured.
+		if meta.ChiefEngine != "claude" {
+			t.Errorf("ChiefEngine = %q, want claude (the configured primary, whether or not it was ever called)", meta.ChiefEngine)
+		}
+		if meta.ChiefAttempted != "" {
+			t.Errorf("ChiefAttempted = %q, want empty — the Chief was skipped entirely", meta.ChiefAttempted)
+		}
+		if meta.ChiefAccepted != "" {
+			t.Errorf("ChiefAccepted = %q, want empty — no engine's output shipped", meta.ChiefAccepted)
+		}
 		return
 	}
 	if capacity {
@@ -387,6 +399,14 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 		if count != 2 {
 			t.Fatalf("primary and fallback capacity failures not retained: %d", count)
 		}
+		// Both the primary and the fallback were dispatched and both failed:
+		// attempted names both engines, accepted names neither.
+		if meta.ChiefAttempted != "claude,api" {
+			t.Errorf("ChiefAttempted = %q, want claude,api", meta.ChiefAttempted)
+		}
+		if meta.ChiefAccepted != "" {
+			t.Errorf("ChiefAccepted = %q, want empty — both primary and fallback failed on capacity", meta.ChiefAccepted)
+		}
 	} else if chiefFails {
 		if meta.Outcome != "degraded" || meta.SynthesisFallbackEngine != "deepseek-reasoner" {
 			t.Fatalf("fallback provenance missing: %+v", meta)
@@ -400,8 +420,33 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 		if !found {
 			t.Fatal("configured fallback did not complete")
 		}
+		// The primary (claude) call failed and the DeepSeek fallback (api)
+		// rescued the run: configured stays claude, attempted lists both in
+		// order, accepted and the model actually addressed are the fallback's.
+		if meta.ChiefEngine != "claude" {
+			t.Errorf("ChiefEngine = %q, want claude", meta.ChiefEngine)
+		}
+		if meta.ChiefAttempted != "claude,api" {
+			t.Errorf("ChiefAttempted = %q, want claude,api", meta.ChiefAttempted)
+		}
+		if meta.ChiefAccepted != "api" {
+			t.Errorf("ChiefAccepted = %q, want api", meta.ChiefAccepted)
+		}
+		if meta.ChiefModel != "deepseek-reasoner" || meta.SynthesisModel != "deepseek-reasoner" {
+			t.Errorf("ChiefModel/SynthesisModel = %q/%q, want deepseek-reasoner/deepseek-reasoner", meta.ChiefModel, meta.SynthesisModel)
+		}
 	} else if meta.Outcome != "complete" {
 		t.Fatalf("no trade degraded: %+v", meta)
+	} else {
+		// The primary claude call answered directly: configured, attempted
+		// and accepted all agree, and the model is the resolved primary's
+		// (cfg.Models[CLIClaude], defaulted to "opus"), never left unset.
+		if meta.ChiefEngine != "claude" || meta.ChiefAttempted != "claude" || meta.ChiefAccepted != "claude" {
+			t.Errorf("provenance mismatch on a clean primary success: engine=%q attempted=%q accepted=%q", meta.ChiefEngine, meta.ChiefAttempted, meta.ChiefAccepted)
+		}
+		if meta.ChiefModel != "opus" || meta.SynthesisModel != "opus" {
+			t.Errorf("ChiefModel/SynthesisModel = %q/%q, want opus/opus", meta.ChiefModel, meta.SynthesisModel)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(run.Dir, "data", "research.json")); err != nil {
 		t.Fatal(err)

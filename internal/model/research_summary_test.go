@@ -28,3 +28,26 @@ func TestResearchSummarySeparatesFailureDeferralAndDecisions(t *testing.T) {
 		t.Fatalf("research over no evidence counted as usable: %+v", missing)
 	}
 }
+
+func TestChiefProvenanceLineDistinguishesConfiguredAttemptedAccepted(t *testing.T) {
+	if got := ChiefProvenanceLine(nil); got != "" {
+		t.Fatalf("nil meta: got %q, want empty", got)
+	}
+	if got := ChiefProvenanceLine(&RunMeta{SynthesisModel: "opus"}); got != "Chief: claude (unrecorded)" {
+		t.Fatalf("historical run with no ChiefEngine: got %q", got)
+	}
+	clean := ChiefProvenanceLine(&RunMeta{ChiefEngine: "claude", ChiefModel: "opus", ChiefAttempted: "claude", ChiefAccepted: "claude"})
+	if clean != "Chief: claude (opus)" {
+		t.Fatalf("clean primary success: got %q", clean)
+	}
+	fellBack := ChiefProvenanceLine(&RunMeta{ChiefEngine: "claude", ChiefModel: "deepseek-reasoner", ChiefAttempted: "claude,api", ChiefAccepted: "api"})
+	for _, want := range []string{"Chief: claude", "deepseek-reasoner", "attempted claude,api", "accepted from api"} {
+		if !strings.Contains(fellBack, want) {
+			t.Fatalf("fallback line missing %q: %s", want, fellBack)
+		}
+	}
+	nothingAccepted := ChiefProvenanceLine(&RunMeta{ChiefEngine: "claude", ChiefModel: "opus", ChiefAttempted: "claude,api", ChiefAccepted: ""})
+	if !strings.Contains(nothingAccepted, "no engine's output accepted") {
+		t.Fatalf("degraded run should say nothing was accepted: %s", nothingAccepted)
+	}
+}

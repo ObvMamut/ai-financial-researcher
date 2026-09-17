@@ -62,6 +62,44 @@ func (s ResearchSummary) String() string {
 	return counts
 }
 
+// ChiefProvenanceLine renders one human-readable line naming which engine the
+// Chief Analyst was configured on, which engine(s) were actually attempted,
+// and which one's output shipped. cmd/cfr's headless text renderer and the
+// TUI results view both call this exact function on the same *RunMeta rather
+// than composing their own strings, so the two surfaces cannot silently
+// disagree about which engine actually produced a run's ideas.
+//
+// A historical run predating Task 6 has no ChiefEngine at all — chief_engine
+// did not exist yet, so it could only ever have run on the claude CLI. That
+// is display-labeled "claude (unrecorded)" rather than left blank or shown as
+// a bare "claude", so it is never mistaken for a run whose provenance was
+// actually confirmed.
+func ChiefProvenanceLine(meta *RunMeta) string {
+	if meta == nil {
+		return ""
+	}
+	engine := meta.ChiefEngine
+	if engine == "" {
+		engine = "claude (unrecorded)"
+	}
+	line := "Chief: " + engine
+	if meta.ChiefModel != "" {
+		line += " (" + meta.ChiefModel + ")"
+	}
+	if meta.ChiefAttempted != "" && meta.ChiefAttempted != meta.ChiefEngine {
+		line += " — attempted " + meta.ChiefAttempted
+	}
+	switch {
+	case meta.ChiefAccepted == "":
+		if meta.ChiefAttempted != "" {
+			line += " — no engine's output accepted"
+		}
+	case meta.ChiefAccepted != meta.ChiefEngine:
+		line += ", accepted from " + meta.ChiefAccepted
+	}
+	return line
+}
+
 func ResearchRunIssues(meta *RunMeta) []string {
 	if meta == nil {
 		return nil

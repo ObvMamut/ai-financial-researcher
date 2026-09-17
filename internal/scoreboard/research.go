@@ -94,7 +94,26 @@ func CompareResearchWithOptions(ctx context.Context, dir string, prices marketda
 		}
 		key := fmt.Sprintf("%s/schema-%d", mode, ideas.SchemaVersion)
 		if meta != nil {
-			key += "/" + meta.Engine + ":" + meta.EngineModel + "/" + meta.SynthesisModel + "/" + personaKey(meta)
+			// chiefEngineLabel is folded in separately from SynthesisModel,
+			// which already usually does this job for free once Task 6 fixes
+			// its value: a claude-Chief run and an api-Chief run normally
+			// carry different model names and so land in different cohorts
+			// without any extra key material. The case that string equality
+			// alone cannot resolve is a historical run recorded before
+			// ChiefEngine existed: it can carry the exact same SynthesisModel
+			// value ("opus") as a new, explicitly-confirmed claude run, but
+			// that historical value is not trustworthy provenance — see
+			// testdata/research-sep15.json, which recorded "opus" while the
+			// DeepSeek fallback actually produced the accepted output. Pooling
+			// that kind of run with a confidently-labeled new "claude" cohort
+			// would silently attribute possibly-fallback-answered results to
+			// Claude, so an absent ChiefEngine gets its own label rather than
+			// merging into either.
+			chiefEngineLabel := meta.ChiefEngine
+			if chiefEngineLabel == "" {
+				chiefEngineLabel = "claude (unrecorded)"
+			}
+			key += "/" + meta.Engine + ":" + meta.EngineModel + "/" + meta.SynthesisModel + "/chief:" + chiefEngineLabel + "/" + personaKey(meta)
 			if meta.SynthesisFallbackEngine != "" {
 				key += "/fallback:" + meta.SynthesisFallbackEngine
 			}

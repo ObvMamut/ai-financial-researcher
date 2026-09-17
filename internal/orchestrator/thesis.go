@@ -241,7 +241,18 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 			usableDossiers++
 		}
 	}
+	// chiefAttemptedEngines/chiefAcceptedEngine/chiefModel are Task 6's
+	// provenance trail — see the equivalent tracking in orchestrator.go's
+	// legacy dispatch for the full rationale. Left empty/unset when
+	// usableDossiers == 0: the Chief is never dispatched on an empty research
+	// board (see the all-failed skip below), so nothing was attempted and
+	// nothing was accepted, even though the primary engine is still the one
+	// configured.
+	var chiefAttemptedEngines []string
+	var chiefAcceptedEngine string
+	chiefModel := chiefE.Model
 	if usableDossiers > 0 {
+		chiefAttemptedEngines = append(chiefAttemptedEngines, string(chiefE.CLI))
 		r, err := t.call(ctx, "thesis-chief", "chief-analyst", chiefData, chiefTarget(chiefE, cfg, chiefInitial))
 		statuses = append(statuses, reportStatus(r))
 		if err == nil {
@@ -250,12 +261,14 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 				statuses[len(statuses)-1].Payload = "invalid"
 			} else {
 				statuses[len(statuses)-1].Payload = model.OutcomeOK
+				chiefAcceptedEngine = string(chiefE.CLI)
 			}
 		}
 		if err != nil {
 			errs = append(errs, "chief: "+err.Error())
 			result = &model.IdeasResult{Ideas: []model.TradeIdea{}}
 			if api, ok, _ := chiefFallbackAllowed(cfg, chiefE); ok {
+				chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
 				prompt, profile, pe := t.preparePrompt("thesis-chief", "chief-analyst-fallback", chiefData, api.MaxTokens)
 				var rr model.Report
 				if pe != nil {
@@ -273,6 +286,8 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 					if parsed, pe := parseThesisIdeas(rr.Stdout); pe == nil {
 						result = parsed
 						statuses[len(statuses)-1].Payload = model.OutcomeOK
+						chiefAcceptedEngine = string(model.CLIApi)
+						chiefModel = api.Model
 					} else {
 						statuses[len(statuses)-1].Payload = "invalid"
 						errs = append(errs, "chief fallback: "+pe.Error())
@@ -330,7 +345,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 		outcomes = append(outcomes, research[i].Outcome)
 	}
 	result.ResearchSummary = model.SummarizeResearch(outcomes, result.Decisions)
-	meta := model.RunMeta{ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: cfg.Models[model.CLIClaude], PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir)}
+	meta := model.RunMeta{ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: chiefModel, ChiefEngine: string(chiefE.CLI), ChiefModel: chiefModel, ChiefAttempted: strings.Join(chiefAttemptedEngines, ","), ChiefAccepted: chiefAcceptedEngine, PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir)}
 	for _, s := range statuses {
 		if s.Domain == "chief-analyst-fallback" {
 			meta.SynthesisFallbackEngine = cfg.ChiefFallback.Model

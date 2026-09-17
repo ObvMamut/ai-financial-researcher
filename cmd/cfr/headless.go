@@ -134,6 +134,9 @@ func runHeadless(settings *config.Settings, args []string) int {
 // printIdeasText renders the final ideas as a human-readable summary.
 func printIdeasText(res *model.IdeasResult, meta *model.RunMeta) {
 	fmt.Printf("%d idea(s) — mode %s, generated %s\n", len(res.Ideas), res.Mode, res.GeneratedAt)
+	if line := model.ChiefProvenanceLine(meta); line != "" {
+		fmt.Println(line)
+	}
 	if res.ResearchMode == "thesis" {
 		summary := res.ResearchSummary
 		if summary == nil && meta != nil {

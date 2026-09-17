@@ -99,6 +99,11 @@ func (m resultsModel) View() string {
 		m.ideas.GeneratedAt, m.ideas.Mode)))
 	sb.WriteString("\n\n")
 
+	if line := model.ChiefProvenanceLine(m.meta); line != "" {
+		sb.WriteString(mutedStyle.Render(line))
+		sb.WriteString("\n\n")
+	}
+
 	if m.ideas.ResearchMode == "thesis" {
 		summary := m.ideas.ResearchSummary
 		if summary == nil && m.meta != nil {
