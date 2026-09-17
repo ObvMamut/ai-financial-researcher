@@ -1,5 +1,13 @@
 # September 13 independent-run recovery
 
+> **Superseded.** The fixes below are real and still in the tree, but this
+> record's standing is not. The live run `runs/2026-09-15T17-00-30`, executed
+> the same evening, failed nine of twelve companies in the same failure class:
+> six complete responses still exceeded 20,480 bytes after compaction, and
+> three prompts exceeded 98,304 bytes and were never dispatched. Remaining work
+> is tracked in
+> [the DeepSeek Chief and reliability plan](2026-09-15-deepseek-chief-and-research-reliability.md).
+
 Implemented against the failures in `2026-09-13T11-30-16`. The run returned
 twelve complete researcher objects, all initially watchlist/NONE. Eleven were
 discarded for writing-target violations; SAN.PA exceeded the total response byte
@@ -34,7 +42,31 @@ not establish that the shortlist contained no trade opportunities.
   Disabled Claude subscription access stops unchanged retries; the configured
   primary/fallback engine contracts remain intact.
 
+## What the live run refuted
+
+`runs/2026-09-15T17-00-30` shortlisted twelve companies and produced zero plans.
+
+| Companies | Last blocking event |
+| --- | --- |
+| LLY, BAC, NOKIA.HE, TTD, REGN, 9988.HK | Complete response still exceeded 20,480 bytes after compaction |
+| SNOW, OKTA | Revision prompt exceeded 98,304 bytes; call never dispatched |
+| ORCL | Final challenger prompt exceeded 98,304 bytes; review never dispatched |
+| JNJ, TTE.PA | Completed final challenge requested revision |
+| ASML.AS | Completed final challenge rejected the thesis |
+
+All 55 HTTP completions with a recorded finish reason reported `stop`. No
+provider truncated anything; the budgets were ours. LLY's response measured
+20,493 raw bytes against a 20,480-byte limit but 20,326 bytes once compacted —
+rejected for whitespace. The remaining five exceeded the limit on payload bytes
+as well and needed a compaction allowance that was never computed.
+
 ## Verification
+
+The checks below all passed, and none of them could have caught the failures
+above. The twelve synthetic dossiers were sized to pass the budget, so a budget
+measured against raw stdout rather than the JSON payload it bounds looks
+correct against them. Synthetic coverage establishes that the recovery path
+executes; it establishes nothing about whether real dossiers fit.
 
 - `go test ./... -count=1`: passed across all packages.
 - `go build ./...` and `go vet ./...`: passed.
@@ -57,13 +89,18 @@ The fixtures are synthetic regression inputs, not investment evidence. Their
 successful conditional plan proves the publication path works; it does not prove
 that the September 13 companies warranted trades or that returns will improve.
 
-Earlier bounded document-reader probes exposed access limitations for Tesla
-(403), Regeneron (timeout) and thin Trade Desk extraction. Updated ranking tests
-do not establish reliable live access to every issuer. No new paid search service,
-model credential or recurring work was introduced.
+An earlier manual document-reader probe was described as exposing access
+limitations for Tesla, Regeneron and The Trade Desk. That probe was not
+persisted as a run artifact or a test fixture and cannot be cited here. What
+the September 13 run does record is an HTTP 403 on an investing.com article for
+TTD and a MarketScreener capture that was mostly navigation chrome. Updated
+ranking tests replay captured URLs locally and do not establish live access to
+any issuer. No new paid search service, model credential or recurring work was
+introduced.
 
 A new full live model run was not performed during implementation. Use the
 [bounded acceptance runbook](2026-09-12-reliability-acceptance.md) for that separate
-operator check. Assess readable dossiers, completed reviews, evidence visibility,
-conditional/actionable plans and failures together; trade count alone is not an
-acceptance criterion.
+operator check. The acceptance criterion is falsifiable and singular: every company that
+reaches model research produces a readable dossier and a substantive review,
+with no unrecovered capacity, transport, parsing or contract failure. Trade
+count is not an acceptance criterion at any value, including zero.
