@@ -97,7 +97,7 @@ func callAPIEngineUsage(ctx context.Context, api model.APIConfig, prompt string)
 		// the request back would otherwise put the bearer token in the report.
 		err := fmt.Errorf("api engine %s returned %d: %s", api.Model, resp.StatusCode, redact.String(snippet(body)))
 		if isPermanentStatus(resp.StatusCode) {
-			return "", usage, permanentError{err}
+			return "", usage, permanentError{err, resp.StatusCode}
 		}
 		return "", usage, err
 	}
@@ -171,8 +171,13 @@ func snippet(b []byte) string {
 // permanentError marks a failure that will recur identically however many times
 // it is retried. The retry loop used to treat a 400 exactly like a 503: three
 // attempts at a malformed request, three delays, and on a metered endpoint three
-// charges.
-type permanentError struct{ error }
+// charges. Status carries the HTTP status code so a caller (runner.go) can
+// distinguish an auth failure (401/403) from every other permanent one
+// without re-parsing the error string.
+type permanentError struct {
+	error
+	Status int
+}
 
 func (e permanentError) Unwrap() error { return e.error }
 

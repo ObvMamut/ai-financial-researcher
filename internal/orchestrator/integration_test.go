@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -987,6 +988,79 @@ func TestChiefConfidenceIsAnchoredToTheComputedBase(t *testing.T) {
 	ideasJSON := readFile(t, filepath.Join(runDir(t, cfg.RunsDir), "ideas.json"))
 	if !strings.Contains(ideasJSON, "base_confidence") || !strings.Contains(ideasJSON, "domain_scores") {
 		t.Errorf("ideas.json should record the base and per-domain scores each idea was anchored to:\n%s", ideasJSON)
+	}
+}
+
+// TestLegacyAPIChiefCorrectiveRepromptEndToEnd closes a coverage gap left by
+// Task 4: legacy x chief_engine=api was exercised only by a direct
+// chiefTarget+runAgent sequence (TestChiefRoutingMatrix), never by the real
+// pipeline's parseIdeas -> validateIdeas -> corrective re-prompt loop
+// (orchestrator.go's run()). This drives that loop end to end with the Chief
+// on the API engine: an httptest server stands in for the Chief endpoint, and
+// — to reuse the existing, exercised off-base/corrective fixture logic rather
+// than reimplementing sigma-derived entry/stop/target math in Go — its
+// handler shells out to the same testdata/fakebin/claude script the CLI path
+// uses, keyed to the same CFR_FAKE_MODE values other tests already rely on:
+// "off-base" for the first (over-confident) pass, "ok" for the corrective
+// pass once the prompt carries the "## Corrective pass" marker.
+func TestLegacyAPIChiefCorrectiveRepromptEndToEnd(t *testing.T) {
+	claudeBin, err := filepath.Abs("../../testdata/fakebin/claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+	cfg.ChiefAdjustBand = 10
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		prompt := ""
+		if len(body.Messages) > 0 {
+			prompt = body.Messages[0].Content
+		}
+		mode := "off-base"
+		if strings.Contains(prompt, "## Corrective pass") {
+			mode = "ok"
+		}
+		cmd := exec.Command(claudeBin, "-p", prompt)
+		cmd.Env = append(os.Environ(), "CFR_FAKE_MODE="+mode)
+		out, cmdErr := cmd.Output()
+		if cmdErr != nil {
+			t.Errorf("fake claude (standing in for the Chief's content) failed: %v", cmdErr)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": string(out)}}},
+		})
+	}))
+	defer srv.Close()
+
+	cfg.ChiefEngine = "api"
+	cfg.ChiefAPI = model.APIConfig{BaseURL: srv.URL, Model: "chief-model", APIKey: "chief-key"}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "corrective re-prompt") {
+		t.Errorf("expected the corrective re-prompt loop to run on an API Chief response:\n%s", strings.Join(logs, "\n"))
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("chief endpoint saw %d requests, want 2 (initial + corrective)", got)
+	}
+	if len(complete.Ideas.Ideas) == 0 {
+		t.Fatal("expected ideas from the corrected API Chief pass")
 	}
 }
 

@@ -255,7 +255,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 		if err != nil {
 			errs = append(errs, "chief: "+err.Error())
 			result = &model.IdeasResult{Ideas: []model.TradeIdea{}}
-			if api, ok, _ := resolveChiefFallback(cfg); ok {
+			if api, ok, _ := chiefFallbackAllowed(cfg, chiefE); ok {
 				prompt, profile, pe := t.preparePrompt("thesis-chief", "chief-analyst-fallback", chiefData, api.MaxTokens)
 				var rr model.Report
 				if pe != nil {

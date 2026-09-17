@@ -119,6 +119,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 
 		SynthesisMaxAttempts: s.SynthesisMaxAttempts,
 		ChiefFallback:        s.ChiefFallback,
+		ChiefFallbackEnabled: s.ChiefFallbackEnabled,
 		ChiefEngine:          s.ChiefEngine,
 		ChiefAPI:             s.ChiefAPI,
 	}

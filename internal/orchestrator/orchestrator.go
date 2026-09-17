@@ -169,6 +169,15 @@ type Config struct {
 	// and never inherited from API/Local: turning on cheap_engine=api must never
 	// silently also enable Chief Analyst fallback spend.
 	ChiefFallback model.APIConfig
+	// ChiefFallbackEnabled is a three-state override on top of the api_key
+	// gate above: nil (the config key omitted) preserves the api_key-only
+	// gate, true forces the fallback on (still requiring credentials), false
+	// forces it off even with credentials present. Mirrors
+	// config.Settings.ChiefFallbackEnabled — see chiefFallbackAllowed, which
+	// additionally requires the primary Chief engine to be claude, matching
+	// config.Settings.ChiefFallbackActive's engine-aware rule so the two
+	// gates cannot disagree.
+	ChiefFallbackEnabled *bool
 
 	// ChiefEngine selects the Chief Analyst synthesis engine: "claude" (the
 	// claude CLI, default — "" is equivalent) or "api" (ChiefAPI below).
@@ -491,18 +500,20 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if err := validateRiskPolicy(cfg.Risk); err != nil {
 		return err
 	}
-	// Validate the optional Chief Analyst DeepSeek fallback up front too, for
-	// the same reason: a broken [chief_fallback] should surface now, not after
-	// a full 15-minute synthesis attempt has already failed.
-	fallbackAPI, fallbackOK, err := resolveChiefFallback(cfg)
-	if err != nil {
-		return err
-	}
 	// Resolve + validate the Chief Analyst's own engine up front too, for the
 	// same fail-fast reason as the cheap engine above: a misconfigured
 	// chief_engine=api should surface before Stage 0.5's universe-wide fetch
-	// (and, in thesis mode, before any research spend), not after it.
+	// (and, in thesis mode, before any research spend), not after it. Resolved
+	// before the fallback below because chiefFallbackAllowed needs to know
+	// which engine the primary call actually runs on.
 	chiefE, err := resolveChiefEngine(cfg)
+	if err != nil {
+		return err
+	}
+	// Validate the optional Chief Analyst DeepSeek fallback up front too, for
+	// the same reason: a broken [chief_fallback] should surface now, not after
+	// a full 15-minute synthesis attempt has already failed.
+	fallbackAPI, fallbackOK, err := chiefFallbackAllowed(cfg, chiefE)
 	if err != nil {
 		return err
 	}

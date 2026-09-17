@@ -9,6 +9,49 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/store"
 )
 
+// chiefFallbackAllowed reports whether the DeepSeek Chief Analyst fallback may
+// fire for this run, and — when it may — the credentials to use.
+//
+// It composes two gates on top of resolveChiefFallback's own credential
+// validation (kept, not reimplemented):
+//
+//   - primary.CLI must be model.CLIClaude. The fallback is a resilience
+//     measure for when the Claude primary call fails; under chief_engine="api"
+//     there is no Claude primary to fall back from, so firing it anyway would
+//     dispatch a second, near-identical, billable DeepSeek call for the exact
+//     same prompt the primary just failed on. This mirrors
+//     config.Settings.ChiefFallbackActive's own "chief_engine != claude ->
+//     never active" rule, so the orchestrator's runtime gate cannot disagree
+//     with what config reports as active.
+//   - cfg.ChiefFallbackEnabled, a tri-state override: nil (the config key
+//     omitted) preserves resolveChiefFallback's existing api_key-only gate —
+//     today's documented behaviour, unchanged — true forces the fallback on
+//     (still requiring credentials), and false forces it off even with
+//     credentials present.
+//
+// An explicit enabled=true together with a non-claude primary is a
+// configuration error that config.Settings.ValidateChiefEngine already
+// rejects at load time (Task 3); resolved defensively here too, in case a
+// caller builds an orchestrator.Config directly without going through
+// config.Load.
+func chiefFallbackAllowed(cfg Config, primary chiefEngine) (model.APIConfig, bool, error) {
+	api, ok, err := resolveChiefFallback(cfg)
+	if err != nil || !ok {
+		return api, ok, err
+	}
+	explicitlyEnabled := cfg.ChiefFallbackEnabled != nil && *cfg.ChiefFallbackEnabled
+	if primary.CLI != model.CLIClaude {
+		if explicitlyEnabled {
+			return model.APIConfig{}, false, fmt.Errorf("chief_fallback cannot be explicitly enabled when the Chief primary is not claude")
+		}
+		return model.APIConfig{}, false, nil
+	}
+	if cfg.ChiefFallbackEnabled != nil && !*cfg.ChiefFallbackEnabled {
+		return model.APIConfig{}, false, nil
+	}
+	return api, true, nil
+}
+
 // attemptChiefFallback runs the optional DeepSeek resilience call after the
 // primary Chief Analyst (claude CLI) call has already failed or its JSON
 // failed to parse. It reuses the exact same agents/chief-analyst.md prompt —

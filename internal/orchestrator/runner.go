@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"net/http"
 	"os/exec"
 	"strings"
 	"time"
@@ -151,8 +152,15 @@ func callAgent(ctx context.Context, cli model.CLI, role, stage string, prompt st
 		var perm permanentError
 		var limit outputLimitError
 		if errors.As(runErr, &perm) || errors.As(runErr, &limit) {
-			if errors.As(runErr, &limit) {
+			switch {
+			case errors.As(runErr, &limit):
 				report.FailureKind = "output_limit"
+			case perm.Status == http.StatusUnauthorized || perm.Status == http.StatusForbidden:
+				// Distinguishable from an ordinary permanent failure the same
+				// way the Claude disabled-subscription case already gets
+				// "authentication" — a caller (fallback gating, provenance)
+				// can tell a bad/expired key apart from a malformed request.
+				report.FailureKind = "permanent_auth"
 			}
 			report.Status = model.StatusFailed
 			report.Err = runErr.Error()

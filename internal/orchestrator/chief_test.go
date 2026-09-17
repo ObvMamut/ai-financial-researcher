@@ -3,12 +3,14 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -340,5 +342,254 @@ func TestOutputTokenLimitIsRecordedOnlyForAPICalls(t *testing.T) {
 	}
 	if chiefReport.Prompt.OutputTokenLimit != defaultMaxTokens {
 		t.Errorf("Chief OutputTokenLimit = %d, want %d (its own cap, not the cheap engine's 4096)", chiefReport.Prompt.OutputTokenLimit, defaultMaxTokens)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: fallback gating.
+//
+// resolveChiefFallback (orchestrator.go) gates the optional DeepSeek Chief
+// fallback on its own api_key alone — it knows nothing about which engine the
+// primary Chief call actually ran on. Once chief_engine="api" existed (Task
+// 4), that became a live bug: an API-primary run whose Chief call fails would
+// still reach the fallback through the key-only gate, dispatching a second,
+// near-identical, billable DeepSeek call for a failure that has no Claude
+// primary to be a resilience measure for.
+//
+// chiefFallbackAllowed (fallback.go) closes this by adding the primary-engine
+// and tri-state ChiefFallbackEnabled gates on top of resolveChiefFallback's
+// own credential validation, matching config.Settings.ChiefFallbackActive's
+// engine-aware rule so the two can no longer disagree.
+// ---------------------------------------------------------------------------
+
+// countingChiefServer is like fakeDeepSeekServer but exposes its own request
+// count, so a test can assert "at most one call reached this endpoint" by
+// counting rather than by inferring it from the run's outcome.
+func countingChiefServer(t *testing.T, content string) (*httptest.Server, *int32) {
+	t.Helper()
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"choices": []map[string]any{{
+				"finish_reason": "stop",
+				"message":       map[string]string{"role": "assistant", "content": content},
+			}},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// failingServer always answers with the given status, counting requests.
+func failingServer(t *testing.T, status int) (*httptest.Server, *int32) {
+	t.Helper()
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// TestAPIPrimaryNeverAttemptsClaudeOrASecondIdenticalCall is the assertion the
+// controller flagged as the worst bug this task can leave unfixed: with
+// chief_engine=api and [chief_fallback] credentials still configured (enabled
+// omitted, the common shape — this repo's own cfr.toml is exactly that), a
+// failing API-primary Chief call must reach the Chief endpoint exactly once —
+// never fall back to a second, near-identical DeepSeek call, and never touch
+// the claude binary (there is no Claude primary to fail over from).
+func TestAPIPrimaryNeverAttemptsClaudeOrASecondIdenticalCall(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok") // scouts/specialists (gemini fakebin) succeed normally
+	chiefSrv, chiefHits := failingServer(t, http.StatusInternalServerError)
+	fallbackSrv, fallbackHits := countingChiefServer(t, fallbackIdeasContent)
+
+	cfg := testConfig(t, model.ModeIndependent)
+	// The claude binary must never be invoked: replace it with one that
+	// records if it ever is, rather than trusting "it wasn't configured".
+	claudeMarker := filepath.Join(t.TempDir(), "claude-invoked")
+	claudeBin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\necho invoked >> \""+claudeMarker+"\"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Binaries[model.CLIClaude] = claudeBin
+
+	cfg.ChiefEngine = "api"
+	cfg.ChiefAPI = model.APIConfig{BaseURL: chiefSrv.URL, Model: "chief-model", APIKey: "chief-key"}
+	cfg.ChiefFallback = model.APIConfig{BaseURL: fallbackSrv.URL, Model: "deepseek-reasoner", APIKey: "sk-test"}
+	// enabled deliberately left nil (omitted).
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+
+	if got := atomic.LoadInt32(chiefHits); got != 1 {
+		t.Errorf("chief endpoint saw %d requests, want exactly 1", got)
+	}
+	if got := atomic.LoadInt32(fallbackHits); got != 0 {
+		t.Errorf("fallback endpoint saw %d requests, want 0 — chief_engine=api has no Claude primary to fall back from", got)
+	}
+	if _, err := os.Stat(claudeMarker); err == nil {
+		t.Error("the claude binary was invoked, but chief_engine=api should never dispatch to it")
+	}
+	if complete.Meta.Outcome != "degraded" {
+		t.Errorf("outcome = %q, want degraded", complete.Meta.Outcome)
+	}
+	for _, d := range complete.Meta.Domains {
+		if d.Domain == "chief-analyst-fallback" {
+			t.Errorf("a chief-analyst-fallback domain status was recorded, but the fallback must never have run: %+v", d)
+		}
+	}
+}
+
+// TestFallbackDisabledExplicitlyWithCredentialsPresent: chief_engine=claude
+// (the default), [chief_fallback].enabled=false, credentials present. An
+// explicit false must win over api_key-present alone.
+func TestFallbackDisabledExplicitlyWithCredentialsPresent(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "chief-fail")
+	fallbackSrv, fallbackHits := countingChiefServer(t, fallbackIdeasContent)
+
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.ChiefFallback = model.APIConfig{BaseURL: fallbackSrv.URL, Model: "deepseek-reasoner", APIKey: "sk-test"}
+	disabled := false
+	cfg.ChiefFallbackEnabled = &disabled
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil {
+		t.Fatal("no EventComplete received")
+	}
+
+	if got := atomic.LoadInt32(fallbackHits); got != 0 {
+		t.Errorf("fallback endpoint saw %d requests, want 0 — enabled=false must win over api_key alone", got)
+	}
+	if complete.Meta.Outcome != "degraded" {
+		t.Errorf("outcome = %q, want degraded", complete.Meta.Outcome)
+	}
+	assertDegradedIdeas(t, complete.Ideas)
+}
+
+// TestHistoricalClaudeToAPIFallbackStillWorks pins today's documented
+// behaviour unchanged: chief_engine omitted (defaults to claude),
+// [chief_fallback] credentials present, enabled omitted. A failing primary
+// must produce exactly one fallback request, a parsed result, and must NOT
+// erase the primary failure: the run stays degraded and the "chief-analyst"
+// domain keeps its failed status.
+func TestHistoricalClaudeToAPIFallbackStillWorks(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "chief-fail")
+	fallbackSrv, fallbackHits := countingChiefServer(t, fallbackIdeasContent)
+
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.ChiefFallback = model.APIConfig{BaseURL: fallbackSrv.URL, Model: "deepseek-reasoner", APIKey: "sk-test"}
+	// ChiefEngine and ChiefFallbackEnabled both left zero-value (omitted).
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	assertFallbackFired(t, complete)
+
+	if got := atomic.LoadInt32(fallbackHits); got != 1 {
+		t.Errorf("fallback endpoint saw %d requests, want exactly 1", got)
+	}
+	foundFailedPrimary := false
+	for _, d := range complete.Meta.Domains {
+		if d.Domain == "chief-analyst" && d.Status == model.StatusFailed {
+			foundFailedPrimary = true
+		}
+	}
+	if !foundFailedPrimary {
+		t.Errorf("the primary chief-analyst failure must still be recorded alongside a successful fallback: %+v", complete.Meta.Domains)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: permanent-failure stop.
+//
+// apiengine.go already classifies any 4xx other than 429/408 as permanent
+// (isPermanentStatus) and wraps it in permanentError; runner.go already stops
+// on a permanentError or outputLimitError without a further attempt. Neither
+// had Chief-specific coverage, and neither gave a 401/403 a FailureKind a
+// caller could distinguish from an ordinary failed call the way the Claude
+// disabled-subscription case already gets "authentication".
+// ---------------------------------------------------------------------------
+
+// TestPermanentAuthFailureStopsUnchangedRetries proves a 401 or 403 from the
+// Chief's own API endpoint buys exactly one dispatched attempt — never the
+// unchanged-retry behaviour a bare transient/permanent distinction would
+// otherwise miss — and that the resulting report carries a FailureKind that
+// tells a 401/403 apart from every other failure.
+func TestPermanentAuthFailureStopsUnchangedRetries(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(fmt.Sprintf("%d", code), func(t *testing.T) {
+			srv, hits := failingServer(t, code)
+			api := model.APIConfig{BaseURL: srv.URL, Model: "chief-model", APIKey: "bad-key"}
+			// A generous retry budget: if unchanged-retry ever regressed back
+			// in, this would spend all 3 rather than stopping at 1.
+			retry := model.RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond}
+
+			r := runAgent(context.Background(), model.CLIApi, "chief-analyst", string(model.StageSynthesis),
+				"prompt", 5*time.Second, retry, "", "", api)
+
+			if got := atomic.LoadInt32(hits); got != 1 {
+				t.Fatalf("server saw %d requests, want exactly 1 (no unchanged retry on a permanent auth failure)", got)
+			}
+			if r.Attempts != 1 {
+				t.Errorf("report.Attempts = %d, want 1", r.Attempts)
+			}
+			if r.Status != model.StatusFailed {
+				t.Fatalf("status = %q, want failed", r.Status)
+			}
+			if r.FailureKind != "permanent_auth" {
+				t.Errorf("FailureKind = %q, want permanent_auth", r.FailureKind)
+			}
+		})
+	}
+}
+
+// TestOutputLimitGetsNoUnchangedRetryOrSchemaRepair proves a
+// finish_reason=="length" Chief response stops after exactly one attempt,
+// preserves the usage the provider reported even though the call failed, and
+// carries FailureKind "output_limit". It also stands as the proof that an
+// output-limit Chief failure cannot buy a schema-repair call: the Chief's own
+// dispatch (thesis.go's t.call for "chief-analyst"/"thesis-chief") never
+// routes through researchCall/decodeOrRepair — that machinery (thesis_schema.go)
+// is wired only to the research roles (triage/researcher/challenger) — so
+// there is no repair call for this test to observe not happening; the single
+// request this test counts is the only one that could ever be dispatched.
+func TestOutputLimitGetsNoUnchangedRetryOrSchemaRepair(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		fmt.Fprint(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"half a board"}}],"usage":{"prompt_tokens":100,"completion_tokens":50}}`)
+	}))
+	defer srv.Close()
+
+	api := model.APIConfig{BaseURL: srv.URL, Model: "chief-model", APIKey: "k"}
+	retry := model.RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond}
+
+	r := runAgent(context.Background(), model.CLIApi, "chief-analyst", string(model.StageSynthesis),
+		"prompt", 5*time.Second, retry, "", "", api)
+
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("server saw %d requests, want exactly 1 (no unchanged retry and no repair call)", got)
+	}
+	if r.Status != model.StatusFailed {
+		t.Fatalf("status = %q, want failed", r.Status)
+	}
+	if r.FailureKind != "output_limit" {
+		t.Errorf("FailureKind = %q, want output_limit", r.FailureKind)
+	}
+	if len(r.Usage) == 0 || r.Usage[0].CompletionTokens == nil || *r.Usage[0].CompletionTokens != 50 {
+		t.Errorf("usage not preserved on a truncated failure: %+v", r.Usage)
 	}
 }
