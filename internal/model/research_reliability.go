@@ -23,9 +23,12 @@ type PromptProfile struct {
 	// Omitted for its name instead.
 	Components map[string]int `json:"components_bytes"`
 	// Omitted names, in drop order, every optional promptSection assembleSections
-	// removed to make the data block fit. Additive: absent or empty means no
-	// section was dropped (or this profile predates the field), never that a
-	// drop was measured and found to be zero.
+	// removed from the data block to make it fit. Unlike the numeric fields
+	// on this struct, a name list has no "measured zero" distinct from
+	// "unrecorded" — there is nothing a dropped section could contribute
+	// other than its name, so an absent or empty Omitted means exactly what
+	// it says: nothing was dropped, whether because none needed to be or
+	// because this profile predates the field.
 	Omitted     []string `json:"omitted,omitempty"`
 	Compactions []string `json:"compactions,omitempty"`
 

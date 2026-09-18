@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // TestSectionSizesAreExactAndNoSectionIsFoldedIntoItsNeighbour is Task 11's
@@ -158,5 +160,92 @@ func TestPromptProfileComponentsPartitionBytesExactly(t *testing.T) {
 	}
 	if len(profile.Omitted) != 0 {
 		t.Fatalf("Omitted = %v, want none — nothing here needs dropping at noSectionLimit", profile.Omitted)
+	}
+}
+
+// TestChallengeSectionsNeverOmitPreviousChallengeUnderCapacity pins Fix 1 of
+// the Task 11 review round: previous_challenge must be mandatory, never a
+// silently droppable optional. It drives assembleSections through the real
+// production helper (challengeSections, used by thesis.go's challenge
+// closure for both challenge("") and challenge("-final")) rather than a
+// hand-copied section list, so a regression that flips the flag back at the
+// call site is caught here instead of only in a duplicate that could drift
+// from it.
+//
+// agents/thesis-challenger.md instructs the model unconditionally to, on
+// final review, "judge whether the previous material issues were actually
+// resolved by the new evidence" — and validateReviewConsistency (thesis.go)
+// never sees the previous challenge, only the current dossier and the
+// current review, so nothing in Go backstops a challenge that never saw what
+// it was supposed to re-examine.
+func TestChallengeSectionsNeverOmitPreviousChallengeUnderCapacity(t *testing.T) {
+	base := []promptSection{
+		{Name: "identity", Mandatory: true, Body: strings.Repeat("i", 10)},
+		{Name: "temporal_facts", Mandatory: true, Body: strings.Repeat("t", 10)},
+		{Name: "evidence", Mandatory: true, Body: strings.Repeat("e", 10)},
+		{Name: "source_urls", Mandatory: false, Body: strings.Repeat("s", 10)},
+		{Name: "request_results", Mandatory: true, Body: strings.Repeat("r", 10)},
+		{Name: "dossier_hash", Mandatory: true, Body: strings.Repeat("h", 10)},
+		{Name: "previous_dossier", Mandatory: true, Body: strings.Repeat("p", 10)},
+		{Name: "compaction_originals", Mandatory: false, Body: strings.Repeat("c", 10)},
+		{Name: "retrieval_errors", Mandatory: false, Body: strings.Repeat("d", 10)},
+	}
+	previous := model.ThesisChallenge{Ticker: "AAA", Verdict: "revise", MaterialIssues: []string{"unresolved: does the delivery timing actually resolve expectations"}}
+	sections := challengeSections(base, previous)
+
+	last := sections[len(sections)-1]
+	if last.Name != "previous_challenge" || !last.Mandatory {
+		t.Fatalf("challengeSections' last section = %+v, want Name=previous_challenge Mandatory=true", last)
+	}
+
+	mandatoryBase := 0
+	for _, sec := range base {
+		if sec.Mandatory {
+			mandatoryBase += len(sec.Body)
+		}
+	}
+	// One byte short of fitting every mandatory base section plus
+	// previous_challenge. Dropping every optional base section first (the
+	// only sections a correct implementation could remove without also
+	// touching previous_challenge) still leaves the total exactly one byte
+	// over this limit, so reaching it at all requires dropping
+	// previous_challenge too — which must never happen silently.
+	limit := mandatoryBase + len(last.Body) - 1
+
+	text, _, omitted, err := assembleSections(sections, limit)
+	if err == nil {
+		t.Fatalf("expected a capacity error naming previous_challenge; got text=%d bytes, omitted=%v", len(text), omitted)
+	}
+	if !strings.Contains(err.Error(), "previous_challenge") {
+		t.Fatalf("error %q does not name previous_challenge — the caller cannot tell this requirement did not fit", err.Error())
+	}
+	for _, name := range omitted {
+		if name == "previous_challenge" {
+			t.Fatal("previous_challenge was silently dropped for capacity instead of failing loudly")
+		}
+	}
+}
+
+// TestDuplicateSectionNameIsRejected pins Fix 2 of the Task 11 review round:
+// two sections sharing a Name must never silently overwrite each other in
+// sizes (sum(sizes) would then undercount while text correctly kept both
+// bodies) — exactly the kind of unattributed lie the deleted marker scan
+// told. Task 12 is where this can first happen for real: a global Chief
+// board merges many companies' sections into one list, and per-company names
+// collide unless namespaced.
+func TestDuplicateSectionNameIsRejected(t *testing.T) {
+	s := []promptSection{
+		{Name: "evidence", Body: "company one's evidence", Mandatory: true},
+		{Name: "evidence", Body: "company two's evidence", Mandatory: true},
+	}
+	text, sizes, omitted, err := assembleSections(s, 1000)
+	if err == nil {
+		t.Fatalf("expected an error for a duplicate section name; got text=%q sizes=%v omitted=%v", text, sizes, omitted)
+	}
+	if text != "" || sizes != nil {
+		t.Fatalf("text = %q, sizes = %v; want both empty when assembly is refused", text, sizes)
+	}
+	if !strings.Contains(err.Error(), "evidence") {
+		t.Fatalf("error %q does not name the duplicate section", err.Error())
 	}
 }

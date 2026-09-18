@@ -951,7 +951,7 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	// this overflow to plan review instead; that attribution does not match
 	// the saved artifact and this comment corrects it.
 	challenge := func(suffix string) {
-		sections := append(base(), promptSection{Name: "previous_challenge", Mandatory: false, Body: "\nPrevious challenge:\n" + jsonText(out.Challenge)})
+		sections := challengeSections(base(), out.Challenge)
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-challenger", safeName+"-challenge"+suffix, sections, &out.Challenge, challengeSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // promptSection is one independently named, independently measured piece of
@@ -44,17 +46,29 @@ const noSectionLimit = math.MaxInt
 // sizes reports only the sections that made it into text: a section that was
 // dropped contributes nothing to the assembled prompt, so it must not keep
 // contributing to its accounting either. That makes sum(sizes) equal
-// len(text) exactly, always — there is never a residual byte attributable to
-// nothing, which the deleted marker scan could not promise (the September 15
-// audit's SNOW/OKTA/ORCL residuals turned out to be exactly the marker
-// strings' own bytes, and five other labels had no map entry at all and were
-// silently folded into whichever earlier marker preceded them).
+// len(text) exactly, always, unconditionally — there is never a residual
+// byte attributable to nothing, which the deleted marker scan could not
+// promise (the September 15 audit's SNOW/OKTA/ORCL residuals turned out to
+// be exactly the marker strings' own bytes, and five other labels had no map
+// entry at all and were silently folded into whichever earlier marker
+// preceded them). Two sections sharing a Name would break that invariant the
+// same way — the second would silently overwrite the first in sizes while
+// text correctly kept both bodies — so a duplicate name is rejected outright
+// rather than accumulated: callers (Task 12's per-company sections onto one
+// board, in particular) must namespace their own names uniquely.
 //
 // A mandatory overflow — the mandatory sections alone already exceed limit,
 // so no amount of optional dropping can help — returns a promptCapacityError
 // naming every mandatory section still present, so the caller can say which
 // requirement did not fit rather than only that something did not.
 func assembleSections(s []promptSection, limit int) (text string, sizes map[string]int, omitted []string, err error) {
+	seen := make(map[string]bool, len(s))
+	for _, sec := range s {
+		if seen[sec.Name] {
+			return "", nil, nil, fmt.Errorf("assembleSections: duplicate section name %q — every section's Name must be unique, or its bytes would silently overwrite another's in sizes", sec.Name)
+		}
+		seen[sec.Name] = true
+	}
 	kept := append([]promptSection(nil), s...)
 	total := 0
 	for _, sec := range kept {
@@ -102,4 +116,28 @@ func lastOptional(s []promptSection) int {
 // "data" entry for these calls, and still does.
 func singleSection(body string) []promptSection {
 	return []promptSection{{Name: "data", Body: body, Mandatory: true}}
+}
+
+// challengeSections appends previous_challenge to base()'s sections for a
+// challenge call — both the initial challenge("") and the final
+// challenge("-final") (after a revision) share this one construction.
+//
+// previous_challenge is mandatory. agents/thesis-challenger.md instructs the
+// model unconditionally: "On final review judge whether the previous
+// material issues were actually resolved by the new evidence" — and nothing
+// in Go backstops that if the model never sees it: validateReviewConsistency
+// (thesis.go) takes only the current dossier and the current review, never
+// the previous challenge, so nothing downstream would notice a "supported"
+// verdict that never re-examined what the prior round found wrong. That is
+// the same principle reviewPlans applies to all six of its own sections
+// (idea/dossier/evidence are exactly what that call reviews); previous
+// material issues are exactly what a final challenge reviews. It is also
+// live, not hypothetical: ORCL's real challenge-final overflow (see the
+// comment above challenge's call site in thesis.go) carried a 9,477-byte
+// previous_challenge — a droppable previous_challenge would have let the
+// first real budget "fix" that overflow by silently deleting the one
+// section the call exists to use, trading a loud failure for a silent
+// well-formed "supported" verdict with nothing left to catch it.
+func challengeSections(base []promptSection, previous model.ThesisChallenge) []promptSection {
+	return append(base, promptSection{Name: "previous_challenge", Mandatory: true, Body: "\nPrevious challenge:\n" + jsonText(previous)})
 }
