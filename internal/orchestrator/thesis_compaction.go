@@ -176,11 +176,22 @@ func measureCompaction(raw string, limit int) (model.CompactionAllowance, error)
 
 // perFieldFloorsFit reports whether every currently non-empty narrative
 // field can receive at least compactionPerFieldFloor bytes without the sum
-// exceeding budget. It is the sole feasibility test: when budget is deeply
-// negative (a protected floor that alone leaves no room under the limit),
-// this is false as long as at least one field is non-empty, and true with no
-// fields to shrink at all — correctly, since there is then nothing for a
-// compaction call to do.
+// exceeding budget: compactionPerFieldFloor*n <= budget, where n counts the
+// currently non-empty fields.
+//
+// It returns false whenever budget is negative, for ANY n — including n==0
+// (no narrative content at all): 0 <= budget is false for a negative
+// budget, so a protected floor that alone leaves no room under the limit is
+// correctly reported infeasible even though there is, in that shape,
+// nothing left to shrink at all.
+//
+// n==0 combined with a non-negative budget WOULD report true, but that
+// combination cannot happen from production: with no narrative content,
+// PayloadBytes equals ProtectedBytes exactly, so responseCapacity's own
+// PayloadBytes > Limit check — the only path that ever reaches
+// measureCompaction — could not have fired in the first place. It is
+// reachable only by calling measureCompaction directly, as some tests do to
+// isolate this arm.
 func perFieldFloorsFit(fieldSize map[string]int, budget int) bool {
 	n := 0
 	for _, f := range dossierNarrativeFields {
@@ -263,7 +274,20 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Contract: model.OutcomeFailed, Payload: "invalid", Err: fmt.Sprintf("compaction allowance could not be measured: %v", err)}, err
 	}
 	if !allowance.Feasible {
-		err := fmt.Errorf("compaction is not feasible: protected_bytes %d already leaves no narrative_budget under the %d-byte limit (headroom %d, narrative_budget %d)", allowance.ProtectedBytes, limit, compactionHeadroom, allowance.NarrativeBudget)
+		// Two distinct shapes reach here (see perFieldFloorsFit): a
+		// narrative_budget that is itself negative (the protected content
+		// alone already leaves no room under the limit), and a
+		// narrative_budget that is POSITIVE but too small for the per-field
+		// floors to fit — where "already leaves no narrative_budget" would
+		// be a false statement next to a positive number. State the actual
+		// arithmetic instead, which is true in both cases.
+		floors := 0
+		for _, v := range allowance.PerField {
+			if v > 0 {
+				floors += v
+			}
+		}
+		err := fmt.Errorf("compaction is not feasible: a %d-byte narrative_budget (limit %d minus protected_bytes %d minus headroom %d) cannot cover the %d-byte floor required across its non-empty narrative fields", allowance.NarrativeBudget, limit, allowance.ProtectedBytes, compactionHeadroom, floors)
 		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Contract: model.OutcomeFailed, Payload: "invalid", Allowance: &allowance, Err: err.Error()}, err
 	}
 

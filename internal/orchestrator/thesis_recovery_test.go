@@ -279,42 +279,90 @@ func syntheticCompactionRaw(t *testing.T, wantProtected, wantNarrative int) stri
 }
 
 // TestCompactionRefusesADoomedCallWhenProtectedContentAlreadyExceeds pins
-// Step 1 / controller amendment behavior: when the PROTECTED content alone
-// (claims, quotations — everything a compaction call may never touch)
-// already compacts past the limit, no rewrite of the twelve narrative
-// fields can rescue the response, and the call must never be dispatched.
+// Step 1 / controller amendment behavior across BOTH shapes that reach
+// perFieldFloorsFit's false branch: a narrative_budget that is itself
+// negative (protected content alone already exceeds the limit — nothing
+// left to shrink at all), and — the production-reachable one — a
+// narrative_budget that is POSITIVE but too small for the per-field floors
+// to fit across the fields that actually carry content. The first fix
+// round's coverage exercised only the first shape (its doomed fixture used
+// narrative=0, so allocatePerField's `remaining < 0` arm, and the message's
+// "positive narrative_budget" wording, were never reached — see
+// allocatePerField's coverage gap noted in the task report).
 func TestCompactionRefusesADoomedCallWhenProtectedContentAlreadyExceeds(t *testing.T) {
 	const limit = 20480
-	// Protected content alone (25,000 bytes) already exceeds the limit;
-	// narrative content is zero, so there is nothing a rewrite could do.
-	raw := syntheticCompactionRaw(t, 25000, 0)
+	cases := []struct {
+		name                 string
+		protected, narrative int
+		wantBudget           int
+		wantFloors           int
+	}{
+		// Protected content alone already exceeds the limit; narrative
+		// content is zero, so there is nothing a rewrite could do.
+		// NarrativeBudget is deeply negative here.
+		{"protected_alone_exceeds_limit", 25000, 0, limit - 25000 - compactionHeadroom, 0},
+		// Synthetic (not a real captured artifact — do not call this "BAC"
+		// or any real ticker): protected 19,900 leaves a POSITIVE
+		// narrative_budget of 324 once headroom is subtracted, but spread
+		// over the twelve non-empty narrative fields the per-field floor
+		// (40 each = 480) cannot fit inside it. Production-reachable
+		// whenever protected exceeds 19,744 at this limit — unlike the case
+		// above, this one has real content to shrink and a real, positive
+		// budget; it is simply not enough.
+		{"floors_exceed_a_positive_budget", 19900, 1200, 324, 480},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			raw := syntheticCompactionRaw(t, c.protected, c.narrative)
 
-	calls := 0
-	runner, _, done := thesisFixture(t, func(string, int) string { calls++; return "unexpected" })
-	defer done()
+			calls := 0
+			runner, _, done := thesisFixture(t, func(string, int) string { calls++; return "unexpected" })
+			defer done()
 
-	var out model.CandidateDossier
-	status, err := compactDossier(context.Background(), runner, "thesis-researcher", "doomed", raw, limit, &out)
-	if err == nil {
-		t.Fatal("a doomed compaction must fail")
-	}
-	if calls != 0 {
-		t.Fatalf("a doomed compaction dispatched %d model call(s), want 0", calls)
-	}
-	if status.Attempts != 0 {
-		t.Fatalf("Attempts = %d, want 0", status.Attempts)
-	}
-	if status.Contract != model.OutcomeFailed {
-		t.Fatalf("Contract = %q, want failed", status.Contract)
-	}
-	if status.Recovery != "compaction" {
-		t.Fatalf("Recovery = %q, want compaction", status.Recovery)
-	}
-	if status.Allowance == nil || status.Allowance.Feasible {
-		t.Fatalf("Allowance not recorded as infeasible: %+v", status.Allowance)
-	}
-	if !strings.Contains(status.Err, "protected_bytes") || !strings.Contains(status.Err, fmt.Sprint(limit)) {
-		t.Fatalf("error does not name protected_bytes and the limit: %q", status.Err)
+			var out model.CandidateDossier
+			status, err := compactDossier(context.Background(), runner, "thesis-researcher", "doomed", raw, limit, &out)
+			if err == nil {
+				t.Fatal("a doomed compaction must fail")
+			}
+			if calls != 0 {
+				t.Fatalf("a doomed compaction dispatched %d model call(s), want 0", calls)
+			}
+			if status.Attempts != 0 {
+				t.Fatalf("Attempts = %d, want 0", status.Attempts)
+			}
+			if status.Contract != model.OutcomeFailed {
+				t.Fatalf("Contract = %q, want failed", status.Contract)
+			}
+			if status.Recovery != "compaction" {
+				t.Fatalf("Recovery = %q, want compaction", status.Recovery)
+			}
+			if status.Allowance == nil || status.Allowance.Feasible {
+				t.Fatalf("Allowance not recorded as infeasible: %+v", status.Allowance)
+			}
+			if status.Allowance.NarrativeBudget != c.wantBudget {
+				t.Fatalf("NarrativeBudget = %d, want %d", status.Allowance.NarrativeBudget, c.wantBudget)
+			}
+			floors := 0
+			for _, v := range status.Allowance.PerField {
+				if v > 0 {
+					floors += v
+				}
+			}
+			if floors != c.wantFloors {
+				t.Fatalf("sum of non-zero PerField floors = %d, want %d", floors, c.wantFloors)
+			}
+			if !strings.Contains(status.Err, "protected_bytes") || !strings.Contains(status.Err, fmt.Sprint(limit)) {
+				t.Fatalf("error does not name protected_bytes and the limit: %q", status.Err)
+			}
+			// The error must state the true relationship: for a POSITIVE
+			// budget, claiming "already leaves no narrative_budget" would be
+			// false on its face (a positive number right next to it). Both
+			// shapes must therefore be described in terms of the floor not
+			// fitting the budget, not "no budget at all".
+			if !strings.Contains(status.Err, fmt.Sprint(status.Allowance.NarrativeBudget)) {
+				t.Fatalf("error does not name the actual narrative_budget %d: %q", status.Allowance.NarrativeBudget, status.Err)
+			}
+		})
 	}
 }
 
@@ -341,6 +389,14 @@ func TestCompactionAllowanceIsMeasuredNotAssumed(t *testing.T) {
 	}
 	if a.PayloadBytes != wantProtected+wantNarrative {
 		t.Fatalf("PayloadBytes = %d, want %d", a.PayloadBytes, wantProtected+wantNarrative)
+	}
+	// Pin the Excess assignment (PayloadBytes - Limit) against an
+	// independently computed literal, not a recomputation of the same
+	// formula — a production line that hardcoded Excess to 0 would
+	// otherwise leave this test unable to tell.
+	wantExcess := (wantProtected + wantNarrative) - limit
+	if a.Excess != wantExcess {
+		t.Fatalf("Excess = %d, want %d (PayloadBytes %d - Limit %d)", a.Excess, wantExcess, wantProtected+wantNarrative, limit)
 	}
 	wantBudget := limit - wantProtected - compactionHeadroom
 	if a.NarrativeBudget != wantBudget {
@@ -448,6 +504,18 @@ func TestPerFieldAllocationIsProportionalWithAFloorForNonEmptyFields(t *testing.
 	}
 	if tightSum > b.NarrativeBudget {
 		t.Fatalf("sum(PerField) = %d exceeds NarrativeBudget %d", tightSum, b.NarrativeBudget)
+	}
+	// Pin the floor's actual VALUE (40), not just the symbolic constant:
+	// comparing only against compactionPerFieldFloor lets the constant
+	// itself drift (e.g. 40 -> 1) without any test noticing, because the
+	// assertion and the production value would change together. These are
+	// literals, independently computed by hand from the 600-byte budget
+	// above: floor 40 x 2 fields = 80 reserved, 520 remaining split
+	// 5000:1 proportionally (519/1, integer division), short_case is last
+	// in dossierNarrativeFields order among the two and absorbs the
+	// rounding remainder (600-559=41).
+	if b.PerField["long_case"] != 559 || b.PerField["short_case"] != 41 {
+		t.Fatalf("PerField = %+v, want long_case=559 short_case=41 (compactionPerFieldFloor=40); a change here means the floor constant itself moved", b.PerField)
 	}
 }
 
@@ -566,6 +634,120 @@ func TestCompactionFeasibilityAcrossTheSixRealOversizedOriginals(t *testing.T) {
 				t.Errorf("%s: computed infeasible; the controller's own measurement is that every one of the six has a positive budget (%d)", c.ticker, wantBudget)
 			}
 		})
+	}
+}
+
+// TestCompactionPromptCarriesTheMeasuredAllowance pins the model-facing half
+// of measureCompaction: the dispatched compaction prompt must actually STATE
+// the measured per-field budgets and both required warnings, and must use
+// the threaded limit rather than a literal constant. Every other test that
+// matches on this prompt (e.g. "Compact this complete dossier") only routes
+// a fixture reply off a short prefix; none of them assert anything past it,
+// so a rewrite that silently dropped the measured numbers or a warning, or
+// hardcoded the limit, left the whole suite green — fix-round mutation 1
+// below reproduces this and confirms this test now catches each case.
+func TestCompactionPromptCarriesTheMeasuredAllowance(t *testing.T) {
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	ids := []string{d.Claims[0].ID}
+	d.ExpectationsClaimIDs, d.PricedInClaimIDs = ids, ids
+	d.LongCase = strings.Repeat("a", 2000)
+	d.ShortCase = strings.Repeat("b", 1000)
+	raw := fenced(d)
+
+	// Deliberately not 20480, so a hardcoded constant in the prompt template
+	// cannot pass this test by accident.
+	const limit = 19999
+	allowance, err := measureCompaction(raw, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowance.Feasible {
+		t.Fatalf("expected a feasible allowance: %+v", allowance)
+	}
+
+	var captured string
+	runner, _, done := thesisFixture(t, func(prompt string, _ int) string {
+		if strings.Contains(prompt, "Compact this complete dossier") {
+			captured = prompt
+		}
+		return fenced(d)
+	})
+	defer done()
+
+	var out model.CandidateDossier
+	if _, err := compactDossier(context.Background(), runner, "thesis-researcher", "prompt-check", raw, limit, &out); err != nil {
+		t.Fatal(err)
+	}
+	if captured == "" {
+		t.Fatal("compaction prompt never reached the model")
+	}
+	if !strings.Contains(captured, fmt.Sprintf("fit a %d-byte response budget", limit)) {
+		t.Fatalf("prompt does not state the threaded limit %d, or names a different one: %s", limit, captured)
+	}
+	current := dossierNarratives(d)
+	for _, f := range []string{"long_case", "short_case"} {
+		want := fmt.Sprintf("%s: %d bytes (currently %d)", f, allowance.PerField[f], len(current[f]))
+		if !strings.Contains(captured, want) {
+			t.Fatalf("prompt missing the measured per-field line %q", want)
+		}
+	}
+	for _, warn := range []string{
+		"This consumes the one repair allowance; there is no further repair.",
+		"a shorter field that drops a caveat is a failure, not a success.",
+	} {
+		if !strings.Contains(captured, warn) {
+			t.Fatalf("prompt missing required warning %q", warn)
+		}
+	}
+}
+
+// TestCompactionLimitIsThreadedFromThePromptProfile pins Fix 2: the limit
+// reaching measureCompaction inside compactDossier must come from
+// researchCall's r.Prompt.ResponseLimit (thesis_schema.go's
+// compactDossier(... r.Prompt.ResponseLimit ...) call), not a hardcoded
+// constant. Every other test in this file happens to use the researcher
+// role's default 20480-byte response budget, so hardcoding the call site to
+// 20480 leaves the rest of the suite green; this drives a genuinely
+// different ResponseLimit through the real researchCall path and asserts
+// the recorded Allowance reflects it. It also exercises (and so guards) the
+// `s.Allowance = &allowance` assignment on compactDossier's successful
+// dispatch path, which no other committed test reads back.
+func TestCompactionLimitIsThreadedFromThePromptProfile(t *testing.T) {
+	const customLimit = 15000 // not the 20480 every other test in this file uses
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	ids := []string{d.Claims[0].ID}
+	d.ExpectationsClaimIDs, d.PricedInClaimIDs = ids, ids
+	d.LongCase = strings.Repeat("a", customLimit) // forces response_capacity at the custom limit
+
+	runner, _, done := thesisFixture(t, func(prompt string, _ int) string {
+		if strings.Contains(prompt, "Compact this complete dossier") {
+			next := d
+			next.LongCase = "short"
+			return fenced(next)
+		}
+		return fenced(d)
+	})
+	defer done()
+	runner.cfg.Research.Budgets.Researcher.ResponseBytes = customLimit
+
+	var out model.CandidateDossier
+	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "custom-limit", "data", &out, dossierSchema)
+	if err != nil {
+		t.Fatalf("compaction under the custom limit should succeed: %v", err)
+	}
+	var compaction *model.DomainStatus
+	for i := range reports {
+		if reports[i].Recovery == "compaction" {
+			compaction = &reports[i]
+		}
+	}
+	if compaction == nil || compaction.Allowance == nil {
+		t.Fatalf("no compaction allowance recorded: %+v", reports)
+	}
+	if compaction.Allowance.Limit != customLimit {
+		t.Fatalf("Allowance.Limit = %d, want the threaded %d (not a hardcoded 20480)", compaction.Allowance.Limit, customLimit)
 	}
 }
 
