@@ -114,13 +114,11 @@ this message instead states a specific measured byte budget for these fields
 — a compaction request always does — that measured number is the real,
 enforced limit for each field and replaces the 400-character default
 entirely: write to it exactly, not as a second ceiling stacked on top of 400.
-A field that overruns its target is not free — this pipeline gives an
-oversized response exactly one repair, which rewrites the field under a
-tighter, less familiar budget than the one offered here. These are writing
-targets, not reasons to reject a thesis. The total response byte budget and
-maximum three requests remain hard limits. Prefer short claims and concise
-narratives; preserve all material counterevidence, uncertainty and exact
-quotations. Do not repeat source text as an essay or drop evidence to fit.
+These are writing targets, not reasons to reject a thesis. The total
+response byte budget and maximum three requests remain hard limits. Prefer
+short claims and concise narratives; preserve all material counterevidence,
+uncertainty and exact quotations. Do not repeat source text as an essay or
+drop evidence to fit.
 
 Expectations and priced-in reasoning must reference claim IDs. Distinguish cited
 observations from labeled inferences; an inference needs evidence for its premises.
