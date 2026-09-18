@@ -210,17 +210,28 @@ func decodeOrRepair[T any](ctx context.Context, t *thesisRunner, role, name, raw
 	return model.OutcomeRepaired, []model.DomainStatus{status}, nil
 }
 
-// researchCall makes one thesis call and decodes its payload, recording the two
-// facts separately: whether the engine answered at all, and whether what it
-// said could be read. Both were previously collapsed into a `done` status, so a
-// run whose research half returned unreadable JSON reported that its research
-// had completed.
+// researchCall makes one thesis call from a single plain data string and
+// decodes its payload, recording the two facts separately: whether the
+// engine answered at all, and whether what it said could be read. Both were
+// previously collapsed into a `done` status, so a run whose research half
+// returned unreadable JSON reported that its research had completed.
 //
 // A payload that never decodes leaves the call `done` — it did complete — with
 // Payload "invalid". That is the distinction; the run's outcome reads both.
+//
+// It is a thin wrapper over researchCallSections for the call sites that have
+// no named sections worth measuring separately (screening, event discovery);
+// see call/callSections (thesis.go) for the equivalent split one level down.
 func researchCall[T any](ctx context.Context, t *thesisRunner, role, name, data string, v *T, check func(*T) []string) (reports []model.DomainStatus, transport, parsing string, err error) {
+	return researchCallSections(ctx, t, role, name, singleSection(data), v, check)
+}
+
+// researchCallSections is researchCall's sibling for the thesis prompt sites
+// built from named promptSections (thesis_sections.go) rather than one
+// already-concatenated string.
+func researchCallSections[T any](ctx context.Context, t *thesisRunner, role, name string, sections []promptSection, v *T, check func(*T) []string) (reports []model.DomainStatus, transport, parsing string, err error) {
 	check = currentResearchSchema(check)
-	r, callErr := t.call(ctx, role, name, data, t.cheapTarget())
+	r, callErr := t.callSections(ctx, role, name, sections, t.cheapTarget())
 	status := reportStatus(r)
 	if r.FailureKind == "response_capacity" {
 		// The engine returned a complete response. Its byte-budget failure is

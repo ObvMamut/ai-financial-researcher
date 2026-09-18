@@ -75,7 +75,7 @@ func TestInitialAndReviewPassagesReachPersistedInputs(t *testing.T) {
 	if out.Dossier.Status != "supported" {
 		t.Fatalf("failed source research: %+v", out)
 	}
-	_, profile, err := runner.preparePrompt("thesis-chief", "chief-fixture", jsonText(chiefContext([]thesisResearch{out})), 8192)
+	_, profile, err := runner.preparePrompt("thesis-chief", "chief-fixture", singleSection(jsonText(chiefContext([]thesisResearch{out}))), 8192)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestRoleBudgetsRejectBeforeDispatchAndKeepTwelveOutcomes(t *testing.T) {
 	if len(view) != 12 || view[10].Dossier != nil || view[11].Dossier != nil {
 		t.Fatal("failed or deferred company lost/treated as actionable")
 	}
-	_, p, err := runner.preparePrompt("thesis-chief", "twelve", jsonText(view), 8192)
+	_, p, err := runner.preparePrompt("thesis-chief", "twelve", singleSection(jsonText(view)), 8192)
 	if err != nil || p.Bytes > 192<<10 {
 		t.Fatalf("twelve-company budget: %v %+v", err, p)
 	}
@@ -240,7 +240,7 @@ func TestMaterialPassageOmissionFailsExplicitlyAndFutureTextIsHidden(t *testing.
 	if len(selected[0].OmittedClaimIDs) != 1 {
 		t.Fatal("material omission not declared")
 	}
-	if _, _, err := runner.preparePrompt("thesis-challenger", "omitted", jsonText(selected), 8192); err == nil {
+	if _, _, err := runner.preparePrompt("thesis-challenger", "omitted", singleSection(jsonText(selected)), 8192); err == nil {
 		t.Fatal("missing material passage reached reviewer")
 	}
 	source.PublishedAt = runner.run.TS.Add(time.Hour)

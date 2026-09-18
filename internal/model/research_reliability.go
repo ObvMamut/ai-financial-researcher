@@ -13,8 +13,21 @@ type PromptProfile struct {
 	ResponseLimit    int                 `json:"response_limit_bytes"`
 	OutputTokenLimit int                 `json:"output_token_limit,omitempty"`
 	SHA256           string              `json:"sha256"`
-	Components       map[string]int      `json:"components_bytes"`
-	Compactions      []string            `json:"compactions,omitempty"`
+	// Components is a flat, non-overlapping partition of the prompt's bytes:
+	// "instructions" (the persona wrapper and response-contract line, i.e.
+	// everything in the prompt that is not the data block) plus one entry per
+	// named promptSection assembleSections placed in the data block — never a
+	// coarser aggregate alongside its own children. sum(Components) always
+	// equals Bytes exactly, with no residual and no double-counted overlap.
+	// A section assembleSections dropped for capacity has no entry here; see
+	// Omitted for its name instead.
+	Components map[string]int `json:"components_bytes"`
+	// Omitted names, in drop order, every optional promptSection assembleSections
+	// removed to make the data block fit. Additive: absent or empty means no
+	// section was dropped (or this profile predates the field), never that a
+	// drop was measured and found to be zero.
+	Omitted     []string `json:"omitted,omitempty"`
+	Compactions []string `json:"compactions,omitempty"`
 
 	// ResponseContractVersion and Response are additive: a profile stored by a
 	// run that predates them has neither field, and an absent

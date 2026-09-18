@@ -82,7 +82,23 @@ func validateResearchBudgets(c model.ResearchConfig) error {
 	}
 	return c.Budgets.Defaults().Validate()
 }
+
+// call dispatches a prompt built from one plain data string. It exists
+// alongside callSections for every site that has no named sections worth
+// measuring separately (schema repair, compaction, screening, event
+// discovery, macro): singleSection keeps their profile.Components exactly as
+// it always was, one "data" entry covering the whole string.
 func (t *thesisRunner) call(ctx context.Context, role, name, data string, target callTarget) (model.Report, error) {
+	return t.callSections(ctx, role, name, singleSection(data), target)
+}
+
+// callSections is call's sibling for the prompt sites built from named
+// promptSections (thesis_sections.go) rather than one already-concatenated
+// string — the five sites thesis.go assembles from identity/evidence/
+// dossier/etc. blocks, where each block's own byte size needs to be visible
+// and nameable rather than re-derived after the fact by scanning the
+// assembled text for marker substrings.
+func (t *thesisRunner) callSections(ctx context.Context, role, name string, sections []promptSection, target callTarget) (model.Report, error) {
 	if err := ctx.Err(); err != nil {
 		return model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, FailureKind: "cancelled", Err: err.Error()}, err
 	}
@@ -97,7 +113,7 @@ func (t *thesisRunner) call(ctx context.Context, role, name, data string, target
 			outputTokens = defaultMaxTokens
 		}
 	}
-	prompt, profile, e := t.preparePrompt(role, name, data, outputTokens)
+	prompt, profile, e := t.preparePrompt(role, name, sections, outputTokens)
 	if e != nil {
 		r := model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, Err: e.Error(), FailureKind: promptFailureKind(e), Prompt: profile}
 		agentStatus(t.ch, name, r.Status, &r)
@@ -234,7 +250,21 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	stages["analysis"] = time.Since(phase).Milliseconds()
 	phase = time.Now()
 	result := &model.IdeasResult{Ideas: []model.TradeIdea{}}
-	chiefData := "Maximum ideas: 5 (single mode: 1). Research:\n" + jsonText(chiefContext(research)) + "\nVerified quant:\n" + qp.CompactBlock() + "\nMacro:\n" + macroR.Stdout + "\nMaximum risk policy (minimum stop/RR and expectancy floors do not apply):\n" + jsonText(cfg.Risk)
+	// chiefSections is the Chief's whole research board, named so each block's
+	// own byte size is visible independently of the others: company_board
+	// (the research itself) dwarfs quant/macro/risk_policy, and the old
+	// Components map could not say so — it recorded "data" as one aggregate
+	// alongside the marker-scanned children it overlapped.
+	chiefSections := []promptSection{
+		{Name: "company_board", Mandatory: true, Body: "Maximum ideas: 5 (single mode: 1). Research:\n" + jsonText(chiefContext(research))},
+		{Name: "quant", Mandatory: true, Body: "\nVerified quant:\n" + qp.CompactBlock()},
+		// Macro is one regime fact per market and carries zero weight in the
+		// base score (basescore.go) — the Chief reads it as context, not
+		// evidence a name is scored against — so it is the one Chief section
+		// that can be dropped without losing anything the board is judged on.
+		{Name: "macro", Mandatory: false, Body: "\nMacro:\n" + macroR.Stdout},
+		{Name: "risk_policy", Mandatory: true, Body: "\nMaximum risk policy (minimum stop/RR and expectancy floors do not apply):\n" + jsonText(cfg.Risk)},
+	}
 	usableDossiers := 0
 	for _, r := range research {
 		if !r.researchFailed() && r.Eligibility == "" && r.Dossier.Ticker != "" {
@@ -253,7 +283,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	chiefModel := chiefE.Model
 	if usableDossiers > 0 {
 		chiefAttemptedEngines = append(chiefAttemptedEngines, string(chiefE.CLI))
-		r, err := t.call(ctx, "thesis-chief", "chief-analyst", chiefData, chiefTarget(chiefE, cfg, chiefInitial))
+		r, err := t.callSections(ctx, "thesis-chief", "chief-analyst", chiefSections, chiefTarget(chiefE, cfg, chiefInitial))
 		statuses = append(statuses, reportStatus(r))
 		if err == nil {
 			result, err = parseThesisIdeas(r.Stdout)
@@ -269,7 +299,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 			result = &model.IdeasResult{Ideas: []model.TradeIdea{}}
 			if api, ok, _ := chiefFallbackAllowed(cfg, chiefE); ok {
 				chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
-				prompt, profile, pe := t.preparePrompt("thesis-chief", "chief-analyst-fallback", chiefData, api.MaxTokens)
+				prompt, profile, pe := t.preparePrompt("thesis-chief", "chief-analyst-fallback", chiefSections, api.MaxTokens)
 				var rr model.Report
 				if pe != nil {
 					rr = model.Report{Agent: "chief-analyst-fallback", CLI: model.CLIApi, Status: model.StatusFailed, FailureKind: promptFailureKind(pe), Err: pe.Error(), Prompt: profile}
@@ -302,7 +332,11 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	findings = append(findings, planFindings...)
 	statuses = append(statuses, planReports...)
 	if len(findings) > 0 && len(result.Ideas) > 0 {
-		r, err := t.call(ctx, "thesis-chief", "chief-analyst-corrective", chiefData+"\nRevise or reject these unsupported constructions. Do not stretch targets.\n"+jsonText(findings)+"\nPrevious response:\n"+jsonText(result), chiefTarget(chiefE, cfg, chiefCorrective))
+		correctiveSections := append(append([]promptSection(nil), chiefSections...),
+			promptSection{Name: "corrective_findings", Mandatory: true, Body: "\nRevise or reject these unsupported constructions. Do not stretch targets.\n" + jsonText(findings)},
+			promptSection{Name: "previous_chief_response", Mandatory: true, Body: "\nPrevious response:\n" + jsonText(result)},
+		)
+		r, err := t.callSections(ctx, "thesis-chief", "chief-analyst-corrective", correctiveSections, chiefTarget(chiefE, cfg, chiefCorrective))
 		statuses = append(statuses, reportStatus(r))
 		if err == nil {
 			if corrected, pe := parseThesisIdeas(r.Stdout); pe == nil {
@@ -855,22 +889,32 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		}
 		fetch([]model.ResearchRequest{{Kind: "document", URL: u, Question: "headline context"}})
 	}
-	base := func() string {
+	// base is the shared skeleton of every researcher/challenger prompt for
+	// this company: nine named sections whose sizes are now visible on their
+	// own terms instead of being re-derived after assembly by scanning for
+	// marker substrings — the old scan had no entry at all for
+	// compaction_originals below, so its bytes silently folded into
+	// previous_dossier, its immediate predecessor in the old concatenation.
+	base := func() []promptSection {
 		out.Temporal = temporalFacts(out, t.run.TS, t.calendar, qp)
 		// Answers to previous requests come before the diagnostics, because they
 		// are the half the model is expected to act on: an operation reported
 		// unsupported or a passage reported absent should not be asked for again.
-		return "Company identity: " + jsonText(model.Candidate{Ticker: ticker, Name: c.Name, Index: c.Index, Sector: c.Sector}) +
-			"\nComputed temporal facts (use these dates and units rather than counting weekdays):\n" + jsonText(out.Temporal) +
-			"\nEvidence (reporting periods must survive synthesis):\n" + jsonText(promptDocumentsAt(out.Documents, 24000, t.run.TS, evidenceClaims(out.Dossier, out.Challenge.Claims...)...)) +
-			"\nIssuer source URLs:\n" + jsonText(t.sources[ticker]) +
-			"\nAnswers to your research requests (every request is answered; do not repeat one answered unsupported, unavailable or already attempted):\n" + jsonText(out.Results) +
-			"\nDossier hash: " + dossierHash(out.Dossier) + "\nPrevious dossier:\n" + jsonText(out.Dossier) +
-			"\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(compactionOriginals(out.Reports)) +
-			"\nRetrieval diagnostics:\n" + jsonText(out.Errors)
+		return []promptSection{
+			{Name: "identity", Mandatory: true, Body: "Company identity: " + jsonText(model.Candidate{Ticker: ticker, Name: c.Name, Index: c.Index, Sector: c.Sector})},
+			{Name: "temporal_facts", Mandatory: true, Body: "\nComputed temporal facts (use these dates and units rather than counting weekdays):\n" + jsonText(out.Temporal)},
+			{Name: "evidence", Mandatory: true, Body: "\nEvidence (reporting periods must survive synthesis):\n" + jsonText(promptDocumentsAt(out.Documents, 24000, t.run.TS, evidenceClaims(out.Dossier, out.Challenge.Claims...)...))},
+			{Name: "source_urls", Mandatory: false, Body: "\nIssuer source URLs:\n" + jsonText(t.sources[ticker])},
+			{Name: "request_results", Mandatory: true, Body: "\nAnswers to your research requests (every request is answered; do not repeat one answered unsupported, unavailable or already attempted):\n" + jsonText(out.Results)},
+			{Name: "dossier_hash", Mandatory: true, Body: "\nDossier hash: " + dossierHash(out.Dossier)},
+			{Name: "previous_dossier", Mandatory: true, Body: "\nPrevious dossier:\n" + jsonText(out.Dossier)},
+			{Name: "compaction_originals", Mandatory: false, Body: "\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(compactionOriginals(out.Reports))},
+			{Name: "retrieval_errors", Mandatory: false, Body: "\nRetrieval diagnostics:\n" + jsonText(out.Errors)},
+		}
 	}
 	for round := 0; round < t.cfg.Research.Rounds; round++ {
-		reports, transport, parsing, e := researchCall(ctx, t, "thesis-researcher", fmt.Sprintf("%s-round-%d", safeName, round+1), base()+fmt.Sprintf("\nRound %d/%d; document attempts %d/%d.", round+1, t.cfg.Research.Rounds, used, t.cfg.Research.Documents), &out.Dossier, dossierSchema)
+		sections := append(base(), promptSection{Name: "round_progress", Mandatory: true, Body: fmt.Sprintf("\nRound %d/%d; document attempts %d/%d.", round+1, t.cfg.Research.Rounds, used, t.cfg.Research.Documents)})
+		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", fmt.Sprintf("%s-round-%d", safeName, round+1), sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
 		if transport == model.OutcomeFailed {
@@ -897,8 +941,18 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	validateEvidenceTime(&out, t.run.TS)
 	validateDossier(&out)
 	addReleaseReactions(&out, qp, series, t.run.TS, t.calendar)
+	// challenge(suffix) called with "-final" (below, after a revision) is the
+	// actual ORCL (+4,109 bytes) overflow site from the September 15 audit —
+	// verified against runs/2026-09-15T17-00-30/data/input-research-4f52434c-
+	// challenge-final.json, whose saved component sizes (evidence 43,826,
+	// previous_dossier 27,705, previous_challenge 9,477, temporal_facts
+	// 6,976 — no plan_hash/idea/dossier fields) match this call's shape, not
+	// reviewPlans' plan-review shape. The plan's own context.md attributed
+	// this overflow to plan review instead; that attribution does not match
+	// the saved artifact and this comment corrects it.
 	challenge := func(suffix string) {
-		reports, transport, parsing, e := researchCall(ctx, t, "thesis-challenger", safeName+"-challenge"+suffix, base()+"\nPrevious challenge:\n"+jsonText(out.Challenge), &out.Challenge, challengeSchema)
+		sections := append(base(), promptSection{Name: "previous_challenge", Mandatory: false, Body: "\nPrevious challenge:\n" + jsonText(out.Challenge)})
+		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-challenger", safeName+"-challenge"+suffix, sections, &out.Challenge, challengeSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
 		if transport == model.OutcomeFailed {
@@ -932,7 +986,8 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	}
 	if out.Challenge.Verdict == "revise" || len(out.Challenge.MaterialIssues) > 0 || len(out.Challenge.Requests) > 0 {
 		fetch(out.Challenge.Requests)
-		reports, transport, parsing, e := researchCall(ctx, t, "thesis-researcher", safeName+"-revision", base()+"\nFinal revision: resolve these issues or stand down. No further retrieval rounds.\n"+jsonText(out.Challenge), &out.Dossier, dossierSchema)
+		sections := append(base(), promptSection{Name: "revision_issues", Mandatory: true, Body: "\nFinal revision: resolve these issues or stand down. No further retrieval rounds.\n" + jsonText(out.Challenge)})
+		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", safeName+"-revision", sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
 		if transport == model.OutcomeFailed {
@@ -1008,9 +1063,20 @@ func (t *thesisRunner) reviewPlans(ctx context.Context, res *model.IdeasResult, 
 		if !ok {
 			continue
 		}
-		data := "Plan hash: " + executionPlanHash(idea) + "\nReview this final execution plan, especially whether evidence supports its target and outcome range in 10–15 sessions. Reject rule-driven target stretching. You are reviewing feasibility, not forecasting probability.\n" + jsonText(idea) + "\nComputed temporal facts:\n" + jsonText(r.Temporal) + "\nDossier hash: " + dossierHash(r.Dossier) + "\nDossier:\n" + jsonText(r.Dossier) + "\nEvidence:\n" + jsonText(promptDocumentsAt(r.Documents, 24000, t.run.TS, evidenceClaims(r.Dossier, r.Challenge.Claims...)...))
+		// Every section here is mandatory, matching this call's pre-existing
+		// behaviour of never trimming anything — a plan review has nothing
+		// safe to drop, since idea/dossier/evidence are exactly what it is
+		// reviewing.
+		sections := []promptSection{
+			{Name: "plan_hash", Mandatory: true, Body: "Plan hash: " + executionPlanHash(idea) + "\nReview this final execution plan, especially whether evidence supports its target and outcome range in 10–15 sessions. Reject rule-driven target stretching. You are reviewing feasibility, not forecasting probability.\n"},
+			{Name: "idea", Mandatory: true, Body: jsonText(idea)},
+			{Name: "temporal_facts", Mandatory: true, Body: "\nComputed temporal facts:\n" + jsonText(r.Temporal)},
+			{Name: "dossier_hash", Mandatory: true, Body: "\nDossier hash: " + dossierHash(r.Dossier)},
+			{Name: "dossier", Mandatory: true, Body: "\nDossier:\n" + jsonText(r.Dossier)},
+			{Name: "evidence", Mandatory: true, Body: "\nEvidence:\n" + jsonText(promptDocumentsAt(r.Documents, 24000, t.run.TS, evidenceClaims(r.Dossier, r.Challenge.Claims...)...))},
+		}
 		var challenge model.ThesisChallenge
-		rs, _, _, e := researchCall(ctx, t, "thesis-challenger", fmt.Sprintf("plan-review-%x-%s", []byte(idea.Ticker), phase), data, &challenge, challengeSchema)
+		rs, _, _, e := researchCallSections(ctx, t, "thesis-challenger", fmt.Sprintf("plan-review-%x-%s", []byte(idea.Ticker), phase), sections, &challenge, challengeSchema)
 		reports = append(reports, rs...)
 		challenge.MaterialIssues = append(challenge.MaterialIssues, validateReviewConsistency(r.Dossier, challenge)...)
 		if r.Dossier.ContractVersion == 2 && (challenge.PlanHash != executionPlanHash(idea) || challenge.TargetAssessment != "supported") {

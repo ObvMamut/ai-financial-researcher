@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -19,8 +18,22 @@ func dossierHash(d model.CandidateDossier) string {
 	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 
-func (t *thesisRunner) preparePrompt(role, name, data string, outputTokens int) (string, *model.PromptProfile, error) {
+func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection, outputTokens int) (string, *model.PromptProfile, error) {
 	budget := t.cfg.Research.Budgets.ForRole(role)
+	// Redact each section before assembly, not the joined string afterward:
+	// assembleSections' sizes must match the bytes that actually reach the
+	// prompt, and a credential redacted post-assembly (e.g. one echoed back
+	// inside a retrieval-diagnostics section) would otherwise change a
+	// section's length after it was already measured.
+	redacted := make([]promptSection, len(sections))
+	for i, sec := range sections {
+		sec.Body = redact.String(sec.Body)
+		redacted[i] = sec
+	}
+	data, sizes, omitted, aerr := assembleSections(redacted, noSectionLimit)
+	if aerr != nil {
+		return "", nil, aerr
+	}
 	prompt, err := t.reg.AssemblePrompt(agents.PromptParams{Role: role, Mode: t.cfg.Mode, RunTS: t.run.TS, DataBlock: data})
 	if err != nil {
 		return "", nil, err
@@ -30,9 +43,17 @@ func (t *thesisRunner) preparePrompt(role, name, data string, outputTokens int) 
 		prompt += "Return requests to Go. Return only one fenced JSON object, with no additional essay.\n"
 	}
 	prompt = redact.String(prompt)
-	data = redact.String(data)
-	profile := &model.PromptProfile{VisibleEvidence: visibleEvidence(data), Version: 1, Bytes: len(prompt), EstimatedTokens: (len(prompt) + 2) / 3, EstimateMethod: "ceil(UTF-8 bytes/3); heuristic, not provider usage or a context guarantee", InputLimit: budget.InputBytes, ResponseLimit: budget.ResponseBytes, OutputTokenLimit: outputTokens, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(prompt))), Components: map[string]int{"instructions": len(prompt) - len(data), "data": len(data)}}
-	for key, size := range promptComponents(data) {
+	// Components is a flat partition of len(prompt): "instructions" (the
+	// persona wrapper and contract line above, i.e. prompt minus data) plus
+	// each section's own exact size, populated directly from sizes rather
+	// than re-derived by scanning data for marker substrings. There is
+	// deliberately no separate "data" aggregate alongside its own children —
+	// that overlap was the historical Components' own defect (a Chief
+	// profile could record "data" 150,876 alongside company_board 142,756
+	// plus macro/quant/risk_policy, summing to more than the prompt itself).
+	// sum(Components) now equals len(prompt) exactly, always.
+	profile := &model.PromptProfile{VisibleEvidence: visibleEvidence(data), Version: 1, Bytes: len(prompt), EstimatedTokens: (len(prompt) + 2) / 3, EstimateMethod: "ceil(UTF-8 bytes/3); heuristic, not provider usage or a context guarantee", InputLimit: budget.InputBytes, ResponseLimit: budget.ResponseBytes, OutputTokenLimit: outputTokens, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(prompt))), Components: map[string]int{"instructions": len(prompt) - len(data)}, Omitted: omitted}
+	for key, size := range sizes {
 		profile.Components[key] = size
 	}
 	if strings.Contains(data, `"omitted_text":true`) {
@@ -200,36 +221,6 @@ func claimReferences(claims []model.ResearchClaim) []model.ResearchClaim {
 		}
 	}
 	return out
-}
-
-func promptComponents(data string) map[string]int {
-	type block struct {
-		at, end int
-		name    string
-	}
-	var blocks []block
-	for marker, name := range map[string]string{
-		"Company identity: ": "identity", "Computed temporal facts (use these dates and units rather than counting weekdays):\n": "temporal_facts",
-		"Evidence (reporting periods must survive synthesis):\n": "evidence", "Issuer source URLs:\n": "source_urls",
-		"Answers to your research requests (every request is answered; do not repeat one answered unsupported, unavailable or already attempted):\n": "request_results",
-		"Dossier hash: ": "dossier_hash", "Previous dossier:\n": "previous_dossier", "Retrieval diagnostics:\n": "retrieval_errors", "Previous challenge:\n": "previous_challenge",
-		"Final revision: resolve these issues or stand down. No further retrieval rounds.\n": "revision_issues", "Maximum ideas: 5 (single mode: 1). Research:\n": "company_board",
-		"Verified quant:\n": "quant", "Macro:\n": "macro", "Maximum risk policy (minimum stop/RR and expectancy floors do not apply):\n": "risk_policy",
-	} {
-		if at := strings.Index(data, marker); at >= 0 {
-			blocks = append(blocks, block{at, at + len(marker), name})
-		}
-	}
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i].at < blocks[j].at })
-	sizes := map[string]int{}
-	for i, b := range blocks {
-		end := len(data)
-		if i+1 < len(blocks) {
-			end = blocks[i+1].at
-		}
-		sizes[b.name] = max(0, end-b.end)
-	}
-	return sizes
 }
 
 func executionPlanHash(idea model.TradeIdea) string {
