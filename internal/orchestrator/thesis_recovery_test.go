@@ -866,6 +866,38 @@ func TestEquivalentDocumentRequestsReuseEvidenceButFutureDatesStayUnavailable(t 
 	}
 }
 
+// readPersona loads a persona's raw markdown directly from agents/, the way
+// the runtime does (internal/agents.Load), without going through the agents
+// package's private Registry — this package only needs the text, not prompt
+// assembly.
+func readPersona(t *testing.T, role string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "agents", role+".md"))
+	if err != nil {
+		t.Fatalf("read persona %q: %v", role, err)
+	}
+	return string(b)
+}
+
+// Task 9 gave the compaction prompt a measured per-field byte budget
+// (perFieldLines in thesis_compaction.go), computed from the response that
+// actually needs shortening. The researcher persona is prepended to that
+// same prompt (preparePrompt -> AssemblePrompt), so it must never restate a
+// fixed claim-count cutoff or invite the model to drop evidence to make
+// room — a dropped counterargument is a worse outcome than an oversized
+// dossier, because the oversized one has a measured recovery path (Task 9's
+// compaction) and the incomplete one does not.
+func TestResearcherPersonaDoesNotReinstateAHardClaimCutoff(t *testing.T) {
+	b := readPersona(t, "thesis-researcher")
+	lower := strings.ToLower(b)
+	for _, banned := range []string{"at most 12 claims", "no more than twelve claims",
+		"discard", "omit contradictory"} {
+		if strings.Contains(lower, banned) {
+			t.Errorf("persona reinstates a cutoff or invites dropping evidence: %q", banned)
+		}
+	}
+}
+
 func TestClaudeDisabledSubscriptionStopsWithoutUnchangedRetry(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "claude")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'Your organization has disabled Claude subscription access for Claude Code' >&2\nexit 1\n"), 0700); err != nil {

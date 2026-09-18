@@ -107,11 +107,19 @@ grounded claims. Use NONE and watchlist/rejected when neither direction qualifie
 
 ## Bounded research contract
 
-Return only the fenced JSON. Aim for at most 12 material claims, 400 characters
-per narrative field, and two exact quotations of at most 300 characters per claim.
-These are writing targets, not reasons to reject a thesis. The total response byte
-budget and maximum three requests remain hard limits. Prefer short claims and
-concise narratives; preserve all material counterevidence, uncertainty and exact
+Return only the fenced JSON. Aim for at most 12 material claims and two exact
+quotations of at most 300 characters per claim. Target roughly 400 characters
+for each narrative field in the schema above, by default. If a later part of
+this message instead states a specific measured byte budget for these fields
+— a compaction request always does — that measured number is the real,
+enforced limit for each field and replaces the 400-character default
+entirely: write to it exactly, not as a second ceiling stacked on top of 400.
+A field that overruns its target is not free — this pipeline gives an
+oversized response exactly one repair, which rewrites the field under a
+tighter, less familiar budget than the one offered here. These are writing
+targets, not reasons to reject a thesis. The total response byte budget and
+maximum three requests remain hard limits. Prefer short claims and concise
+narratives; preserve all material counterevidence, uncertainty and exact
 quotations. Do not repeat source text as an essay or drop evidence to fit.
 
 Expectations and priced-in reasoning must reference claim IDs. Distinguish cited
