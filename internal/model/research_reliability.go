@@ -62,6 +62,33 @@ type ResponseMeasure struct {
 	Normalized    bool   `json:"normalized"`     // false when no payload could be extracted or compacted
 }
 
+// CompactionAllowance records the measured room a compaction call actually
+// has, replacing a fixed "aim for under 400 characters each" instruction that
+// was, on the six real responses that needed it, between 121 bytes too
+// generous and 668 bytes too tight — never the right number for any of them
+// (see internal/orchestrator/thesis_compaction.go's measureCompaction).
+//
+// PayloadBytes and Limit describe the ORIGINAL oversized response being
+// compacted (PayloadBytes is that response's own normalized payload size,
+// the same measure ResponseMeasure.PayloadBytes uses). ProtectedBytes is the
+// floor: that same payload with every one of the twelve narrative fields
+// emptied — the bytes a compaction call may never touch. NarrativeBudget is
+// what remains for those twelve fields combined, after Limit, ProtectedBytes
+// and a measured headroom are accounted for; PerField splits it across the
+// fields that are currently non-empty. Feasible is false when even the
+// per-field floors cannot fit inside NarrativeBudget — a call that must not
+// be dispatched, because no rewrite of the narrative fields alone can reach
+// the budget.
+type CompactionAllowance struct {
+	PayloadBytes    int            `json:"payload_bytes"`
+	Limit           int            `json:"limit"`
+	ProtectedBytes  int            `json:"protected_bytes"`  // payload with all 12 narratives emptied
+	Excess          int            `json:"original_excess"`  // PayloadBytes - Limit
+	NarrativeBudget int            `json:"narrative_budget"` // Limit - ProtectedBytes - headroom
+	PerField        map[string]int `json:"per_field"`        // bytes, not characters
+	Feasible        bool           `json:"feasible"`
+}
+
 type RoleBudget struct {
 	InputBytes    int `toml:"input_bytes" json:"input_bytes"`
 	ResponseBytes int `toml:"response_bytes" json:"response_bytes"`

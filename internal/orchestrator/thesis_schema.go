@@ -231,7 +231,7 @@ func researchCall[T any](ctx context.Context, t *thesisRunner, role, name, data 
 			return []model.DomainStatus{status}, model.OutcomeOK, model.OutcomeFailed, err
 		}
 		if dossier, ok := any(v).(*model.CandidateDossier); ok {
-			recovery, err := compactDossier(ctx, t, role, name, r.Stdout, dossier)
+			recovery, err := compactDossier(ctx, t, role, name, r.Stdout, r.Prompt.ResponseLimit, dossier)
 			if err == nil {
 				status.Contract, status.Payload = "compacted", model.OutcomeOK
 				clearComputedComparisons(dossier)

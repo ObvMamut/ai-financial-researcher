@@ -452,14 +452,19 @@ type DomainStatus struct {
 	Recovery           string            `json:"recovery,omitempty"` // schema_repair or compaction
 	WritingDiagnostics []string          `json:"writing_diagnostics,omitempty"`
 	OriginalNarratives map[string]string `json:"original_narratives,omitempty"` // retained for independent compaction review
-	FailureKind        string            `json:"failure_kind,omitempty"`
-	Prompt             *PromptProfile    `json:"prompt,omitempty"`
-	Domain             string            `json:"domain"`
-	Status             AgentStatus       `json:"status"`
-	Err                string            `json:"err,omitempty"`
-	Grounded           bool              `json:"grounded"` // true if per-ticker verified data was used
-	Attempts           int               `json:"attempts"`
-	Duration           int64             `json:"duration_ms"`
+	// Allowance records what measureCompaction computed for a compaction
+	// attempt: the measured per-field byte budget the model was given, not
+	// the fixed character count earlier runs used. nil for every report that
+	// is not a compaction (Recovery != "compaction").
+	Allowance   *CompactionAllowance `json:"allowance,omitempty"`
+	FailureKind string               `json:"failure_kind,omitempty"`
+	Prompt      *PromptProfile       `json:"prompt,omitempty"`
+	Domain      string               `json:"domain"`
+	Status      AgentStatus          `json:"status"`
+	Err         string               `json:"err,omitempty"`
+	Grounded    bool                 `json:"grounded"` // true if per-ticker verified data was used
+	Attempts    int                  `json:"attempts"`
+	Duration    int64                `json:"duration_ms"`
 	// Tokens is the compatibility total of reported completion tokens across
 	// attempts. Usage retains per-attempt counts and missing-count information.
 	Tokens int          `json:"tokens,omitempty"`
