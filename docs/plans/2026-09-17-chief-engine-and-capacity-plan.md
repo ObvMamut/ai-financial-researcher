@@ -969,7 +969,15 @@ func TestCompactionRefusesADoomedCallWhenProtectedContentAlreadyExceeds(t *testi
 }
 
 func TestCompactionAllowanceIsMeasuredNotAssumed(t *testing.T) {
-	// BAC-shaped: payload 20894, limit 20480, protected 19900.
+	// SYNTHETIC, not BAC: payload 20894, limit 20480, protected 19900.
+	// Corrected (ruling R21): 19,900 is not BAC's protected floor -- BAC's real
+	// floor is 14,756 both before and after compaction, giving a ~5,468-byte
+	// budget. These numbers are a synthetic exercise of the FORMULA only.
+	// Note also that at protected 19900 the twelve 40-byte floors (480) exceed
+	// the 324-byte budget, so this case is Feasible=FALSE and PerField sums to
+	// 480 -- the "Sum(PerField) <= NarrativeBudget" line below cannot hold for
+	// these inputs. Use feasible numbers to assert that, and keep an infeasible
+	// case to exercise the refusal branch.
 	// NarrativeBudget must be limit - protected - headroom, i.e. ~324 bytes,
 	// NOT 12 * 400 characters. Sum(PerField) <= NarrativeBudget.
 }
@@ -985,7 +993,12 @@ func TestPerFieldAllocationIsProportionalWithAFloorForNonEmptyFields(t *testing.
 ```go
 func TestCompactionInputCapacityIsCheckedBeforeDispatch(t *testing.T) {
 	// The compaction prompt embeds the whole original response. With a
-	// researcher input budget of 98,304 and a 23,583-byte original plus
+	// researcher input budget of 98,304 and a large original plus
+	// (Corrected, ruling R23: the 23,583 figure previously here is the
+	// manifest's TTD COMPACTION-RESULT raw_bytes, not an original -- the same
+	// result-vs-original category error the Task 9 amendment corrects for
+	// Step 7. A 23,551-byte raw response assembles to a 36,277-byte prompt,
+	// which does NOT overflow 98,304; size the synthetic original accordingly.)
 	// instructions, assert the input check runs and, when it fails, the
 	// outcome is FailureKind "input_capacity" with zero attempts — not a
 	// generic compaction failure.
@@ -1045,7 +1058,13 @@ git commit -am "Give compaction the space it actually has"
 
 - [ ] **Step 1: Read the whole persona first**
 
-154 lines. The twelve narrative fields are `long_case`, `short_case`, `no_trade_case`, `hypothesis`, `changed`, `expectations`, `underappreciated`, `mechanism`, `priced_in`, `counterargument`, `invalidation`, `catalyst_window`. The observed failure shape is the same fact restated across several of them.
+154 lines. The twelve narrative fields are `long_case`, `short_case`, `no_trade_case`, `hypothesis`, `changed`, `expectations`, `underappreciated`, `mechanism`, `priced_in`, `counterargument`, `invalidation`, `catalyst_window`.
+
+> **Corrected (ruling R20).** This step originally asserted "the observed failure shape is the same fact restated across several of them." That was never measured, and it is false. Across all six oversized dossiers, verbatim 8-gram overlap between any two narrative fields is 0-4 shingles out of ~1,000; loose 4-gram overlap with stopwords removed is 0.5%-3.9%; narrative text appearing anywhere in `claims` is 0.0%-0.5%. There is no repetition to remove.
+>
+> The measured failure is uniform overshoot of the existing advisory: **66 of 72 narrative fields exceed 400 characters**, by 25%-52%, while every other writing target is honoured comfortably (quotations average 85-155 chars against a 300-char allowance). Truncating every narrative to exactly 400 characters would have fitted **four of the six** under the limit (LLY, BAC, REGN, NOKIA.HE); TTD and 9988.HK would not, because their protected content alone is 16,476 and 16,341 bytes.
+>
+> A second defect, found by Task 9's review: `agents/thesis-researcher.md:110-111`'s fixed "400 characters per narrative field" is prepended to **every compaction prompt** (`compactDossier` -> `preparePrompt` -> `AssemblePrompt`), so after Task 9 it contradicts the measured per-field budgets sent below it. Reconciling the two is now this task's main work. See `task-10-context.md`.
 
 - [ ] **Step 2: Add guidance, not a limit**
 
