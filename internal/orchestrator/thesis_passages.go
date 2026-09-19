@@ -340,6 +340,14 @@ func selectedSpans(original, selected string) []model.EvidenceSpan {
 // Evidence after the run anchor remains in saved artifacts but cannot inform a
 // model's conclusion. Preserve an explicit unavailable record in prompt views.
 func promptDocumentsAt(docs []model.EvidenceDocument, budget int, anchor time.Time, claims ...model.ResearchClaim) []model.EvidenceDocument {
+	return promptDocuments(visibleAt(docs, anchor), budget, claims...)
+}
+
+// visibleAt applies that rule on its own, without spending a text budget, so
+// a caller that has to measure a company's required quotations before it
+// knows what budget to give it (thesis_board.go) measures them against the
+// same documents promptDocumentsAt would have used.
+func visibleAt(docs []model.EvidenceDocument, anchor time.Time) []model.EvidenceDocument {
 	visible := append([]model.EvidenceDocument(nil), docs...)
 	for i := range visible {
 		if !anchor.IsZero() && visible[i].PublishedAt.After(anchor) {
@@ -349,7 +357,7 @@ func promptDocumentsAt(docs []model.EvidenceDocument, budget int, anchor time.Ti
 			visible[i].Links = nil
 		}
 	}
-	return promptDocuments(visible, budget, claims...)
+	return visible
 }
 
 func evidenceClaims(d model.CandidateDossier, extra ...model.ResearchClaim) []model.ResearchClaim {

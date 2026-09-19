@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/agents"
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -16,6 +15,39 @@ import (
 func dossierHash(d model.CandidateDossier) string {
 	b, _ := json.Marshal(d)
 	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+// wrapPrompt puts one already-assembled data block inside its role's persona
+// and contract lines. It is split out of preparePrompt because the Chief has
+// to know how many bytes that wrapper costs *before* it can decide how large
+// a board fits inside the remainder (promptWrapperBytes below); measuring the
+// wrapper any other way would be a reconstruction of this function rather
+// than this function.
+func (t *thesisRunner) wrapPrompt(role, data string) (string, error) {
+	prompt, err := t.reg.AssemblePrompt(agents.PromptParams{Role: role, Mode: t.cfg.Mode, RunTS: t.run.TS, DataBlock: data})
+	if err != nil {
+		return "", err
+	}
+	prompt += fmt.Sprintf("\nResearch contract: use only supplied evidence; no independent tools. Maximum response %d UTF-8 bytes.\n", t.cfg.Research.Budgets.ForRole(role).ResponseBytes)
+	if strings.HasPrefix(role, "thesis-") {
+		prompt += "Return requests to Go. Return only one fenced JSON object, with no additional essay.\n"
+	}
+	return redact.String(prompt), nil
+}
+
+// promptWrapperBytes is what wrapPrompt costs for one role, independently of
+// what it wraps: a one-byte probe measures it exactly, because the wrapper is
+// literal concatenation either side of the data block. The probe is non-empty
+// on purpose — AssemblePrompt writes a thesis role's data block with a
+// newline either side only when there is a data block, and the Chief always
+// has one.
+func (t *thesisRunner) promptWrapperBytes(role string) (int, error) {
+	const probe = "\x01"
+	prompt, err := t.wrapPrompt(role, probe)
+	if err != nil {
+		return 0, err
+	}
+	return len(prompt) - len(probe), nil
 }
 
 func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection, outputTokens int) (string, *model.PromptProfile, error) {
@@ -34,15 +66,10 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 	if aerr != nil {
 		return "", nil, aerr
 	}
-	prompt, err := t.reg.AssemblePrompt(agents.PromptParams{Role: role, Mode: t.cfg.Mode, RunTS: t.run.TS, DataBlock: data})
+	prompt, err := t.wrapPrompt(role, data)
 	if err != nil {
 		return "", nil, err
 	}
-	prompt += fmt.Sprintf("\nResearch contract: use only supplied evidence; no independent tools. Maximum response %d UTF-8 bytes.\n", budget.ResponseBytes)
-	if strings.HasPrefix(role, "thesis-") {
-		prompt += "Return requests to Go. Return only one fenced JSON object, with no additional essay.\n"
-	}
-	prompt = redact.String(prompt)
 	// Components is a flat partition of len(prompt): "instructions" (the
 	// persona wrapper and contract line above, i.e. prompt minus data) plus
 	// each section's own exact size, populated directly from sizes rather
@@ -78,66 +105,6 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded for %s: %d > %d bytes; required context cannot be omitted", role, len(prompt), budget.InputBytes)}
 	}
 	return prompt, profile, nil
-}
-
-// Prompt views never alter full research artifacts. Only cited sources enter
-// selection; failed candidates remain explicitly present with their outcomes.
-type chiefCompany struct {
-	Candidate   model.Candidate          `json:"candidate"`
-	Outcome     model.ResearchOutcome    `json:"outcome"`
-	Eligibility string                   `json:"eligibility,omitempty"`
-	Dossier     *model.CandidateDossier  `json:"dossier,omitempty"`
-	Challenge   *model.ThesisChallenge   `json:"challenge,omitempty"`
-	Temporal    researchTimeFacts        `json:"temporal_facts"`
-	Documents   []model.EvidenceDocument `json:"documents,omitempty"`
-}
-
-func chiefContext(research []thesisResearch) []chiefCompany {
-	out := make([]chiefCompany, 0, len(research))
-	for _, r := range research {
-		c := r.Candidate
-		c.Reason = ""
-		c.Bias = ""
-		v := chiefCompany{Candidate: c, Outcome: r.Outcome, Eligibility: r.Eligibility, Temporal: r.Temporal}
-		if !r.researchFailed() && r.Eligibility == "" {
-			d := r.Dossier
-			d.Requests = nil
-			ch := r.Challenge
-			v.Dossier = &d
-			v.Challenge = &ch
-			claims := evidenceClaims(d, ch.Claims...)
-			ids := map[string]bool{}
-			for _, claim := range claims {
-				for _, id := range claim.EvidenceIDs {
-					ids[id] = true
-				}
-			}
-			for _, e := range d.Events {
-				ids[e.EvidenceID] = true
-			}
-			for _, doc := range r.Documents {
-				if ids[doc.ID] {
-					doc.Links = nil
-					v.Documents = append(v.Documents, doc)
-				}
-			}
-			anchor, _ := time.Parse(time.RFC3339, r.Temporal.AsOf)
-			v.Documents = promptDocumentsAt(v.Documents, 9000, anchor, claims...)
-			d.Claims = claimReferences(d.Claims)
-			ch.Claims = claimReferences(ch.Claims)
-			ages := v.Temporal.EvidenceAges[:0:0]
-			for _, a := range v.Temporal.EvidenceAges {
-				if ids[a.EvidenceID] {
-					ages = append(ages, a)
-				}
-			}
-			v.Temporal.EvidenceAges = ages
-		} else {
-			v.Temporal.EvidenceAges = nil
-		}
-		out = append(out, v)
-	}
-	return out
 }
 
 // responseCapacity gates a response on the bytes its budget actually bounds:

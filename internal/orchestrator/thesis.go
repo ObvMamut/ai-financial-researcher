@@ -255,21 +255,56 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	// (the research itself) dwarfs quant/macro/risk_policy, and the old
 	// Components map could not say so — it recorded "data" as one aggregate
 	// alongside the marker-scanned children it overlapped.
-	chiefSections := []promptSection{
-		{Name: "company_board", Mandatory: true, Body: "Maximum ideas: 5 (single mode: 1). Research:\n" + jsonText(chiefContext(research))},
-		{Name: "quant", Mandatory: true, Body: "\nVerified quant:\n" + qp.CompactBlock()},
-		// Macro is one regime fact per market and carries zero weight in the
-		// base score (basescore.go) — the Chief reads it as context, not
-		// evidence a name is scored against — so it is the one Chief section
-		// that can be dropped without losing anything the board is judged on.
-		{Name: "macro", Mandatory: false, Body: "\nMacro:\n" + macroR.Stdout},
-		{Name: "risk_policy", Mandatory: true, Body: "\nMaximum risk policy (minimum stop/RR and expectancy floors do not apply):\n" + jsonText(cfg.Risk)},
-	}
+	//
+	// The board is one section rather than one section per company. Twelve
+	// per-company sections would have to be namespaced to survive
+	// assembleSections' duplicate-name rejection, would put the enclosing
+	// array's own brackets and separators in no section at all, and — the
+	// deciding reason — would be individually droppable, which is precisely
+	// what this board must never do: every selected company reaches the Chief
+	// with its outcome, failed and deferred included. Allocation happens
+	// inside chiefBoard, over evidence, before assembly; assembleSections'
+	// tail-drop is the wrong instrument for it.
+	boardPrefix := "Maximum ideas: 5 (single mode: 1). Research:\n"
+	quantSection := promptSection{Name: "quant", Mandatory: true, Body: "\nVerified quant:\n" + qp.CompactBlock()}
+	// Macro is one regime fact per market and carries zero weight in the
+	// base score (basescore.go) — the Chief reads it as context, not
+	// evidence a name is scored against — so it is the one Chief section
+	// that can be dropped without losing anything the board is judged on.
+	// The board budget below nevertheless charges itself macro's actual
+	// measured bytes, so a board sized with macro present is a board macro is
+	// never dropped from: the drop would only fire on an overflow this
+	// budget has already prevented.
+	macroSection := promptSection{Name: "macro", Mandatory: false, Body: "\nMacro:\n" + macroR.Stdout}
+	riskSection := promptSection{Name: "risk_policy", Mandatory: true, Body: "\nMaximum risk policy (minimum stop/RR and expectancy floors do not apply):\n" + jsonText(cfg.Risk)}
 	usableDossiers := 0
 	for _, r := range research {
 		if !r.researchFailed() && r.Eligibility == "" && r.Dossier.Ticker != "" {
 			usableDossiers++
 		}
+	}
+	boardBudget, e := t.chiefBoardBudget([]promptSection{quantSection, macroSection, riskSection}, boardPrefix)
+	if e != nil {
+		return e
+	}
+	board, alloc, boardErr := chiefBoard(research, boardBudget)
+	if e = run.WriteDataPack("chief-board", alloc); e != nil {
+		return e
+	}
+	if boardErr != nil {
+		// A board whose required records and quotations do not fit is a
+		// capacity failure with a named cause, not a board to quietly thin.
+		// The named cause is recorded here; the failure itself is left to
+		// preparePrompt, which refuses the assembled prompt for the primary
+		// and the fallback alike and persists a zero-attempt input_capacity
+		// report for each. Skipping synthesis here instead would erase that.
+		errs = append(errs, "chief: "+boardErr.Error())
+	}
+	chiefSections := []promptSection{
+		{Name: "company_board", Mandatory: true, Body: boardPrefix + jsonText(board)},
+		quantSection,
+		macroSection,
+		riskSection,
 	}
 	// chiefAttemptedEngines/chiefAcceptedEngine/chiefModel are Task 6's
 	// provenance trail — see the equivalent tracking in orchestrator.go's

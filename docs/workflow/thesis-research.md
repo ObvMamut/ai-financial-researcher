@@ -511,6 +511,38 @@ If required quotations cannot fit, `omitted_claim_ids` records the omission and
 preflight stops the call. Future-dated publications retain an unavailable record
 but their content is excluded from model inputs.
 
+The Chief board is budgeted for the whole board at once, not per company. Its
+budget is the Chief input limit less the measured bytes of the persona wrapper,
+contract lines and every other assembled section, macro included whether or not
+macro is droppable. Every company's record is projected to what the Chief decides
+from. Retained: candidate, outcome and eligibility for every selected company;
+dossier status, preferred direction, evidence quality, entry conditions,
+monitoring and unresolved items; each claim's ID, kind, evidence IDs, numerical
+comparison and per-passage issuer-role attribution; the challenge verdict,
+material issues, requests, condition/compaction/target assessments and every
+per-claim assessment and attribution; computed temporal facts; and each cited
+source's identity, attribution, reporting period, publication date and accepted
+quotations. Projected away, each recorded by name in the record's
+`projected_away`: the researcher's working narrative (hypothesis, changed,
+expectations, underappreciated, mechanism, priced in, counterargument); claim
+text and event passages whose own quotation is present in source text; the
+reason on a claim review that is both supported and attribution-confirmed, which
+a supported verdict already requires of every review; evidence ages derivable
+from `as_of` and `published_at`; and source scaffolding beyond identity and
+attribution (URL, retrieval time, page title, links, parent). An absent field
+whose name is not in `projected_away` was never written.
+
+Allocation is two passes over the whole board. Every company's records and every
+cited claim's required quotations are reserved first; if those alone exceed the
+budget the call fails as an input-capacity failure naming each company and its
+required bytes, never as a silent trim. The remainder funds, in order, each
+dossier's case narrative (long, short and no-trade cases, catalyst window,
+invalidation) whole field by whole field, and then optional source context,
+divided across companies in proportion to each one's unmet need rather than
+spent company by company. A company's optional appetite is capped at its
+required quotations plus 9,000 characters. Allocation is independent of the
+order companies appear in, and is persisted per run as `chief-board`.
+
 Prompt profiles include component byte sizes, limits, heuristic token estimates,
 SHA-256 and `visible_evidence`. Only profiles for attempted calls contribute to
 model visibility counts. Usage stays separate and retains unknown/incomplete
