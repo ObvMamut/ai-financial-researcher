@@ -35,9 +35,12 @@ import (
 //     withheld rather than as never written.
 //  2. an ALLOCATION, which is global: source text is reserved for every
 //     cited claim's required quotations across the whole board first, and
-//     only the remainder is spent on optional context, split in proportion to
-//     what each company still wants rather than handed out company by company
-//     until it runs out.
+//     only the remainder is spent on optional context. That remainder funds
+//     two tiers — the dossiers' case narrative, by rank across the whole
+//     board, and then source context, split in proportion to what each
+//     company still wants — and what the first tier cannot spend flows to the
+//     second rather than being burned. Neither tier is ever handed out
+//     company by company until it runs out.
 //
 // The order matters. The projection is what makes the required floor small
 // enough for twelve companies to fit at all; the allocation is what stops the
@@ -87,6 +90,8 @@ const (
 // A field is funded whole or not at all. Half a case is not half an argument,
 // and a narrative cut mid-sentence is the "tiny prefix masquerading as
 // sufficient source reading" that promptDocuments already refuses to produce.
+// That indivisibility is why fundCaseNarrative funds this order by rank
+// across the whole board rather than by splitting a pool between companies.
 func caseNarrative(d *model.CandidateDossier) []*string {
 	return []*string{&d.LongCase, &d.ShortCase, &d.NoTradeCase, &d.CatalystWindow, &d.Invalidation}
 }
@@ -123,6 +128,61 @@ func (t *thesisRunner) chiefBoardBudget(other []promptSection, prefix string) (i
 		used += len(redact.String(sec.Body))
 	}
 	return t.cfg.Research.Budgets.ForRole("thesis-chief").InputBytes - used, nil
+}
+
+// chiefPromptBuilder assembles the Chief's prompt sections around a board
+// sized for what the rest of THAT call carries — which is not the same for
+// every Chief call.
+//
+// The Chief is called up to twice on a thesis run: once to produce ideas, and
+// once to correct them. The corrective call sends the same four sections plus
+// two more MANDATORY ones, `corrective_findings` and `previous_chief_response`.
+// Because the board is deliberately built to spend its whole budget, anything
+// appended after it is appended past the input limit: measured on the twelve-
+// company September 15 board, the initial prompt lands 1,015 bytes under the
+// 196,608-byte limit, and even a deliberately modest corrective payload (five
+// ideas with a 600-character `why` and three 200-character findings) is 4,421
+// bytes. From eight usable dossiers upward the corrective call could therefore
+// never be assembled at all, and finalizeThesis deleted every idea carrying a
+// non-observational finding instead of letting the Chief revise it — reported
+// as a component-less input_capacity error one call downstream, which is the
+// very diagnostic failure this board exists to remove.
+//
+// Sizing the board for the extra sections at the moment they are known, rather
+// than reserving a flat allowance in chiefBoardBudget, is what keeps the
+// initial call whole. The reservation would have to be an upper bound on a
+// previous response (the Chief's own ResponseBytes is 24 KB) plus a findings
+// allowance, and a twelve-company board's required floor already occupies
+// 169,696 of its 180,944 bytes: subtracting a 24 KB reserve from every board
+// would turn a board that fits today into a capacity error. The corrective
+// board instead gives up only optional context, and only on the call that
+// needs the room.
+type chiefPromptBuilder struct {
+	budget   int
+	prefix   string
+	other    []promptSection
+	research []thesisResearch
+}
+
+func (t *thesisRunner) chiefPrompt(research []thesisResearch, other []promptSection, prefix string) (chiefPromptBuilder, error) {
+	budget, err := t.chiefBoardBudget(other, prefix)
+	return chiefPromptBuilder{budget: budget, prefix: prefix, other: other, research: research}, err
+}
+
+// sections returns the Chief's sections for one call, with the board budgeted
+// for whatever extra mandatory sections that call appends. extra is measured
+// redacted, exactly as chiefBoardBudget measures every other section and
+// exactly as preparePrompt will measure it.
+func (b chiefPromptBuilder) sections(extra ...promptSection) ([]promptSection, boardAllocation, error) {
+	reserve := 0
+	for _, sec := range extra {
+		reserve += len(redact.String(sec.Body))
+	}
+	board, alloc, err := chiefBoard(b.research, b.budget-reserve)
+	out := make([]promptSection, 0, len(b.other)+len(extra)+1)
+	out = append(out, promptSection{Name: "company_board", Mandatory: true, Body: b.prefix + jsonText(board)})
+	out = append(out, b.other...)
+	return append(out, extra...), alloc, err
 }
 
 // chiefEvidence is the Chief's view of one cited source. It exists rather
@@ -222,13 +282,19 @@ type boardShare struct {
 // boardAllocation is the audit trail for one board: what the budget was, what
 // the required floor cost, and what each company was granted on top of it.
 type boardAllocation struct {
-	TextBudget    int          `json:"text_budget"`
-	RequiredBytes int          `json:"required_bytes"`
-	BoardBytes    int          `json:"board_bytes"`
-	OptionalPool  int          `json:"optional_pool_bytes"`
-	Attempts      int          `json:"fit_attempts"`
-	Projected     []string     `json:"projected_away"`
-	Companies     []boardShare `json:"companies"`
+	TextBudget    int `json:"text_budget"`
+	RequiredBytes int `json:"required_bytes"`
+	BoardBytes    int `json:"board_bytes"`
+	OptionalPool  int `json:"optional_pool_bytes"`
+	// NarrativeBytes is what the case-narrative tier took out of
+	// OptionalPool; the rest of the pool went to source context. Both tiers
+	// are recorded because the split between them is the allocation decision
+	// an operator most needs to see, and a per-company grant alone cannot
+	// show it.
+	NarrativeBytes int          `json:"case_narrative_bytes"`
+	Attempts       int          `json:"fit_attempts"`
+	Projected      []string     `json:"projected_away"`
+	Companies      []boardShare `json:"companies"`
 }
 
 // boardPlan is one company's inputs to the allocation, computed once so that
@@ -290,6 +356,22 @@ func planCompany(r thesisResearch) boardPlan {
 	return p
 }
 
+// boardBytes measures a board the way preparePrompt will measure it: after
+// redaction. chiefBoardBudget subtracts every other section's *redacted*
+// length, because that is the body assembleSections receives, and the board
+// has to be measured on the same side of the same function — redact.String
+// substitutes a 21-byte placeholder, so a registered credential of 8 to 20
+// characters echoed back into evidence text or retained in a document's
+// `error` makes the board GROW after it was checked. (internal/redact's own
+// package doc cites the live case: AlphaVantage answers a rejected call with
+// prose quoting the whole query string, apikey included.) A board measured
+// raw would then overflow the prompt it was just certified to fit, and
+// surface as a component-less input_capacity failure — the exact diagnostic
+// the board budget exists to replace.
+func boardBytes(board []chiefCompany) int {
+	return len(redact.String(jsonText(board)))
+}
+
 // requiredChars is the character cost of every cited claim's quotations for
 // one company — the same reservation promptDocuments makes internally, read
 // out before the call so the board can reserve all twelve at once.
@@ -330,7 +412,7 @@ func chiefBoard(research []thesisResearch, textBudget int) ([]chiefCompany, boar
 	}
 	alloc := boardAllocation{TextBudget: textBudget}
 	board := renderBoard(plans, nil, nil)
-	alloc.RequiredBytes = len(jsonText(board))
+	alloc.RequiredBytes = boardBytes(board)
 	alloc.BoardBytes = alloc.RequiredBytes
 	if alloc.RequiredBytes > textBudget {
 		// The board is returned with the error, not instead of it. The caller
@@ -344,26 +426,32 @@ func chiefBoard(research []thesisResearch, textBudget int) ([]chiefCompany, boar
 			"input capacity exceeded: the Chief board's required records and quotations need %d bytes against %d available for %d companies (%s); no optional narrative or source context had been added",
 			alloc.RequiredBytes, textBudget, len(plans), strings.Join(requiredCostReport(plans), ", "))}
 	}
-	narrativeNeeds, contextNeeds := make([]int, len(plans)), make([]int, len(plans))
+	contextNeeds := make([]int, len(plans))
 	for i, p := range plans {
-		narrativeNeeds[i], contextNeeds[i] = p.narrative, p.need
+		contextNeeds[i] = p.need
 	}
 	pool := textBudget - alloc.RequiredBytes
 	narrative, context := make([]int, len(plans)), make([]int, len(plans))
 	for attempt := 1; attempt <= boardFitAttempts; attempt++ {
 		alloc.Attempts, alloc.OptionalPool = attempt, pool
-		// The case narrative is funded before source context, and what it is
-		// granted — not what it manages to spend — is what leaves the pool, so
-		// the split between the two tiers is a function of the whole need
-		// vector rather than of the order companies are filled in.
-		narrative = splitByNeed(narrativeNeeds, pool)
+		// The case narrative is funded first, by rank across the whole board
+		// (fundCaseNarrative), and what it actually SPENDS — which for a
+		// rank-funded grant is the grant, to the byte — is what leaves the
+		// pool. Everything it cannot use goes to source context, which is
+		// divisible and can always absorb it. Granting an indivisible tier a
+		// share and then never reclaiming what that share failed to buy is
+		// what burned the whole optional pool at the calibrated budget: the
+		// board came out at exactly the required floor with 100% of the pool
+		// spent on nothing.
+		narrative = fundCaseNarrative(plans, pool)
 		granted := 0
 		for _, n := range narrative {
 			granted += n
 		}
+		alloc.NarrativeBytes = granted
 		context = splitByNeed(contextNeeds, pool-granted)
 		next := renderBoard(plans, narrative, context)
-		size := len(jsonText(next))
+		size := boardBytes(next)
 		if size <= textBudget {
 			board, alloc.BoardBytes = next, size
 			break
@@ -379,13 +467,19 @@ func chiefBoard(research []thesisResearch, textBudget int) ([]chiefCompany, boar
 		if spent > 0 {
 			scaled = pool * (textBudget - alloc.RequiredBytes) / spent
 		}
+		// The strict-progress floor is pool-1, so a rescale that fails to get
+		// under budget steps down by exactly one byte per attempt and then
+		// collapses to zero on the last one. There is deliberately no
+		// intermediate between "converged" and "no optional context at all":
+		// a pool the rescale cannot price is a pool this loop has no evidence
+		// about, and the floor board is the one size already proven to fit.
 		pool = min(scaled, pool-1)
 		if pool < 0 || attempt == boardFitAttempts {
 			pool = 0
 		}
 		if pool == 0 {
-			narrative, context = splitByNeed(narrativeNeeds, 0), splitByNeed(contextNeeds, 0)
-			board, alloc.BoardBytes, alloc.OptionalPool = renderBoard(plans, narrative, context), alloc.RequiredBytes, 0
+			narrative, context = fundCaseNarrative(plans, 0), splitByNeed(contextNeeds, 0)
+			board, alloc.BoardBytes, alloc.OptionalPool, alloc.NarrativeBytes = renderBoard(plans, narrative, context), alloc.RequiredBytes, 0, 0
 			break
 		}
 	}
@@ -408,7 +502,7 @@ func requiredCostReport(plans []boardPlan) []string {
 	}
 	rows := make([]row, 0, len(plans))
 	for _, p := range plans {
-		rows = append(rows, row{p.research.Candidate.Ticker, len(jsonText(p.render(0, 0)))})
+		rows = append(rows, row{p.research.Candidate.Ticker, len(redact.String(jsonText(p.render(0, 0))))})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].bytes > rows[j].bytes })
 	out := make([]string, 0, len(rows))
@@ -416,6 +510,68 @@ func requiredCostReport(plans []boardPlan) []string {
 		out = append(out, fmt.Sprintf("%s %d", r.ticker, r.bytes))
 	}
 	return out
+}
+
+// fundCaseNarrative funds the board's case narrative by RANK rather than by
+// company: caseNarrative's fields are funded for every company or for none,
+// in the order that function states, for as long as the whole board's cost of
+// the next rank still fits the allowance.
+//
+// Two reasons, and the first is arithmetic. A narrative field is indivisible —
+// half a case is not half an argument — so a per-company share of a small pool
+// buys nothing at all while consuming all of it. Measured on the twelve-company
+// September 15 board, whose fields run 183 to 1,017 bytes: a 1,000-byte pool
+// split proportionally granted ~83 bytes per company, funded zero fields, and
+// returned nothing, so the board came out at exactly the required floor with
+// 100% of its pool spent on nothing; at the calibrated production pool of
+// 11,248 the same split granted ~937 bytes per company and left 1,015 bytes
+// unspendable, which is why source context was never funded in production at
+// all. Funding by rank spends in the only units this tier can use, and hands
+// what it cannot use to source context, which is divisible.
+//
+// The second reason is that the Chief's job is to RANK twelve companies
+// against each other. A board where some companies carry a short case and
+// others do not invites the comparison to be decided by which argument was
+// funded rather than by which is stronger; funding by rank keeps the board
+// symmetric, so every company is argued for to the same depth or to none.
+//
+// The result is a pure function of the whole needs matrix and the allowance,
+// never of a company's position in the slice. Each company's grant is exactly
+// the sum of the ranks funded, and render spends a grant on whole fields in
+// this same order, so the grant is spent to the byte: nothing granted here can
+// go unspent, which is the property the proportional split could not offer.
+func fundCaseNarrative(plans []boardPlan, allowance int) []int {
+	grants := make([]int, len(plans))
+	costs := make([][]int, len(plans))
+	ranks := 0
+	for i, p := range plans {
+		if !p.usable {
+			continue
+		}
+		d := p.research.Dossier
+		for _, field := range caseNarrative(&d) {
+			costs[i] = append(costs[i], len(*field))
+		}
+		ranks = max(ranks, len(costs[i]))
+	}
+	for rank := 0; rank < ranks; rank++ {
+		cost := 0
+		for i := range plans {
+			if rank < len(costs[i]) {
+				cost += costs[i][rank]
+			}
+		}
+		if cost > allowance {
+			break
+		}
+		allowance -= cost
+		for i := range plans {
+			if rank < len(costs[i]) {
+				grants[i] += costs[i][rank]
+			}
+		}
+	}
+	return grants
 }
 
 // splitByNeed divides pool across needs in proportion to each need, capped at
@@ -487,11 +643,21 @@ func (p boardPlan) render(prose, extra int) chiefCompany {
 		return v
 	}
 	docs := promptDocuments(p.docs, p.required+extra, p.claims...)
-	omitted := map[string]bool{}
+	// placed is the text each cited source actually contributes to this
+	// prompt. It is what decides whether a claim's own words may be dropped,
+	// because "the quotation carries the claim" is a statement about this
+	// prompt and not about the research artifact. Asking OmittedClaimIDs
+	// instead cannot answer it: that list is populated only when a quotation
+	// was present in the source and did not fit, and render always calls
+	// promptDocuments with at least p.required, so it is never populated from
+	// the board at all. The cases it misses are the live ones — a document
+	// published after the run anchor (visibleAt blanks its text) and a
+	// document that failed retrieval (requiredSpans returns nothing for it) —
+	// where the quote exists on the dossier, reaches no document, and the
+	// claim would be shipped with neither text nor quotation.
+	placed := make(map[string]string, len(docs))
 	for _, d := range docs {
-		for _, id := range d.OmittedClaimIDs {
-			omitted[id] = true
-		}
+		placed[d.ID] = d.Text
 	}
 	v.Documents = chiefEvidenceView(docs)
 	v.Projected = append(v.Projected, projectedScaffold)
@@ -533,16 +699,17 @@ func (p boardPlan) render(prose, extra int) chiefCompany {
 	droppedText, droppedEvents := false, false
 	for i := range claims {
 		// Ruling R4: "claim text already carried by its cited passage." Only
-		// where it actually is — a claim whose quotation did not fit keeps its
-		// own words, because nothing else in the prompt then says what it
-		// claimed.
+		// where it actually is — the test is whether the quotation reached a
+		// rendered document in this prompt, not whether the dossier recorded
+		// one. A claim whose quotation is nowhere keeps its own words, because
+		// nothing else in the prompt then says what it claimed.
 		quoted := false
 		for _, passage := range p.research.Dossier.Claims[i].Passages {
-			if passage.Quote != "" {
+			if passage.Quote != "" && strings.Contains(placed[passage.EvidenceID], passage.Quote) {
 				quoted = true
 			}
 		}
-		if quoted && !omitted[claims[i].ID] {
+		if quoted {
 			claims[i].Text = ""
 			droppedText = true
 		}
@@ -552,8 +719,9 @@ func (p boardPlan) render(prose, extra int) chiefCompany {
 	for i := range events {
 		// An event passage is a verbatim source excerpt that evidenceClaims
 		// already reserved as a required quotation, so it is in the document
-		// text. Spec: accepted quotations appear in source text once.
-		if events[i].Passage != "" && !omitted[fmt.Sprintf("event-%d", i)] {
+		// text — when the document has text at all. Spec: accepted quotations
+		// appear in source text once; once is not zero.
+		if events[i].Passage != "" && strings.Contains(placed[events[i].EvidenceID], events[i].Passage) {
 			events[i].Passage = ""
 			droppedEvents = true
 		}
@@ -572,11 +740,17 @@ func (p boardPlan) render(prose, extra int) chiefCompany {
 	reviews := append([]model.ClaimReview(nil), ch.ClaimReviews...)
 	droppedReviews := false
 	for i := range reviews {
-		// compactReviewProblems already refuses a supported verdict that
-		// retains a disputed or unresolved claim, so on a supported challenge
-		// every review reason restates a conclusion Go has verified. A review
-		// that is not clean keeps its reason: that one is the fact the Chief
-		// has to weigh.
+		// A review that is both supported and attribution-confirmed has no
+		// content left beyond the two verdicts recorded beside it, so its
+		// prose reason restates them. This fires per review and does not rest
+		// on the overall verdict: compactReviewProblems' rule
+		// (thesis_contract.go:79) is conditioned on the challenge being
+		// `supported` and runs only for ContractVersion 2, so on a revise or
+		// reject challenge the clean reviews lose their reasons with no
+		// Go-side rule behind the drop. That is intended — R4's must-survive
+		// list names the per-claim assessment and attribution, both retained,
+		// and the reason is prose. A review that is not clean keeps its
+		// reason: that one is the fact the Chief has to weigh.
 		if reviews[i].Assessment == "supported" && reviews[i].Attribution == "confirmed" {
 			reviews[i].Reason = ""
 			droppedReviews = true

@@ -527,7 +527,7 @@ quotations. Projected away, each recorded by name in the record's
 expectations, underappreciated, mechanism, priced in, counterargument); claim
 text and event passages whose own quotation is present in source text; the
 reason on a claim review that is both supported and attribution-confirmed, which
-a supported verdict already requires of every review; evidence ages derivable
+restates the two verdicts recorded beside it; evidence ages derivable
 from `as_of` and `published_at`; and source scaffolding beyond identity and
 attribution (URL, retrieval time, page title, links, parent). An absent field
 whose name is not in `projected_away` was never written.

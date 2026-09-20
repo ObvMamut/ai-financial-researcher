@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 func TestCompactReviewRequiresCompleteAttributionAndCurrentHash(t *testing.T) {
@@ -563,14 +566,36 @@ func TestTwelveRealisticDossiersFitTheChiefInputBudget(t *testing.T) {
 }
 
 // boardCompany builds one synthetic company carrying `sources` quoted sources
-// of `runes` characters each, and no case narrative, so a test of the
-// document allocation measures only the document allocation.
+// of `runes` characters each.
+//
+// It carries a case narrative. An earlier version deliberately left the
+// narrative fields empty "so a test of the document allocation measures only
+// the document allocation" — which deleted from the fixture the one tier that
+// in production consumed the entire optional pool, and so proved the document
+// allocation's fairness on a board where nothing competed with it. The
+// narrative is sized off the company's own evidence, so a company that is
+// heavy in sources is heavy in both tiers and order-independence is tested
+// against an uneven board in both.
 func boardCompany(ticker string, sources, runes int) thesisResearch {
+	return boardCompanyIn(ticker, sources, runes,
+		"Reported results were described without resolving the question at issue. ", "g")
+}
+
+// boardCompanyIn spells out the source language. `filler` is the prose around
+// each quotation and `pad` the repeated body inside it — one ASCII byte per
+// character for a Latin board, three for a CJK one, which is the case the
+// board's fit loop exists for: the optional pool is counted in bytes and spent
+// in characters.
+func boardCompanyIn(ticker string, sources, runes int, filler, pad string) thesisResearch {
 	anchor := time.Date(2026, 9, 15, 17, 0, 30, 0, time.UTC)
-	filler := "Reported results were described without resolving the question at issue. "
 	r := thesisResearch{
 		Candidate: model.Candidate{Ticker: ticker, Name: ticker, Sector: "Health Care"},
-		Dossier:   model.CandidateDossier{Ticker: ticker, Status: "supported", PreferredDirection: "BUY", EvidenceQuality: "mixed"},
+		Dossier: model.CandidateDossier{Ticker: ticker, Status: "supported", PreferredDirection: "BUY", EvidenceQuality: "mixed",
+			LongCase:       "long case: " + strings.Repeat("n", 400+sources*4),
+			ShortCase:      "short case: " + strings.Repeat("n", 360+sources*4),
+			NoTradeCase:    "no-trade case: " + strings.Repeat("n", 380+sources*3),
+			CatalystWindow: "catalyst window: " + strings.Repeat("n", 200+sources*2),
+			Invalidation:   "invalidation: " + strings.Repeat("n", 300+sources*2)},
 		Challenge: model.ThesisChallenge{ContractVersion: 2, Ticker: ticker, Verdict: "supported"},
 		Outcome: model.ResearchOutcome{Ticker: ticker, Transport: model.OutcomeOK, Parsing: model.OutcomeOK,
 			Evidence: model.EvidenceDocuments, Review: "supported"},
@@ -578,7 +603,7 @@ func boardCompany(ticker string, sources, runes int) thesisResearch {
 	}
 	for i := 0; i < sources; i++ {
 		id := fmt.Sprintf("%s-source-%03d", ticker, i)
-		quote := fmt.Sprintf("%s source %03d states: ", ticker, i) + strings.Repeat("g", runes)
+		quote := fmt.Sprintf("%s source %03d states: ", ticker, i) + strings.Repeat(pad, runes)
 		r.Documents = append(r.Documents, model.EvidenceDocument{ID: id, Ticker: ticker, Kind: "document",
 			Source: "issuer press release", PublishedAt: anchor.AddDate(0, 0, -3-i), RetrievedAt: anchor,
 			Text: strings.Repeat(filler, 30) + quote + strings.Repeat(filler, 30)})
@@ -630,8 +655,10 @@ func TestBoardAllocationIsNotFirstComeFirstServed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A budget that leaves far less optional context than the board wants:
-	// the first three companies alone would absorb all of it.
+	// A budget that leaves far less optional context than the board wants —
+	// the first three companies alone would absorb all of it — and less than
+	// the case narrative alone wants, so BOTH tiers are allocated at their
+	// margin and a walk down the slice would visibly run out in each.
 	budget := floor.RequiredBytes + 12000
 	board, alloc, err := chiefBoard(research, budget)
 	if err != nil {
@@ -655,14 +682,20 @@ func TestBoardAllocationIsNotFirstComeFirstServed(t *testing.T) {
 	}
 	// Proportional, not greedy: the exact integer share the whole need vector
 	// and the final pool imply. A loop that spent as it walked would give the
-	// head its full need and the tail whatever survived.
+	// head its full need and the tail whatever survived. The pool the document
+	// tier divides is what the case-narrative tier left, which is why the
+	// board records both.
 	total := 0
 	for _, s := range alloc.Companies {
 		total += s.ContextNeed
 	}
+	if alloc.NarrativeBytes <= 0 || alloc.NarrativeBytes >= alloc.OptionalPool {
+		t.Fatalf("the two tiers are not competing: narrative %d of a %d pool", alloc.NarrativeBytes, alloc.OptionalPool)
+	}
+	contextPool := alloc.OptionalPool - alloc.NarrativeBytes
 	head := shareFor(alloc, "C00")
 	for _, s := range []boardShare{tailShare, head} {
-		want := alloc.OptionalPool * s.ContextNeed / total
+		want := contextPool * s.ContextNeed / total
 		if s.ContextGrant < want || s.ContextGrant >= s.ContextNeed {
 			t.Fatalf("%s got %d of the %d-character pool against a proportional %d and a need of %d",
 				s.Ticker, s.ContextGrant, alloc.OptionalPool, want, s.ContextNeed)
@@ -753,5 +786,415 @@ func TestEveryCandidateKeepsItsOutcomeEvenWhenEvidenceIsTrimmed(t *testing.T) {
 				t.Fatalf("%s lost a required quotation under trimming", ticker)
 			}
 		}
+	}
+}
+
+// chiefCorrectivePayload rebuilds the two mandatory sections the corrective
+// round appends, at the size a real thesis round carries them. The previous
+// response is five ideas each with a full ThesisPlan — the 2026-09-15 thesis
+// run's own ideas.json is 10,975 bytes and the largest on disk is 16,823 —
+// and the findings are what the risk gate writes for a re-prompt.
+func chiefCorrectivePayload(tickers []string) []promptSection {
+	result := &model.IdeasResult{}
+	for i, ticker := range tickers {
+		if i == 5 {
+			break
+		}
+		result.Ideas = append(result.Ideas, model.TradeIdea{Rank: i + 1, Ticker: ticker, Name: "Company " + ticker,
+			Index: "sp500", Direction: "BUY", Confidence: 55, Setup: "drift", Why: strings.Repeat("w", 310),
+			Entry: 100, Stop: 94.5, Target: 112.25, RiskReward: 2.2, TimeframeDays: 15, PositionNote: strings.Repeat("p", 90),
+			Thesis: &model.ThesisPlan{WhyNow: strings.Repeat("y", 170), Invalidation: strings.Repeat("i", 140),
+				CatalystWindow: strings.Repeat("c", 90), EvidenceQuality: "mixed", EntryReason: strings.Repeat("e", 110),
+				StopReason: strings.Repeat("s", 110), TargetReason: strings.Repeat("t", 120), TargetMethod: "thesis_scenario",
+				OutcomeLow: 96, OutcomeHigh: 118, ExpiresOn: "2026-10-06", EntryExpiresOn: "2026-09-22",
+				Monitoring:     []string{strings.Repeat("m", 60), strings.Repeat("m", 60)},
+				EvidenceIDs:    []string{ticker + "-src-0001", ticker + "-src-0002", ticker + "-src-0003"},
+				TargetClaimIDs: []string{"c1", "c2"}}})
+	}
+	var findings []riskFinding
+	for i := 0; i < 3 && i < len(tickers); i++ {
+		findings = append(findings, riskFinding{Ticker: tickers[i], Hard: true, Message: strings.Repeat("f", 130)})
+	}
+	return []promptSection{
+		{Name: "corrective_findings", Mandatory: true, Body: "\nRevise or reject these unsupported constructions. Do not stretch targets.\n" + jsonText(findings)},
+		{Name: "previous_chief_response", Mandatory: true, Body: "\nPrevious response:\n" + jsonText(result)},
+	}
+}
+
+// The corrective round is the same Chief prompt plus two more MANDATORY
+// sections. A board sized only for the initial call spends the whole budget,
+// so those two sections are appended past the input limit and the one
+// corrective call the pipeline gets can never be assembled — measured on this
+// very board, the initial prompt lands 1,015 bytes under the limit against a
+// corrective payload of thousands. finalizeThesis then deletes every idea
+// carrying a non-observational finding instead of letting the Chief revise it,
+// and reports a component-less input_capacity error one call downstream.
+func TestCorrectiveChiefPromptFitsOnATwelveDossierBoard(t *testing.T) {
+	runner, _, done := thesisFixture(t, func(string, int) string { return "" })
+	defer done()
+	research := sep13ResearchBoard(t)
+	other, prefix := chiefBoardSections()
+	cp, err := runner.chiefPrompt(research, other, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, _, err := cp.sections()
+	if err != nil {
+		t.Fatalf("initial board does not fit: %v", err)
+	}
+	if _, _, err = runner.preparePrompt("thesis-chief", "corrective-initial", initial, 24<<10); err != nil {
+		t.Fatalf("initial Chief prompt rejected: %v", err)
+	}
+	tickers := make([]string, 0, len(research))
+	for _, r := range research {
+		tickers = append(tickers, r.Candidate.Ticker)
+	}
+	extra := chiefCorrectivePayload(tickers)
+	payload := 0
+	for _, sec := range extra {
+		payload += len(sec.Body)
+	}
+	// A real round, not a token one: the largest five-idea `ideas` array on
+	// disk under runs/ is 6,482 bytes without a ThesisPlan, and every idea
+	// here carries one.
+	if payload < 8000 {
+		t.Fatalf("the corrective payload is a toy: %d bytes, want a realistic round of 8000+", payload)
+	}
+	corrective, alloc, err := cp.sections(extra...)
+	if err != nil {
+		t.Fatalf("corrective board does not fit: %v", err)
+	}
+	_, profile, err := runner.preparePrompt("thesis-chief", "corrective-round", corrective, 24<<10)
+	if err != nil {
+		t.Fatalf("corrective Chief prompt rejected with a %d-byte payload: %v", payload, err)
+	}
+	// Every company still reaches the corrective call: the room is bought out
+	// of optional context, never out of the candidate list.
+	if got := len(alloc.Companies); got != 12 {
+		t.Fatalf("corrective board carries %d companies, want 12", got)
+	}
+	for _, name := range []string{"company_board", "quant", "risk_policy", "corrective_findings", "previous_chief_response"} {
+		if profile.Components[name] == 0 {
+			t.Fatalf("corrective prompt lost its %s section: %v", name, profile.Components)
+		}
+	}
+	t.Logf("corrective payload %d; board %d; prompt %d of %d", payload, alloc.BoardBytes, profile.Bytes, profile.InputLimit)
+
+	// Twelve dossiers this size leave the corrective round about 11 KB, since
+	// the board's required floor alone is 169,696 of its 180,944 bytes. That
+	// is a limit of the research, not of the reservation — and past it the
+	// board says so by name instead of letting preparePrompt report a
+	// component-less input_capacity error one call downstream.
+	_, _, err = cp.sections(promptSection{Name: "corrective_findings", Mandatory: true, Body: strings.Repeat("f", 24<<10)})
+	if err == nil {
+		t.Fatal("a corrective payload larger than the whole optional pool was accepted")
+	}
+	if !strings.Contains(err.Error(), research[0].Candidate.Ticker) {
+		t.Fatalf("the corrective overflow names no company: %v", err)
+	}
+}
+
+// The optional pool has two tiers and both must be able to reach it at the
+// budget production actually runs on. Handing the whole pool to case
+// narrative made the global document allocation — the thing this board exists
+// to build — inert: measured on this board, source context received exactly
+// zero bytes at every budget below the required floor plus 28,447, which is
+// roughly four times the real pool.
+func TestBothOptionalTiersAreFundedAtTheProductionBudget(t *testing.T) {
+	runner, _, done := thesisFixture(t, func(string, int) string { return "" })
+	defer done()
+	research := sep13ResearchBoard(t)
+	other, prefix := chiefBoardSections()
+	budget, err := runner.chiefBoardBudget(other, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board, alloc, err := chiefBoard(research, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := 0
+	for _, s := range alloc.Companies {
+		context += s.ContextGrant
+	}
+	if alloc.NarrativeBytes <= 0 {
+		t.Fatalf("case narrative was funded nothing at the production budget: %+v", alloc)
+	}
+	if context <= 0 {
+		t.Fatalf("source context was funded nothing at the production budget: narrative %d of a %d pool",
+			alloc.NarrativeBytes, alloc.OptionalPool)
+	}
+	if alloc.NarrativeBytes > alloc.OptionalPool {
+		t.Fatalf("case narrative spent %d of a %d pool", alloc.NarrativeBytes, alloc.OptionalPool)
+	}
+	// Funded by rank across the whole board: for each narrative field, every
+	// usable company has it or none does. A board where some companies are
+	// argued for and others are not invites the Chief's ranking to be decided
+	// by which argument was funded.
+	names := []string{"long_case", "short_case", "no_trade_case", "catalyst_window", "invalidation"}
+	funded := make([]bool, len(names))
+	for rank, name := range names {
+		with, without := 0, 0
+		for _, c := range board {
+			if c.Dossier == nil {
+				continue
+			}
+			d := *c.Dossier
+			if *caseNarrative(&d)[rank] != "" {
+				with++
+			} else {
+				without++
+			}
+		}
+		if with > 0 && without > 0 {
+			t.Fatalf("%s is funded for %d companies and withheld from %d: the board is not argued to one depth", name, with, without)
+		}
+		funded[rank] = with > 0
+	}
+	// And funded as a PREFIX of caseNarrative's order — the three cases, then
+	// the catalyst window, then the invalidation — because that is the order
+	// the Chief persona names them in. Skipping an unaffordable rank to buy a
+	// cheaper later one would convert more bytes and argue the wrong thing.
+	for rank := 1; rank < len(funded); rank++ {
+		if funded[rank] && !funded[rank-1] {
+			t.Fatalf("%s was funded over %s: the narrative order is not a priority order", names[rank], names[rank-1])
+		}
+	}
+	// The board is built to SPEND its budget. Leaving more than a quarter of
+	// the optional pool unconverted means the allocation is not pricing what
+	// it buys — either it grants what cannot be spent, or it overdraws and
+	// lets the fit loop claw the whole pool back.
+	if unused := budget - alloc.BoardBytes; unused > alloc.OptionalPool/4 {
+		t.Fatalf("%d bytes of a %d-byte budget went unconverted, against an optional pool of %d",
+			unused, budget, alloc.OptionalPool)
+	}
+	t.Logf("pool %d = narrative %d + context %d chars; board %d of %d",
+		alloc.OptionalPool, alloc.NarrativeBytes, context, alloc.BoardBytes, budget)
+}
+
+// A grant an indivisible tier cannot spend must come back. Funding case
+// narrative whole-field-or-nothing out of a per-company share of a small pool
+// bought nothing at all and returned nothing: at a 1,000-byte pool the board
+// came out at EXACTLY the required floor with 100% of the pool burned.
+func TestAnUnspendableOptionalGrantIsNotBurned(t *testing.T) {
+	research := sep13ResearchBoard(t)
+	_, floor, err := chiefBoard(research, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const slack = 1000
+	_, alloc, err := chiefBoard(research, floor.RequiredBytes+slack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alloc.BoardBytes <= alloc.RequiredBytes {
+		t.Fatalf("a %d-byte pool bought nothing: board %d, required floor %d",
+			slack, alloc.BoardBytes, alloc.RequiredBytes)
+	}
+	t.Logf("slack %d converted %d bytes of board", slack, alloc.BoardBytes-alloc.RequiredBytes)
+}
+
+// Ruling R4 permits dropping "claim text already carried by its cited
+// passage" — where it actually is. A document published after the run anchor
+// has its text blanked by visibleAt, and one that failed retrieval has none
+// to begin with, so their quotations reach no prompt at all. Dropping the
+// claim's own words for a quotation that is nowhere ships the Chief a claim
+// with no content of any kind, and is a regression against the projection
+// this board replaced, which never blanked claim text.
+func TestClaimKeepsItsTextWhenItsQuotationReachesNoDocument(t *testing.T) {
+	anchor := time.Date(2026, 9, 15, 17, 0, 30, 0, time.UTC)
+	quote := "The issuer stated that shipments rose by a fifth over the reporting period."
+	company := func(mutate func(*model.EvidenceDocument)) thesisResearch {
+		doc := model.EvidenceDocument{ID: "doc-1", Ticker: "AAA", Kind: "document", Source: "issuer press release",
+			PublishedAt: anchor.AddDate(0, 0, -3), RetrievedAt: anchor,
+			Text: "Preamble to the release. " + quote + " Closing remarks of the release."}
+		mutate(&doc)
+		claim := model.ResearchClaim{ID: "c1", Kind: "observation", Text: "Shipments rose by a fifth in the period",
+			EvidenceIDs: []string{doc.ID},
+			Passages:    []model.ClaimPassage{{EvidenceID: doc.ID, Quote: quote, IssuerRole: "reporting issuer"}}}
+		return thesisResearch{
+			Candidate: model.Candidate{Ticker: "AAA", Name: "AAA"},
+			Documents: []model.EvidenceDocument{doc},
+			Dossier: model.CandidateDossier{Ticker: "AAA", Status: "supported", PreferredDirection: "BUY",
+				Claims: []model.ResearchClaim{claim},
+				Events: []model.ResearchEvent{{Kind: "guidance", OccurredAt: "2026-09-29T12:00:00Z", EvidenceID: doc.ID, Passage: quote}}},
+			Challenge: model.ThesisChallenge{ContractVersion: 2, Ticker: "AAA", Verdict: "supported"},
+			Outcome: model.ResearchOutcome{Ticker: "AAA", Transport: model.OutcomeOK, Parsing: model.OutcomeOK,
+				Evidence: model.EvidenceDocuments, Review: "supported"},
+			Temporal: researchTimeFacts{AsOf: anchor.Format(time.RFC3339)},
+		}
+	}
+	unreachable := map[string]func(*model.EvidenceDocument){
+		"published after the run anchor": func(d *model.EvidenceDocument) { d.PublishedAt = anchor.AddDate(0, 0, 3) },
+		"retrieval failed":               func(d *model.EvidenceDocument) { d.Text, d.Error = "", "retrieval failed: 503 from the issuer host" },
+	}
+	for name, mutate := range unreachable {
+		// A budget far above anything the board could spend, so capacity is
+		// provably not the reason anything is missing.
+		board, _, err := chiefBoard([]thesisResearch{company(mutate)}, 1<<30)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		c := board[0]
+		if c.Documents[0].Text != "" {
+			t.Fatalf("%s: the fixture no longer withholds the source text: %q", name, c.Documents[0].Text)
+		}
+		if c.Dossier.Claims[0].Text == "" {
+			t.Fatalf("%s: the claim reached the Chief with no text and no quotation: %s", name, jsonText(c.Dossier.Claims))
+		}
+		if c.Dossier.Events[0].Passage == "" {
+			t.Fatalf("%s: the event reached the Chief with no passage and no source text: %s", name, jsonText(c.Dossier.Events))
+		}
+	}
+	// The control: when the quotation IS in the prompt, the claim's own words
+	// are still dropped, because the passage carries them.
+	board, _, err := chiefBoard([]thesisResearch{company(func(*model.EvidenceDocument) {})}, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(board[0].Documents[0].Text, quote) {
+		t.Fatalf("the control did not place its quotation: %q", board[0].Documents[0].Text)
+	}
+	if board[0].Dossier.Claims[0].Text != "" || board[0].Dossier.Events[0].Passage != "" {
+		t.Fatalf("a placed quotation no longer carries its claim: %s", jsonText(board[0].Dossier))
+	}
+}
+
+// A board whose required records and quotations alone exceed the budget is a
+// capacity failure that must name the companies. A generic input_capacity
+// error attributable to no component is the September 15 diagnostic failure
+// this board exists to remove, so the naming is the point of the refusal and
+// not decoration on it.
+func TestRequiredFloorOverflowNamesItsCompaniesAndKeepsEveryCandidate(t *testing.T) {
+	runner, _, done := thesisFixture(t, func(string, int) string { return "" })
+	defer done()
+	research := append(sep13ResearchBoard(t), sep13ResearchBoard(t)...)
+	other, prefix := chiefBoardSections()
+	budget, err := runner.chiefBoardBudget(other, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board, alloc, err := chiefBoard(research, budget)
+	if err == nil {
+		t.Fatalf("24 realistic dossiers were accepted against a %d-byte budget at %d bytes", budget, alloc.BoardBytes)
+	}
+	var capacity promptCapacityError
+	if !errors.As(err, &capacity) {
+		t.Fatalf("refusal is not a capacity error (%T): %v", err, err)
+	}
+	if promptFailureKind(err) != "input_capacity" {
+		t.Fatalf("refusal classifies as %q", promptFailureKind(err))
+	}
+	named := 0
+	for _, r := range research {
+		if strings.Contains(err.Error(), r.Candidate.Ticker+" ") {
+			named++
+		}
+	}
+	if named < 12 {
+		t.Fatalf("the refusal names %d of the board's companies: %v", named, err)
+	}
+	if !regexp.MustCompile(`[A-Z0-9.]+ \d{4,}`).MatchString(err.Error()) {
+		t.Fatalf("the refusal names no company with a byte count: %v", err)
+	}
+	// The board comes back WITH the error, so preparePrompt still refuses the
+	// assembled prompt for the primary and the fallback alike and each keeps
+	// its zero-attempt provenance. Returning nothing would skip the Chief and
+	// erase that.
+	if len(board) != len(research) {
+		t.Fatalf("the refusal dropped candidates: %d of %d", len(board), len(research))
+	}
+	for i, c := range board {
+		if c.Outcome.Ticker != research[i].Candidate.Ticker || c.Outcome.Transport == "" {
+			t.Fatalf("%s lost its outcome record in the refusal", research[i].Candidate.Ticker)
+		}
+	}
+	sections := append([]promptSection{{Name: "company_board", Mandatory: true, Body: prefix + jsonText(board)}}, other...)
+	if _, _, perr := runner.preparePrompt("thesis-chief", "required-floor-overflow", sections, 24<<10); perr == nil {
+		t.Fatal("preparePrompt accepted the over-budget board")
+	} else if promptFailureKind(perr) != "input_capacity" {
+		t.Fatalf("preparePrompt classified the overflow as %q: %v", promptFailureKind(perr), perr)
+	}
+}
+
+// The optional pool is counted in bytes and spent in characters, and one
+// character of a Hong Kong or Taiwan source is three bytes, so the first
+// split overshoots on a multi-byte board. The fit loop rescales by the
+// overshoot it measured and renders again; without that it would have nothing
+// between "fits" and "no optional context at all", and every such board would
+// ship at its required floor.
+func TestMultiByteBoardRescalesItsPoolInsteadOfCollapsingIt(t *testing.T) {
+	var research []thesisResearch
+	for i := 0; i < 12; i++ {
+		research = append(research, boardCompanyIn(fmt.Sprintf("C%02d", i), 12, 300,
+			"本期業績報告並未解決有關問題所涉及的具體事項。", "字"))
+	}
+	_, floor, err := chiefBoard(research, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, alloc, err := chiefBoard(research, floor.RequiredBytes+60000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alloc.Attempts < 2 {
+		t.Fatalf("the multi-byte board fit on attempt %d: the rescale never ran", alloc.Attempts)
+	}
+	if alloc.BoardBytes > floor.RequiredBytes+60000 {
+		t.Fatalf("the rescaled board is over budget: %d of %d", alloc.BoardBytes, floor.RequiredBytes+60000)
+	}
+	// The rescale has to land on a pool that still buys something. Collapsing
+	// straight to zero also "fits" — it is the required floor, which was
+	// checked before the loop began — and would be indistinguishable from
+	// convergence without this.
+	if alloc.OptionalPool <= 0 || alloc.BoardBytes <= floor.RequiredBytes {
+		t.Fatalf("the rescale collapsed the pool instead of converging: pool %d, board %d, floor %d",
+			alloc.OptionalPool, alloc.BoardBytes, floor.RequiredBytes)
+	}
+	t.Logf("converged in %d attempts: pool %d, board %d of %d", alloc.Attempts, alloc.OptionalPool,
+		alloc.BoardBytes, floor.RequiredBytes+60000)
+}
+
+// The board is measured on the same side of redaction as its budget.
+// chiefBoardBudget subtracts every other section's REDACTED length, because
+// that is what assembleSections receives; redact.String substitutes a 21-byte
+// placeholder, so a registered credential of 8 to 20 characters echoed back
+// into evidence GROWS the board after it was checked to fit.
+func TestBoardIsMeasuredAfterRedaction(t *testing.T) {
+	const secret = "k7Qv2Xb9La3Md"
+	redact.Register(secret)
+	if len(secret) >= len(redact.Placeholder) {
+		t.Fatalf("the fixture credential does not grow under redaction: %d vs %d", len(secret), len(redact.Placeholder))
+	}
+	anchor := time.Date(2026, 9, 15, 17, 0, 30, 0, time.UTC)
+	r := boardCompany("AAA", 3, 120)
+	r.Documents = append(r.Documents, model.EvidenceDocument{ID: "AAA-rejected", Ticker: "AAA", Kind: "document",
+		Source: "alphavantage", PublishedAt: anchor.AddDate(0, 0, -2), RetrievedAt: anchor,
+		Error: "provider rejected https://example.test/query?function=OVERVIEW&apikey=" + secret})
+	r.Dossier.Claims = append(r.Dossier.Claims, model.ResearchClaim{ID: "c-rejected", Kind: "observation",
+		Text: "The filing was not retrievable", EvidenceIDs: []string{"AAA-rejected"}})
+	_, floor, err := chiefBoard([]thesisResearch{r}, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board, _, err := chiefBoard([]thesisResearch{r}, floor.RequiredBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, redacted := len(jsonText(board)), len(redact.String(jsonText(board)))
+	if strings.Contains(jsonText(board), secret) == false {
+		t.Fatal("the fixture no longer carries the credential into the board")
+	}
+	if redacted <= raw {
+		t.Fatalf("the fixture credential does not grow the board: raw %d, redacted %d", raw, redacted)
+	}
+	if floor.RequiredBytes != redacted {
+		t.Fatalf("the board was measured at %d, its raw size, against a budget built from redacted bodies (%d)",
+			floor.RequiredBytes, redacted)
+	}
+	// The consequence, end to end: a board measured raw is accepted at a
+	// budget it does not fit once preparePrompt redacts it.
+	if _, _, err = chiefBoard([]thesisResearch{r}, redacted-1); err == nil {
+		t.Fatalf("a %d-byte board was accepted against a %d-byte budget", redacted, redacted-1)
 	}
 }

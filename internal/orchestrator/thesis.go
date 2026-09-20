@@ -283,11 +283,11 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 			usableDossiers++
 		}
 	}
-	boardBudget, e := t.chiefBoardBudget([]promptSection{quantSection, macroSection, riskSection}, boardPrefix)
+	chiefPrompt, e := t.chiefPrompt(research, []promptSection{quantSection, macroSection, riskSection}, boardPrefix)
 	if e != nil {
 		return e
 	}
-	board, alloc, boardErr := chiefBoard(research, boardBudget)
+	chiefSections, alloc, boardErr := chiefPrompt.sections()
 	if e = run.WriteDataPack("chief-board", alloc); e != nil {
 		return e
 	}
@@ -299,12 +299,6 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 		// and the fallback alike and persists a zero-attempt input_capacity
 		// report for each. Skipping synthesis here instead would erase that.
 		errs = append(errs, "chief: "+boardErr.Error())
-	}
-	chiefSections := []promptSection{
-		{Name: "company_board", Mandatory: true, Body: boardPrefix + jsonText(board)},
-		quantSection,
-		macroSection,
-		riskSection,
 	}
 	// chiefAttemptedEngines/chiefAcceptedEngine/chiefModel are Task 6's
 	// provenance trail — see the equivalent tracking in orchestrator.go's
@@ -367,10 +361,20 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	findings = append(findings, planFindings...)
 	statuses = append(statuses, planReports...)
 	if len(findings) > 0 && len(result.Ideas) > 0 {
-		correctiveSections := append(append([]promptSection(nil), chiefSections...),
+		// The corrective call carries two more mandatory sections than the
+		// initial one, so its board is rebuilt for the smaller remainder
+		// rather than reused. Reusing it is what made this call unassemblable
+		// from eight usable dossiers up; see chiefPromptBuilder.
+		correctiveSections, calloc, cboardErr := chiefPrompt.sections(
 			promptSection{Name: "corrective_findings", Mandatory: true, Body: "\nRevise or reject these unsupported constructions. Do not stretch targets.\n" + jsonText(findings)},
 			promptSection{Name: "previous_chief_response", Mandatory: true, Body: "\nPrevious response:\n" + jsonText(result)},
 		)
+		if e = run.WriteDataPack("chief-board-corrective", calloc); e != nil {
+			return e
+		}
+		if cboardErr != nil {
+			errs = append(errs, "chief corrective: "+cboardErr.Error())
+		}
 		r, err := t.callSections(ctx, "thesis-chief", "chief-analyst-corrective", correctiveSections, chiefTarget(chiefE, cfg, chiefCorrective))
 		statuses = append(statuses, reportStatus(r))
 		if err == nil {
