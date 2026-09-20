@@ -360,6 +360,68 @@ func visibleAt(docs []model.EvidenceDocument, anchor time.Time) []model.Evidence
 	return visible
 }
 
+// quotationRef is one accepted quotation, addressable by the evidence it was
+// taken from. requiredQuotations below deduplicates on (EvidenceID, Quote):
+// several claims citing the identical accepted words store them once.
+type quotationRef struct {
+	EvidenceID string `json:"evidence_id"`
+	Quote      string `json:"quote"`
+}
+
+// requiredQuotations collects every claim's accepted quotation exactly once,
+// in first-seen order. Before this, a quotation cited by several claims
+// carried its own copy inline on EVERY citing claim wherever that claim's
+// dossier or challenge was echoed back as context (previous_dossier,
+// previous_challenge, revision_issues) — on top of the SAME text already
+// reserved, verbatim, as a required span inside the evidence section
+// (promptDocuments/requiredSpans below). dossierReference and
+// challengeReference strip the inline copies from the echoed claims; a
+// claim's own EvidenceID (unchanged) is enough to resolve it against this
+// section instead. Distinct quotes sharing one evidence_id are kept
+// separately — deduplication is keyed on the exact (evidence_id, quote)
+// pair, never on evidence_id alone, so nothing required is ever dropped.
+func requiredQuotations(claims []model.ResearchClaim) []quotationRef {
+	seen := map[string]bool{}
+	var out []quotationRef
+	for _, c := range claims {
+		for _, p := range c.Passages {
+			quote := strings.TrimSpace(p.Quote)
+			if quote == "" {
+				continue
+			}
+			key := p.EvidenceID + "\x00" + p.Quote
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, quotationRef{EvidenceID: p.EvidenceID, Quote: p.Quote})
+		}
+	}
+	return out
+}
+
+// dossierReference is what previous_dossier echoes back: the prior dossier a
+// call is meant to revise, minus each claim's own copy of its accepted
+// quotation (see requiredQuotations). Nothing else changes — the claim keeps
+// its own text, evidence IDs and issuer roles, which are not duplicated
+// anywhere else and stay exactly as written.
+func dossierReference(d model.CandidateDossier) model.CandidateDossier {
+	d.Claims = claimReferences(d.Claims)
+	return d
+}
+
+// challengeReference is the same projection for a ThesisChallenge, used
+// wherever a challenge is echoed back as CONTEXT rather than reviewed as the
+// current verdict: previous_challenge (challengeSections) and revision_issues
+// (thesis.go), both of which serialize a Challenge value whole. It never
+// touches ClaimReviews or MaterialIssues — those are prose, not duplicated
+// quotation text, and are exactly what a revision or a final challenge has to
+// read.
+func challengeReference(c model.ThesisChallenge) model.ThesisChallenge {
+	c.Claims = claimReferences(c.Claims)
+	return c
+}
+
 func evidenceClaims(d model.CandidateDossier, extra ...model.ResearchClaim) []model.ResearchClaim {
 	claims := append(append([]model.ResearchClaim(nil), d.Claims...), extra...)
 	for _, c := range d.Claims {

@@ -276,9 +276,27 @@ func TestEveryResearchRequestIsAnsweredAndRepeatsAreRefused(t *testing.T) {
 	if !strings.Contains(seenAnswers, "Answers to your research requests") {
 		t.Fatal("the answers never reached the next round's prompt")
 	}
-	for _, want := range []string{"No such operation: web_search", "performs no additional retrieval", "not in your evidence"} {
+	// Task 13's request-ledger compaction (compactResults, thesis_compaction.go)
+	// reduces the PROMPT's view of an unsupported/unavailable/already-attempted
+	// answer to its request's identity plus the outcome word alone — the full
+	// explanatory sentence was worth saying once, in the round it happened, and
+	// worth nothing repeated into every later round unchanged. The durable
+	// ledger (got.Results, asserted above) still carries every Detail sentence
+	// in full; only the compacted prompt view changes.
+	for _, want := range []string{
+		`"kind":"web_search"`,
+		`"kind":"news"`,
+		`"kind":"document","url":"https://not-in-evidence.example/x"`,
+		`"outcome":"unsupported"`,
+		`"outcome":"already attempted"`,
+	} {
 		if !strings.Contains(seenAnswers, want) {
 			t.Errorf("the model was not told %q", want)
+		}
+	}
+	for _, gone := range []string{"No such operation: web_search", "performs no additional retrieval", "not in your evidence."} {
+		if strings.Contains(seenAnswers, gone) {
+			t.Errorf("prompt still carries the full explanatory sentence %q; a repeated answer should compact to identity + outcome", gone)
 		}
 	}
 }

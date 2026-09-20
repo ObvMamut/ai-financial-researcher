@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -1196,5 +1198,530 @@ func TestBoardIsMeasuredAfterRedaction(t *testing.T) {
 	// budget it does not fit once preparePrompt redacts it.
 	if _, _, err = chiefBoard([]thesisResearch{r}, redacted-1); err == nil {
 		t.Fatalf("a %d-byte board was accepted against a %d-byte budget", redacted, redacted-1)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 13: revision and challenge prompt fitting (SNOW/OKTA/ORCL, 2026-09-15)
+// ---------------------------------------------------------------------------
+
+// readInputPack reads back one preparePrompt call's persisted artifact —
+// the same file TestInitialAndReviewPassagesReachPersistedInputs and
+// TestFullArticleReuseAndSavedReviewEvidence read — for the exact prompt
+// text and its measured profile, rather than trusting a test's own
+// reimplementation of what preparePrompt would have measured.
+func readInputPack(t *testing.T, dir, name string) (prompt string, profile model.PromptProfile) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "data", "input-"+name+".json"))
+	if err != nil {
+		t.Fatalf("reading input pack %q: %v", name, err)
+	}
+	var v struct {
+		Prompt  string              `json:"prompt"`
+		Profile model.PromptProfile `json:"profile"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatalf("decoding input pack %q: %v", name, err)
+	}
+	return v.Prompt, v.Profile
+}
+
+// captured13Corpus builds a realistic-scale evidence/dossier corpus at the
+// shape task-13-context.md's controller measurement records for the
+// September 15 captures: dozens of evidence documents (most of them
+// scaffolding — id, kind, dates, selected_spans — rather than text, the way
+// 4 of SNOW's captured 51 documents carried no text at all), and a dossier
+// whose claims and narratives run to the writing target's own ceiling. Only
+// the first numClaims documents are cited; the rest are uncited context,
+// costing scaffolding without a required quotation.
+func captured13Corpus(ticker string, numDocs, numClaims int) ([]model.EvidenceDocument, model.CandidateDossier) {
+	anchor := time.Now().UTC()
+	docs := make([]model.EvidenceDocument, numDocs)
+	var claims []model.ResearchClaim
+	var claimIDs []string
+	for i := 0; i < numDocs; i++ {
+		id := fmt.Sprintf("%s-doc-%03d", ticker, i)
+		filler := fmt.Sprintf("Filing excerpt %03d covers demand trends, consumption patterns and forward guidance for the reporting segment in additional operational detail. ", i)
+		docs[i] = model.EvidenceDocument{ID: id, Ticker: ticker, Kind: "document", Source: "issuer", Authority: "issuer",
+			PublishedAt: anchor.AddDate(0, 0, -5-(i%20)), RetrievedAt: anchor, Text: strings.Repeat(filler, 20)}
+	}
+	for i := 0; i < numClaims; i++ {
+		quote := strings.TrimSpace(fmt.Sprintf("Metric %03d: consumption growth moderated while guidance held for the quarter.", i))
+		docs[i].Text = strings.Repeat("Navigation and legal boilerplate repeated across the release. ", 15) + quote + strings.Repeat(" Trailing commentary continues after the disclosed figure for additional context.", 15)
+		id := fmt.Sprintf("c%d", i)
+		claimIDs = append(claimIDs, id)
+		claims = append(claims, model.ResearchClaim{ID: id, Kind: "observation",
+			Text:        fmt.Sprintf("Guidance commentary %d changes the near-term setup for the segment", i),
+			EvidenceIDs: []string{docs[i].ID},
+			Passages:    []model.ClaimPassage{{EvidenceID: docs[i].ID, Quote: quote, IssuerRole: "reporting issuer"}}})
+	}
+	pad := func(letter string) string { return strings.Repeat(letter, 380) }
+	d := model.CandidateDossier{ContractVersion: 2, Ticker: ticker, Status: "supported", PreferredDirection: "BUY", EvidenceQuality: "mixed",
+		LongCase: "Long case: " + pad("l"), ShortCase: "Short case: " + pad("s"), NoTradeCase: "No-trade case: " + pad("n"),
+		Hypothesis: "Hypothesis: " + pad("h"), Changed: "Changed: " + pad("c"), Expectations: "Expectations: " + pad("e"),
+		Underappreciated: "Underappreciated: " + pad("u"), Mechanism: "Mechanism: " + pad("m"), PricedIn: "Priced in: " + pad("p"),
+		Counterargument: "Counterargument: " + pad("g"), Invalidation: "Invalidation: " + pad("i"), CatalystWindow: "Catalyst window: " + pad("w"),
+		Claims: claims, ExpectationsClaimIDs: claimIDs, PricedInClaimIDs: claimIDs,
+		Unresolved:      []string{"whether channel checks corroborate the disclosed metric", "how currency effects net against reported growth"},
+		EntryConditions: []string{"confirm the metric holds for two more sessions", "no adverse guidance revision before entry"},
+		Monitoring:      []string{"track the next scheduled disclosure date", "watch peer commentary for corroboration"}}
+	return docs, d
+}
+
+func captured13Reviews(claimIDs []string, reason string) []model.ClaimReview {
+	out := make([]model.ClaimReview, 0, len(claimIDs))
+	for _, id := range claimIDs {
+		out = append(out, model.ClaimReview{ClaimID: id, Assessment: "supported", Attribution: "confirmed", Reason: reason})
+	}
+	return out
+}
+
+// captured13Hash extracts the dossier hash a real model would echo back,
+// reading it from the SAME prompt text it was given — exactly the technique
+// currentFixtureReply already uses for older, contract-version-less
+// fixtures (thesis_schema_test.go). A test fixture must never hardcode a
+// hash computed independently of what the prompt actually says, because
+// out.Dossier's exact serialization is not this test's to predict.
+func captured13Hash(prompt string) string {
+	m := regexp.MustCompile(`Dossier hash: ([a-f0-9]{64})`).FindStringSubmatch(prompt)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// TestCapturedRevisionAndChallengePromptsFit rebuilds the SNOW/OKTA/ORCL
+// failure shape at realistic scale (task-13-context.md's controller
+// measurement: ~51 evidence documents, ~47% of the evidence section's own
+// bytes pure scaffinolding, a previous_dossier and previous_challenge/
+// revision_issues carrying real bulk) and drives it through the actual
+// production call sites — base(), challengeSections, the revision and
+// challenge-final builders in thesis.go — rather than a hand-rolled
+// reimplementation of what they do.
+//
+// A "revise" initial challenge forces exactly the sequence the captures
+// exercised: round-1 dossier, initial challenge, revision (SNOW/OKTA's
+// overflow site), final challenge (ORCL's overflow site).
+func TestCapturedRevisionAndChallengePromptsFit(t *testing.T) {
+	const ticker = "SNOW"
+	docs, dossier := captured13Corpus(ticker, 140, 35)
+	if raw := len(jsonText(dossier)); raw > 20480 {
+		t.Fatalf("fixture dossier is %d raw bytes, over the researcher's own 20,480-byte response limit — it would take an unintended compaction detour instead of exercising the input-side fix this test targets", raw)
+	}
+	var claimIDs []string
+	for _, c := range dossier.Claims {
+		claimIDs = append(claimIDs, c.ID)
+	}
+
+	initialIssues := []string{
+		"unresolved: whether the disclosed consumption metric nets out currency effects",
+		"unresolved: guidance timing versus the described catalyst window",
+		"unresolved: whether peer commentary corroborates the reported trend",
+	}
+	reviewReason := "The quoted passage attributes the disclosed metric to the reporting issuer and supports the claim as stated."
+
+	calls := 0
+	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
+		calls++
+		switch {
+		case strings.Contains(prompt, "Final revision:"):
+			return fenced(dossier)
+		case strings.Contains(prompt, "# Independent thesis challenge") && calls > 2:
+			return fenced(model.ThesisChallenge{ContractVersion: 2, Ticker: ticker, DossierHash: captured13Hash(prompt),
+				Verdict: "supported", ConditionsReviewed: true,
+				Reason:       "The revision resolved the disclosed metric's currency treatment and corroborated timing.",
+				ClaimReviews: captured13Reviews(claimIDs, reviewReason)})
+		case strings.Contains(prompt, "# Independent thesis challenge"):
+			return fenced(model.ThesisChallenge{ContractVersion: 2, Ticker: ticker, DossierHash: captured13Hash(prompt),
+				Verdict:        "revise",
+				Reason:         "The currency treatment of the disclosed metric and its corroborating timing are unresolved.",
+				MaterialIssues: initialIssues,
+				ClaimReviews:   captured13Reviews(claimIDs, reviewReason)})
+		default:
+			return fenced(dossier)
+		}
+	})
+	defer done()
+
+	out := runner.investigate(context.Background(), model.Candidate{Ticker: ticker, Name: ticker}, docs, pack, nil)
+
+	if out.Outcome.Transport != model.OutcomeOK {
+		t.Fatalf("transport failed: %+v errors=%v", out.Outcome, out.Errors)
+	}
+	for _, e := range out.Errors {
+		if strings.Contains(e, "input capacity exceeded") {
+			t.Fatalf("a prompt was refused for capacity instead of fitting: %s", e)
+		}
+	}
+
+	safeName := fmt.Sprintf("research-%x", []byte(ticker))
+	revPrompt, revProfile := readInputPack(t, runner.run.Dir, safeName+"-revision")
+	chalPrompt, chalProfile := readInputPack(t, runner.run.Dir, safeName+"-challenge-final")
+
+	if revProfile.Bytes > revProfile.InputLimit {
+		t.Errorf("revision prompt = %d bytes, over its own %d-byte limit", revProfile.Bytes, revProfile.InputLimit)
+	}
+	if chalProfile.Bytes > chalProfile.InputLimit {
+		t.Errorf("challenge-final prompt = %d bytes, over its own %d-byte limit", chalProfile.Bytes, chalProfile.InputLimit)
+	}
+	if revProfile.Bytes != len(revPrompt) || chalProfile.Bytes != len(chalPrompt) {
+		t.Fatalf("profile.Bytes disagrees with the persisted prompt length: revision %d/%d, challenge-final %d/%d",
+			revProfile.Bytes, len(revPrompt), chalProfile.Bytes, len(chalPrompt))
+	}
+
+	// This input is a genuine repro, not one that happens to fit either way:
+	// substituting the OLD fixed-24000-character evidence cap for THIS
+	// company's evidence would have overflowed both budgets, matching the
+	// captured SNOW/OKTA (+92 to +4,773 over, at the revision site) and ORCL
+	// (+4,109 over, at the challenge-final site) failures.
+	oldEvidence := evidenceLabel + jsonText(promptDocumentsAt(docs, 24000, runner.run.TS, evidenceClaims(dossier)...))
+	if projected := revProfile.Bytes - revProfile.Components["evidence"] + len(oldEvidence); projected <= revProfile.InputLimit {
+		t.Fatalf("fixture too small to reproduce the failure: the old fixed evidence cap would still have fit (%d <= %d bytes) on the revision prompt", projected, revProfile.InputLimit)
+	}
+	if projected := chalProfile.Bytes - chalProfile.Components["evidence"] + len(oldEvidence); projected <= chalProfile.InputLimit {
+		t.Fatalf("fixture too small to reproduce the failure: the old fixed evidence cap would still have fit (%d <= %d bytes) on the challenge-final prompt", projected, chalProfile.InputLimit)
+	}
+
+	// Every unresolved review issue from the INITIAL challenge, and every
+	// required quotation, must still be traceable in both later prompts.
+	for _, want := range initialIssues {
+		if !strings.Contains(revPrompt, want) {
+			t.Errorf("revision prompt lost unresolved review issue %q", want)
+		}
+		if !strings.Contains(chalPrompt, want) {
+			t.Errorf("challenge-final prompt lost unresolved review issue %q", want)
+		}
+	}
+	// Quotation dedup, wired end to end: each claim's accepted quotation is
+	// carried by the quotations section and by evidence's own required-span
+	// rendering — never a THIRD time inline on the claim itself inside
+	// previous_dossier/previous_challenge/revision_issues, the duplication
+	// dossierReference/challengeReference exist to remove.
+	for _, c := range dossier.Claims {
+		q := c.Passages[0].Quote
+		if !strings.Contains(revPrompt, q) {
+			t.Errorf("revision prompt lost the required quotation for %s", c.ID)
+		}
+		if !strings.Contains(chalPrompt, q) {
+			t.Errorf("challenge-final prompt lost the required quotation for %s", c.ID)
+		}
+		if n := strings.Count(revPrompt, q); n > 2 {
+			t.Errorf("revision prompt still carries %d copies of %s's quotation, want at most 2 (evidence + quotations)", n, c.ID)
+		}
+		if n := strings.Count(chalPrompt, q); n > 2 {
+			t.Errorf("challenge-final prompt still carries %d copies of %s's quotation, want at most 2 (evidence + quotations)", n, c.ID)
+		}
+	}
+	t.Logf("revision: %d/%d bytes (evidence %d; old-style evidence %d would project to %d, %d over); "+
+		"challenge-final: %d/%d bytes (evidence %d; old-style would project to %d, %d over)",
+		revProfile.Bytes, revProfile.InputLimit, revProfile.Components["evidence"], len(oldEvidence),
+		revProfile.Bytes-revProfile.Components["evidence"]+len(oldEvidence), revProfile.Bytes-revProfile.Components["evidence"]+len(oldEvidence)-revProfile.InputLimit,
+		chalProfile.Bytes, chalProfile.InputLimit, chalProfile.Components["evidence"],
+		chalProfile.Bytes-chalProfile.Components["evidence"]+len(oldEvidence), chalProfile.Bytes-chalProfile.Components["evidence"]+len(oldEvidence)-chalProfile.InputLimit)
+}
+
+// TestEachRequiredQuotationIsStoredOnceAndStillResolvable pins Task 13's
+// quotation dedup: a quotation cited by three claims used to be serialized
+// once per citing claim, in every prompt that echoed the dossier back as
+// context (previous_dossier, previous_challenge, revision_issues) — on top
+// of the SAME text already carried, verbatim, by the evidence section's own
+// required-span rendering.
+func TestEachRequiredQuotationIsStoredOnceAndStillResolvable(t *testing.T) {
+	quote := "Issuer raised guidance and expects its delivery update in two weeks and reiterated the full-year outlook."
+	doc := model.EvidenceDocument{ID: "shared-doc", Ticker: "AAA", Kind: "document",
+		Text: strings.Repeat("Boilerplate legal text repeated across the page. ", 20) + quote + strings.Repeat(" Trailing commentary follows.", 20)}
+	claims := []model.ResearchClaim{
+		{ID: "c1", Kind: "observation", Text: "Guidance raised", EvidenceIDs: []string{doc.ID}, Passages: []model.ClaimPassage{{EvidenceID: doc.ID, Quote: quote, IssuerRole: "reporting issuer"}}},
+		{ID: "c2", Kind: "inference", Text: "Outlook reiterated", EvidenceIDs: []string{doc.ID}, Passages: []model.ClaimPassage{{EvidenceID: doc.ID, Quote: quote, IssuerRole: "reporting issuer"}}},
+		{ID: "c3", Kind: "inference", Text: "Delivery timing confirmed", EvidenceIDs: []string{doc.ID}, Passages: []model.ClaimPassage{{EvidenceID: doc.ID, Quote: quote, IssuerRole: "reporting issuer"}}},
+	}
+	d := model.CandidateDossier{ContractVersion: 2, Ticker: "AAA", Status: "supported", PreferredDirection: "BUY", EvidenceQuality: "mixed", Claims: claims}
+
+	qs := requiredQuotations(claims)
+	if len(qs) != 1 {
+		t.Fatalf("requiredQuotations = %d entries, want exactly 1 for one quotation cited by three claims: %+v", len(qs), qs)
+	}
+	if qs[0].EvidenceID != doc.ID || qs[0].Quote != quote {
+		t.Fatalf("wrong quotation stored: %+v", qs[0])
+	}
+	if !strings.Contains(doc.Text, qs[0].Quote) {
+		t.Fatal("stored quotation does not occur verbatim in its cited document — not resolvable against the same input")
+	}
+
+	ref := dossierReference(d)
+	body := jsonText(ref)
+	if strings.Count(body, quote) != 0 {
+		t.Fatalf("dossierReference still carries %d inline copies of the quotation", strings.Count(body, quote))
+	}
+	for i, c := range ref.Claims {
+		if c.ID != claims[i].ID || len(c.Passages) != 1 || c.Passages[0].EvidenceID != doc.ID {
+			t.Fatalf("claim %d lost its identity or evidence reference: %+v", i, c)
+		}
+		if c.Passages[0].Quote != "" {
+			t.Fatalf("claim %d still carries its own inline copy of the quotation", i)
+		}
+	}
+
+	ch := model.ThesisChallenge{ContractVersion: 2, Ticker: "AAA", Verdict: "supported", Claims: claims}
+	chRef := challengeReference(ch)
+	if strings.Count(jsonText(chRef), quote) != 0 {
+		t.Fatal("challengeReference still carries an inline copy of the quotation")
+	}
+	if len(chRef.Claims) != 3 || chRef.Claims[0].Passages[0].EvidenceID != doc.ID {
+		t.Fatalf("challengeReference lost claim identity or evidence reference: %+v", chRef.Claims)
+	}
+}
+
+// TestSuccessfulCompactionDoesNotOverflowTheRevisionPrompt covers what Task
+// 11's fix round already built (compaction_originals, thesis.go's base()):
+// it is a NAMED, independently measured section — unlike the pre-Task-11
+// marker scan, which had no entry for it at all and silently folded its
+// bytes into previous_dossier, its immediate predecessor in the old
+// concatenation — and, being Mandatory: false, it is the section a real
+// limit sheds first rather than let a tight budget overflow silently.
+func TestSuccessfulCompactionDoesNotOverflowTheRevisionPrompt(t *testing.T) {
+	originals := map[string]map[string]string{"AAA-round-1": {"long_case": "Original uncompacted long case text describing the setup in full before it was shortened for budget."}}
+	body := "\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(originals)
+	section := promptSection{Name: "compaction_originals", Mandatory: false, Body: body}
+
+	text, sizes, omitted, err := assembleSections([]promptSection{{Name: "identity", Mandatory: true, Body: "id"}, section}, noSectionLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizes["compaction_originals"] != len(body) {
+		t.Fatalf("compaction_originals measured at %d, want its own exact %d bytes", sizes["compaction_originals"], len(body))
+	}
+	if !strings.Contains(text, "Original uncompacted long case text") {
+		t.Fatal("compaction_originals missing from the assembled prompt at an unbounded limit")
+	}
+	if len(omitted) != 0 {
+		t.Fatalf("omitted = %v, want none at an unbounded limit", omitted)
+	}
+
+	// Dropped and named, never silently overflowing, once the budget really
+	// is tight.
+	tight := len("id") + 1
+	text, sizes, omitted, err = assembleSections([]promptSection{{Name: "identity", Mandatory: true, Body: "id"}, section}, tight)
+	if err != nil {
+		t.Fatalf("the mandatory total alone (%d bytes) must fit a %d-byte limit: %v", len("id"), tight, err)
+	}
+	if len(omitted) != 1 || omitted[0] != "compaction_originals" {
+		t.Fatalf("omitted = %v, want exactly [compaction_originals]", omitted)
+	}
+	if _, ok := sizes["compaction_originals"]; ok {
+		t.Fatal("a dropped section must not still be counted in sizes")
+	}
+	if strings.Contains(text, "Original uncompacted") {
+		t.Fatal("a dropped section's content still reached the assembled text")
+	}
+
+	// End to end: a real compaction's originals reach the challenge prompt
+	// as this SAME named, measured section — not folded into previous_dossier.
+	id := fixtureEvidenceID(t)
+	d := supportedResearch().Dossier
+	d.LongCase = "Material qualification: delivery timing remains uncertain. " + strings.Repeat("Repeated explanation. ", 1400)
+	d.Claims[0].EvidenceIDs = []string{id}
+	d.Claims[0].Passages[0].EvidenceID = id
+	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
+		if strings.Contains(prompt, "# Independent thesis challenge") {
+			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "supported", Reason: "Material qualifications retained", CompactionAssessment: "preserved", Claims: d.Claims})
+		}
+		if strings.Contains(prompt, "Compact this complete dossier") {
+			next := d
+			next.LongCase = "Delivery opportunity depends on uncertain timing."
+			return fenced(next)
+		}
+		return fenced(d)
+	})
+	defer done()
+	out := runner.investigate(context.Background(), model.Candidate{Ticker: "AAA"}, nil, pack, nil)
+	if out.Outcome.Contract != "compacted" {
+		t.Fatalf("fixture did not actually take a compaction: %+v", out.Outcome)
+	}
+	_, profile := readInputPack(t, runner.run.Dir, "research-414141-challenge")
+	if profile.Components["compaction_originals"] == 0 {
+		t.Fatalf("compaction_originals is not a measured, named component of the challenge prompt: %+v", profile.Components)
+	}
+}
+
+// TestRepeatedRequestResultsCompactToIDsWithoutForgettingOutcomes pins
+// compactResults (thesis_compaction.go): a request answered unsupported,
+// unavailable or already attempted is worth explaining in full once, in the
+// round it happened — carrying the same sentence into every later round
+// unchanged is exactly what grew request_results from 1,725 to 5,114 bytes
+// across the three captured overflows with none of it new information.
+func TestRepeatedRequestResultsCompactToIDsWithoutForgettingOutcomes(t *testing.T) {
+	full := []model.ResearchResult{
+		{Request: model.ResearchRequest{Kind: "web_search", Question: "search the web"}, Outcome: model.RequestUnsupported, Detail: "No such operation: web_search. The only operations are document, news, filings, passage."},
+		{Request: model.ResearchRequest{Kind: "document", URL: "https://not-in-evidence.example/x", Question: "read this"}, Outcome: model.RequestUnsupported, Detail: "That URL is not in your evidence.", Repeats: 2},
+		{Request: model.ResearchRequest{Kind: "passage", EvidenceID: "ev-does-not-exist", Query: "guidance"}, Outcome: model.RequestUnavailable, Detail: "No readable saved document has evidence id ev-does-not-exist."},
+		{Request: model.ResearchRequest{Kind: "news"}, Outcome: model.RequestAlreadyDone, Detail: "News is fetched once before research begins."},
+		{Request: model.ResearchRequest{Kind: "document", URL: "https://issuer.example/release"}, Outcome: model.RequestFulfilled, Detail: "1000 characters of source text added.", EvidenceIDs: []string{"doc-1"}},
+	}
+	compacted := compactResults(full)
+	if len(compacted) != len(full) {
+		t.Fatalf("compactResults changed the entry count: %d -> %d", len(full), len(compacted))
+	}
+	for i, r := range compacted {
+		if full[i].Outcome == model.RequestFulfilled {
+			if r.Detail == "" || len(r.EvidenceIDs) == 0 {
+				t.Errorf("a fulfilled request lost the record the model has to act on: %+v", r)
+			}
+			continue
+		}
+		if r.Detail != "" {
+			t.Errorf("entry %d (%s) still carries its full Detail sentence in the compacted view: %+v", i, full[i].Outcome, r)
+		}
+		if r.Outcome != full[i].Outcome {
+			t.Errorf("entry %d outcome changed: %q -> %q — the model must still be told not to re-issue it", i, full[i].Outcome, r.Outcome)
+		}
+		if r.Request.Kind != full[i].Request.Kind {
+			t.Errorf("entry %d lost its identifying kind", i)
+		}
+	}
+	// The compacted view is a smaller PROMPT projection; it never touches the
+	// full ledger it was built from.
+	if full[1].Detail == "" || full[1].Repeats != 2 {
+		t.Fatal("compactResults mutated its input instead of returning a new slice")
+	}
+	// The model is never invited to re-issue a compacted request: identity
+	// (kind + whichever of url/evidence_id/observation_date it carried) is
+	// preserved so a later round's own identical request is recognizable.
+	if compacted[1].Request.URL != "https://not-in-evidence.example/x" {
+		t.Fatal("compacted document request lost its identifying URL")
+	}
+	if compacted[2].Request.EvidenceID != "ev-does-not-exist" {
+		t.Fatal("compacted passage request lost its identifying evidence_id")
+	}
+}
+
+// TestShorteningAProjectionCannotAuthorizeADifferentDossier is the one way
+// prompt shortening (Task 12's global board, Task 13's per-call evidence
+// resizing) could silently change what a review authorized: dossierHash
+// (thesis_budget.go) hashes the full CandidateDossier struct — never
+// anything derived from a prompt's projection of it — so it cannot move
+// merely because two prompts showed different amounts of supporting
+// evidence text for the SAME dossier.
+func TestShorteningAProjectionCannotAuthorizeADifferentDossier(t *testing.T) {
+	d := supportedResearch().Dossier
+	doc := model.EvidenceDocument{ID: "big-doc", Ticker: "AAA", Kind: "document",
+		Text: strings.Repeat("filler content padding out the source document. ", 500) + "Issuer raised guidance and expects its delivery update in two weeks."}
+	claims := []model.ResearchClaim{{ID: "c1", EvidenceIDs: []string{doc.ID}, Passages: []model.ClaimPassage{{EvidenceID: doc.ID, Quote: "Issuer raised guidance and expects its delivery update in two weeks.", IssuerRole: "issuer"}}}}
+
+	small := jsonText(promptDocuments([]model.EvidenceDocument{doc}, 100, claims...))
+	large := jsonText(promptDocuments([]model.EvidenceDocument{doc}, 5000, claims...))
+	if small == large {
+		t.Fatal("fixture does not actually exercise two different projections of the same evidence")
+	}
+
+	hash := dossierHash(d)
+	if dossierHash(d) != hash {
+		t.Fatal("dossierHash is not even deterministic against itself")
+	}
+	projectionHash := fmt.Sprintf("%x", sha256.Sum256([]byte(large)))
+	if projectionHash == hash {
+		t.Fatal("fixture collision: the projection hash coincides with the dossier hash")
+	}
+
+	good := model.ThesisChallenge{ContractVersion: 2, Ticker: d.Ticker, DossierHash: hash, Verdict: "supported",
+		ClaimReviews: []model.ClaimReview{{ClaimID: "c1", Assessment: "supported", Attribution: "confirmed", Reason: "ok"}}}
+	if p := compactReviewProblems(d, good); len(p) != 0 {
+		t.Fatalf("the correct dossier hash was rejected: %v", p)
+	}
+	bad := good
+	bad.DossierHash = projectionHash
+	if p := compactReviewProblems(d, bad); len(p) == 0 {
+		t.Fatal("a review echoing the projection hash instead of the full dossier hash was accepted")
+	}
+}
+
+// TestCapacityUsesBytesWhileSpanOffsetsStayUnicodeCharacters pins two
+// distinct facts at once: EvidenceSpan offsets index RUNES into the stored
+// text (model.EvidenceSpan's own contract), while the capacity DECISION —
+// whether a prompt fits its role's byte budget — must gate on UTF-8 BYTES,
+// never runes. A foreign-language filing (阿里巴巴集团, and the wider set of
+// non-ASCII sources sizeEvidence's convergence loop exists for) can run
+// several bytes per rune, so a prompt whose RUNE count looks comfortably
+// under a limit can still overflow it in bytes.
+func TestCapacityUsesBytesWhileSpanOffsetsStayUnicodeCharacters(t *testing.T) {
+	mixed := "ASCII prefix text precedes the quotation. 阿里巴巴集团 raised guidance — 🎯 delivery window follows and more filler text keeps this away from either edge of the document for the merge logic to exercise correctly."
+	quote := "阿里巴巴集团 raised guidance — 🎯 delivery window follows"
+	if !strings.Contains(mixed, quote) {
+		t.Fatal("fixture setup: quote is not a substring of the document")
+	}
+	doc := model.EvidenceDocument{ID: "cjk-doc", Ticker: "9988.HK", Kind: "document", Text: mixed}
+	claim := model.ResearchClaim{ID: "c1", EvidenceIDs: []string{doc.ID}, Passages: []model.ClaimPassage{{EvidenceID: doc.ID, Quote: quote, IssuerRole: "issuer"}}}
+
+	spans := requiredSpans(doc, []model.ResearchClaim{claim})
+	if len(spans) != 1 {
+		t.Fatalf("expected exactly one required span, got %+v", spans)
+	}
+	wantRunes := len([]rune(quote))
+	if spans[0].End-spans[0].Start != wantRunes {
+		t.Fatalf("span width = %d, want %d RUNES — offsets must index runes, not bytes", spans[0].End-spans[0].Start, wantRunes)
+	}
+	if rendered := renderEvidenceSpans(doc.Text, spans); rendered != quote {
+		t.Fatalf("rendered span = %q, want the exact quote %q — rune offsets must still locate the exact bytes after assembly", rendered, quote)
+	}
+
+	// The capacity decision itself must gate on bytes: build a prompt whose
+	// CJK-heavy section is well under a plausible RUNE cap (a naive
+	// utf8.RuneCountInString check would pass it) but whose BYTE length
+	// exceeds a small role input budget. The budget is derived from the
+	// persona wrapper's own measured cost, not a guessed constant: the
+	// researcher persona alone already costs several KB, so a hardcoded
+	// small limit would fail for that reason alone and prove nothing about
+	// the CJK section specifically.
+	runner, _, done := thesisFixture(t, func(string, int) string { return "unused" })
+	defer done()
+	wrapper, werr := runner.promptWrapperBytes("thesis-researcher")
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	const identityBody = "id"
+	limit := wrapper + len(identityBody) + 512
+	runner.cfg.Research.Budgets.Researcher = model.RoleBudget{InputBytes: limit, ResponseBytes: 1024}
+	cjk := strings.Repeat("阿里巴巴集团营收增长强劲", 200) // 12 runes/rep * 3 bytes/rune = 36 bytes/rep
+	runeCount := utf8.RuneCountInString(cjk)
+	if runeCount >= limit {
+		t.Fatalf("fixture invalid: %d runes must be well under the %d-byte limit to prove a BYTE check, not a rune check, is what refuses this", runeCount, limit)
+	}
+	sections := []promptSection{
+		{Name: "identity", Mandatory: true, Body: identityBody},
+		{Name: "evidence", Mandatory: true, Body: cjk},
+	}
+	_, _, err := runner.preparePrompt("thesis-researcher", "cjk-capacity", sections, 0)
+	if err == nil {
+		t.Fatal("a prompt over its byte limit but comfortably under a rune-counted limit was accepted")
+	}
+	if promptFailureKind(err) != "input_capacity" {
+		t.Fatalf("failure kind = %q, want input_capacity", promptFailureKind(err))
+	}
+
+	// sizeEvidence's own convergence must actually SHRINK a CJK-heavy corpus
+	// to fit a small byte budget, not merely happen to fit one that was
+	// already small enough on its own: pad the corpus with plenty of
+	// uncited CJK context so an implementation that ignored the available
+	// byte budget (e.g. rendering at a large fixed rune cap regardless of
+	// what was passed in) would clearly overflow the available room. The
+	// budget again has to clear the wrapper's own real cost, or the "room
+	// for evidence" this is meant to measure is negative before evidence
+	// even starts.
+	available := 4096
+	runner.cfg.Research.Budgets.Researcher = model.RoleBudget{InputBytes: wrapper + available, ResponseBytes: 1024}
+	big := model.EvidenceDocument{ID: "cjk-required", Ticker: "9988.HK", Kind: "document", Text: strings.Repeat("填充文字用于撑大文档内容长度。", 5) + quote}
+	bigClaim := model.ResearchClaim{ID: "c2", EvidenceIDs: []string{big.ID}, Passages: []model.ClaimPassage{{EvidenceID: big.ID, Quote: quote, IssuerRole: "issuer"}}}
+	padding := make([]model.EvidenceDocument, 2)
+	for i := range padding {
+		padding[i] = model.EvidenceDocument{ID: fmt.Sprintf("cjk-padding-%d", i), Ticker: "9988.HK", Kind: "document",
+			Text: strings.Repeat("大量未引用的中文上下文用于撑满可选预算而不是必须引用的内容。", 40)}
+	}
+	corpus := append([]model.EvidenceDocument{big}, padding...)
+	rendered := runner.sizeEvidence("thesis-researcher", corpus, time.Time{}, []model.ResearchClaim{bigClaim}, nil, nil)
+	if got := len(redact.String(jsonText(rendered))) + len(evidenceLabel); got > available {
+		t.Fatalf("sizeEvidence produced %d bytes (+label) against a %d-byte allowance for evidence — it did not actually shrink for the byte budget it was given", got, available)
+	}
+	if !strings.Contains(jsonText(rendered), quote) {
+		t.Fatal("sizeEvidence dropped the required quotation while still overflowing on padding")
 	}
 }

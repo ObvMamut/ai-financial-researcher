@@ -338,6 +338,42 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 	return s, nil
 }
 
+// compactResults is a second, unrelated kind of compaction from the rest of
+// this file: deterministic, Go-only, and spending no model call — it shapes
+// the request_results PROMPT SECTION, never out.Results itself. out.Results
+// is the durable ledger (thesis.go's investigate persists it whole via
+// run.WriteDataPack(safeName, out)); compactResults produces a second,
+// smaller view of it for the model to read.
+//
+// A request answered "fulfilled" keeps its full record — what it added
+// (EvidenceIDs) is exactly what the model has to act on. Every other outcome
+// (unsupported, unavailable, already attempted, budget exhausted) exists
+// only to stop the model asking again, and once recorded that fact does not
+// change: the Detail sentence that explains it ("No such operation:
+// web_search", "That URL is not in your evidence") was worth saying once, in
+// the round it happened, and worth nothing as an unchanging repeat carried
+// into every later round. On the three captured SNOW/OKTA/ORCL overflows,
+// request_results ran 1,725 to 5,114 bytes of exactly this: a handful of
+// distinct requests, each explained at full length, accumulating round over
+// round. The compacted view keeps enough of the original request to
+// identify it — kind, and whichever of url/evidence_id/observation_date it
+// carried — so the model can recognize its own repeated question without
+// reading why it failed a second time.
+func compactResults(results []model.ResearchResult) []model.ResearchResult {
+	out := make([]model.ResearchResult, len(results))
+	for i, r := range results {
+		if r.Outcome == model.RequestFulfilled {
+			out[i] = r
+			continue
+		}
+		out[i] = model.ResearchResult{
+			Request: model.ResearchRequest{Kind: r.Request.Kind, URL: r.Request.URL, EvidenceID: r.Request.EvidenceID, ObservationDate: r.Request.ObservationDate},
+			Outcome: r.Outcome,
+		}
+	}
+	return out
+}
+
 func compactionOriginals(reports []model.DomainStatus) map[string]map[string]string {
 	var originals map[string]map[string]string
 	for _, report := range reports {

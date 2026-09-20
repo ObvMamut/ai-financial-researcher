@@ -139,5 +139,15 @@ func singleSection(body string) []promptSection {
 // section the call exists to use, trading a loud failure for a silent
 // well-formed "supported" verdict with nothing left to catch it.
 func challengeSections(base []promptSection, previous model.ThesisChallenge) []promptSection {
-	return append(base, promptSection{Name: "previous_challenge", Mandatory: true, Body: "\nPrevious challenge:\n" + jsonText(previous)})
+	return append(base, previousChallengeSection(previous))
+}
+
+// previousChallengeSection is challengeSections' own appended section,
+// pulled out so a caller that must know its size BEFORE challengeSections
+// runs — thesis.go's base(), sizing the evidence section for whatever this
+// call appends afterward — computes the exact same bytes challengeSections
+// will actually append, from one definition, rather than a hand-copied
+// second construction that could drift from it.
+func previousChallengeSection(previous model.ThesisChallenge) promptSection {
+	return promptSection{Name: "previous_challenge", Mandatory: true, Body: "\nPrevious challenge:\n" + jsonText(previous)}
 }

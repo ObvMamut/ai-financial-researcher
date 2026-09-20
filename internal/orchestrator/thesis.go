@@ -16,6 +16,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 	"github.com/mamut/claude-financial-researcher/internal/store"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
@@ -660,6 +661,91 @@ func (t *thesisRunner) discover(ctx context.Context, uni *universe.Universe, ps 
 	return merged, news, statuses, errs
 }
 
+// evidenceLabel is the evidence section's own fixed prefix, measured once so
+// sizeEvidence can charge it without re-deriving it from the section's Body.
+const evidenceLabel = "\nEvidence (reporting periods must survive synthesis):\n"
+
+// evidenceFitAttempts bounds sizeEvidence's bisection over promptDocumentsAt's
+// rune budget. 24 halvings resolve any byte budget up to 2^24 (16 MiB) to the
+// exact rune, which is far beyond any role's input limit (the largest
+// default, the Chief's, is 192 KiB) — this is a correctness margin, not a
+// tuned constant.
+const evidenceFitAttempts = 24
+
+// sizeEvidence renders one company's evidence section for exactly the room
+// left over after everything else THIS call's prompt carries: the persona
+// wrapper, base()'s other named sections, and — what a flat per-company
+// allowance could never account for — whatever mandatory section this
+// SPECIFIC call appends afterward (round_progress, revision_issues, or
+// previous_challenge). Before this, every researcher/challenger call sized
+// evidence at a fixed 24,000 characters regardless of what else it carried:
+// ORCL's challenge-final call carried a 9,477-byte previous_challenge on top
+// of an evidence section sized as if nothing followed it, and OKTA's
+// revision call carried an 8,412-byte revision_issues the same way — both
+// overflowing the 98,304-byte input limit by exactly the previously
+// unaccounted mandatory section, following chiefPromptBuilder's precedent
+// (thesis_board.go): reserving a flat worst case would turn every company
+// that fits today into a capacity error, so the one trimmable part is
+// resized for exactly what this call needs, at the moment it is known.
+//
+// promptDocumentsAt's budget parameter counts RUNES (a document's
+// selected_spans already index runes into the stored text — see
+// model.EvidenceSpan), while every role input limit here is UTF-8 BYTES, and
+// a foreign-language filing can run several bytes per rune — so the rune
+// budget that fits is found by measuring the actual byte cost, never by
+// assuming a ratio. It is found by BISECTION rather than chiefBoard's
+// single-shot proportional rescale (thesis_board.go), because that
+// proportionality assumption does not hold here: promptDocuments caps each
+// individual document's optional text at a fixed 1,600 runes
+// (relevantPassages), so once the rune budget is generous enough that every
+// document already receives its own per-document maximum, handing out MORE
+// budget produces the exact same byte cost — a flat region a proportional
+// rescale can spend all its attempts inside without ever crossing. The one
+// property that does hold, and the only one bisection needs, is that
+// promptDocuments' byte cost is monotonically non-decreasing in its rune
+// budget: more room is never rendered as less text.
+func (t *thesisRunner) sizeEvidence(role string, docs []model.EvidenceDocument, anchor time.Time, claims []model.ResearchClaim, other, reserve []promptSection) []model.EvidenceDocument {
+	wrapper, _ := t.promptWrapperBytes(role)
+	used := wrapper + len(evidenceLabel)
+	for _, s := range other {
+		used += len(redact.String(s.Body))
+	}
+	for _, s := range reserve {
+		used += len(redact.String(s.Body))
+	}
+	available := t.cfg.Research.Budgets.ForRole(role).InputBytes - used
+	if available < 0 {
+		available = 0
+	}
+	render := func(budget int) ([]model.EvidenceDocument, int) {
+		r := promptDocumentsAt(docs, budget, anchor, claims...)
+		return r, len(redact.String(jsonText(r)))
+	}
+	// The fast path: most calls have plenty of room (round 1, and any company
+	// whose required quotations are a small fraction of the budget), so try
+	// the whole remainder before bisecting for it.
+	if rendered, actual := render(available); actual <= available {
+		return rendered
+	}
+	lo, hi := 0, available
+	rendered, _ := render(0)
+	for attempt := 0; attempt < evidenceFitAttempts && lo <= hi; attempt++ {
+		mid := lo + (hi-lo)/2
+		r, actual := render(mid)
+		if actual <= available {
+			rendered, lo = r, mid+1
+		} else {
+			hi = mid - 1
+		}
+	}
+	// If no budget converged inside available (required content alone
+	// already exceeds it), rendered is render(0)'s result: required spans
+	// still could not fit, promptDocuments marks OmittedClaimIDs, and
+	// preparePrompt's omitted_claim_ids check refuses the prompt outright —
+	// never a silent overflow.
+	return rendered
+}
+
 func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initial []model.EvidenceDocument, qp *quant.Pack, series map[string]*quant.Series) thesisResearch {
 	out := thesisResearch{Candidate: c, Documents: initial}
 	out.Outcome = model.ResearchOutcome{Ticker: c.Ticker, Transport: model.OutcomeOK, Parsing: model.OutcomeOK, Review: model.ReviewUnavailable}
@@ -929,30 +1015,43 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		fetch([]model.ResearchRequest{{Kind: "document", URL: u, Question: "headline context"}})
 	}
 	// base is the shared skeleton of every researcher/challenger prompt for
-	// this company: nine named sections whose sizes are now visible on their
-	// own terms instead of being re-derived after assembly by scanning for
-	// marker substrings — the old scan had no entry at all for
-	// compaction_originals below, so its bytes silently folded into
-	// previous_dossier, its immediate predecessor in the old concatenation.
-	base := func() []promptSection {
+	// this company: named sections whose sizes are now visible on their own
+	// terms instead of being re-derived after assembly by scanning for marker
+	// substrings — the old scan had no entry at all for compaction_originals
+	// below, so its bytes silently folded into previous_dossier, its
+	// immediate predecessor in the old concatenation.
+	//
+	// role and reserve exist for exactly one reason: evidence is the only
+	// section here with room to give up, and how much room it can safely give
+	// up depends on what role this call uses (researcher vs challenger budgets
+	// can differ) and on whatever mandatory section the CALLER is about to
+	// append after base() returns — round_progress, revision_issues, or
+	// challengeSections' own previous_challenge. reserve is sized but never
+	// included in the returned slice; the caller appends the real section
+	// itself, so there is exactly one place that ever constructs it.
+	base := func(role string, reserve ...promptSection) []promptSection {
 		out.Temporal = temporalFacts(out, t.run.TS, t.calendar, qp)
+		claims := evidenceClaims(out.Dossier, out.Challenge.Claims...)
 		// Answers to previous requests come before the diagnostics, because they
 		// are the half the model is expected to act on: an operation reported
 		// unsupported or a passage reported absent should not be asked for again.
-		return []promptSection{
+		other := []promptSection{
 			{Name: "identity", Mandatory: true, Body: "Company identity: " + jsonText(model.Candidate{Ticker: ticker, Name: c.Name, Index: c.Index, Sector: c.Sector})},
 			{Name: "temporal_facts", Mandatory: true, Body: "\nComputed temporal facts (use these dates and units rather than counting weekdays):\n" + jsonText(out.Temporal)},
-			{Name: "evidence", Mandatory: true, Body: "\nEvidence (reporting periods must survive synthesis):\n" + jsonText(promptDocumentsAt(out.Documents, 24000, t.run.TS, evidenceClaims(out.Dossier, out.Challenge.Claims...)...))},
 			{Name: "source_urls", Mandatory: false, Body: "\nIssuer source URLs:\n" + jsonText(t.sources[ticker])},
-			{Name: "request_results", Mandatory: true, Body: "\nAnswers to your research requests (every request is answered; do not repeat one answered unsupported, unavailable or already attempted):\n" + jsonText(out.Results)},
+			{Name: "request_results", Mandatory: true, Body: "\nAnswers to your research requests (every request is answered; do not repeat one answered unsupported, unavailable or already attempted):\n" + jsonText(compactResults(out.Results))},
 			{Name: "dossier_hash", Mandatory: true, Body: "\nDossier hash: " + dossierHash(out.Dossier)},
-			{Name: "previous_dossier", Mandatory: true, Body: "\nPrevious dossier:\n" + jsonText(out.Dossier)},
+			{Name: "previous_dossier", Mandatory: true, Body: "\nPrevious dossier:\n" + jsonText(dossierReference(out.Dossier))},
+			{Name: "quotations", Mandatory: true, Body: "\nAccepted source quotations, once per cited passage (resolve a claim's passage by its evidence_id; text is not repeated on the claim itself):\n" + jsonText(requiredQuotations(claims))},
 			{Name: "compaction_originals", Mandatory: false, Body: "\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(compactionOriginals(out.Reports))},
 			{Name: "retrieval_errors", Mandatory: false, Body: "\nRetrieval diagnostics:\n" + jsonText(out.Errors)},
 		}
+		evidence := promptSection{Name: "evidence", Mandatory: true, Body: evidenceLabel + jsonText(t.sizeEvidence(role, out.Documents, t.run.TS, claims, other, reserve))}
+		return append([]promptSection{other[0], other[1], evidence}, other[2:]...)
 	}
 	for round := 0; round < t.cfg.Research.Rounds; round++ {
-		sections := append(base(), promptSection{Name: "round_progress", Mandatory: true, Body: fmt.Sprintf("\nRound %d/%d; document attempts %d/%d.", round+1, t.cfg.Research.Rounds, used, t.cfg.Research.Documents)})
+		roundProgress := promptSection{Name: "round_progress", Mandatory: true, Body: fmt.Sprintf("\nRound %d/%d; document attempts %d/%d.", round+1, t.cfg.Research.Rounds, used, t.cfg.Research.Documents)}
+		sections := append(base("thesis-researcher", roundProgress), roundProgress)
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", fmt.Sprintf("%s-round-%d", safeName, round+1), sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
@@ -990,7 +1089,8 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	// this overflow to plan review instead; that attribution does not match
 	// the saved artifact and this comment corrects it.
 	challenge := func(suffix string) {
-		sections := challengeSections(base(), out.Challenge)
+		previous := challengeReference(out.Challenge)
+		sections := challengeSections(base("thesis-challenger", previousChallengeSection(previous)), previous)
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-challenger", safeName+"-challenge"+suffix, sections, &out.Challenge, challengeSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
@@ -1025,7 +1125,8 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	}
 	if out.Challenge.Verdict == "revise" || len(out.Challenge.MaterialIssues) > 0 || len(out.Challenge.Requests) > 0 {
 		fetch(out.Challenge.Requests)
-		sections := append(base(), promptSection{Name: "revision_issues", Mandatory: true, Body: "\nFinal revision: resolve these issues or stand down. No further retrieval rounds.\n" + jsonText(out.Challenge)})
+		revisionIssues := promptSection{Name: "revision_issues", Mandatory: true, Body: "\nFinal revision: resolve these issues or stand down. No further retrieval rounds.\n" + jsonText(challengeReference(out.Challenge))}
+		sections := append(base("thesis-researcher", revisionIssues), revisionIssues)
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", safeName+"-revision", sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
