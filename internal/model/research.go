@@ -199,10 +199,16 @@ type ResearchOutcome struct {
 	RepairAttempts     int    `json:"repair_attempts"`
 	CompactionAttempts int    `json:"compaction_attempts"`
 	Ticker             string `json:"ticker"`
-	// Transport: ok | failed — whether the model calls themselves completed.
+	// Transport: ok | failed | not_attempted — whether the model calls
+	// themselves completed. not_attempted means dispatch was refused before
+	// any call was made (an oversized prompt caught by the input-capacity
+	// check): no transport ever ran, which is a different fact from one that
+	// ran and failed.
 	Transport string `json:"transport"`
-	// Parsing: ok | repaired | failed — whether their payloads decoded, and
-	// whether that took the one bounded schema-repair call.
+	// Parsing: ok | repaired | failed | not_attempted — whether their
+	// payloads decoded, and whether that took the one bounded schema-repair
+	// call. not_attempted mirrors Transport: no payload was ever received to
+	// parse, so nothing about parsing failed either.
 	Parsing string `json:"parsing"`
 	// Evidence: documents | thin | none — what the retrieval loop actually
 	// reached, independently of what the model then said about it.
@@ -216,14 +222,25 @@ type ResearchOutcome struct {
 }
 
 const (
-	OutcomeOK         = "ok"
-	OutcomeNotRun     = "not_run"
-	OutcomeFailed     = "failed"
-	OutcomeRepaired   = "repaired"
-	EvidenceDocuments = "documents"
-	EvidenceThin      = "thin"
-	EvidenceNone      = "none"
-	ReviewUnavailable = "unavailable"
+	OutcomeOK       = "ok"
+	OutcomeNotRun   = "not_run"
+	OutcomeFailed   = "failed"
+	OutcomeRepaired = "repaired"
+	// OutcomeNotAttempted marks a call Go refused to dispatch on capacity
+	// grounds — never a subprocess started, never an HTTP request sent. It is
+	// deliberately NOT OutcomeNotRun: OutcomeNotRun means research was never
+	// *intended* (a company blocked by an event window, excluded from
+	// failure/deferred counts as a policy deferral); OutcomeNotAttempted
+	// means research was intended and the prompt was built and measured, but
+	// dispatch itself was refused, so the company still failed — only the
+	// transport/parsing claim about *how* is corrected. Reusing OutcomeNotRun
+	// here would silently move zero-attempt capacity failures out of every
+	// failure count and into deferrals.
+	OutcomeNotAttempted = "not_attempted"
+	EvidenceDocuments   = "documents"
+	EvidenceThin        = "thin"
+	EvidenceNone        = "none"
+	ReviewUnavailable   = "unavailable"
 )
 
 type ThesisPlan struct {

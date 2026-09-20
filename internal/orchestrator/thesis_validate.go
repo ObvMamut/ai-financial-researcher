@@ -268,6 +268,8 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 // review that never ran.
 func researchFailureNote(r thesisResearch) string {
 	switch {
+	case r.Outcome.Transport == model.OutcomeNotAttempted || r.Outcome.Parsing == model.OutcomeNotAttempted:
+		return "Research did not complete: the assembled request exceeded its input capacity and was never sent to the model. This is a pipeline failure, not a finding about the company."
 	case r.Outcome.Transport == model.OutcomeFailed:
 		return "Research did not complete: a model call failed. This is a pipeline failure, not a finding about the company."
 	case r.Outcome.Contract == model.OutcomeFailed:

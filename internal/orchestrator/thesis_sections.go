@@ -81,7 +81,7 @@ func assembleSections(s []promptSection, limit int) (text string, sizes map[stri
 			for j, sec := range kept {
 				names[j] = sec.Name
 			}
-			return "", nil, omitted, promptCapacityError{fmt.Errorf("mandatory prompt sections (%s) require %d bytes, over the %d byte limit", strings.Join(names, ", "), total, limit)}
+			return "", nil, omitted, promptCapacityError{fmt.Errorf("mandatory prompt sections (%s) require %d bytes, over the %d byte limit", strings.Join(names, ", "), total, limit), names}
 		}
 		total -= len(kept[i].Body)
 		omitted = append(omitted, kept[i].Name)

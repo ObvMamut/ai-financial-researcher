@@ -422,9 +422,10 @@ func chiefBoard(research []thesisResearch, textBudget int) ([]chiefCompany, boar
 		// engine. Returning nil here would instead skip the Chief entirely and
 		// erase that provenance. What this error adds is the part preparePrompt
 		// cannot say — which companies' required records did not fit.
+		costReport := requiredCostReport(plans)
 		return board, alloc, promptCapacityError{fmt.Errorf(
 			"input capacity exceeded: the Chief board's required records and quotations need %d bytes against %d available for %d companies (%s); no optional narrative or source context had been added",
-			alloc.RequiredBytes, textBudget, len(plans), strings.Join(requiredCostReport(plans), ", "))}
+			alloc.RequiredBytes, textBudget, len(plans), strings.Join(costReport, ", ")), costReport}
 	}
 	contextNeeds := make([]int, len(plans))
 	for i, p := range plans {

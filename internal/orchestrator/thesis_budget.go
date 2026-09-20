@@ -62,6 +62,17 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 		sec.Body = redact.String(sec.Body)
 		redacted[i] = sec
 	}
+	// Named ahead of assembly, not derived from assembleSections' own omitted
+	// return: noSectionLimit means that return is always empty in production
+	// (nothing is ever actually dropped), so it cannot answer "which
+	// requirement exceeded capacity" for the len(prompt) > InputBytes check
+	// below. mandatory lists every section this call cannot trim away.
+	mandatory := make([]string, 0, len(redacted))
+	for _, sec := range redacted {
+		if sec.Mandatory {
+			mandatory = append(mandatory, sec.Name)
+		}
+	}
 	data, sizes, omitted, aerr := assembleSections(redacted, noSectionLimit)
 	if aerr != nil {
 		return "", nil, aerr
@@ -99,10 +110,10 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 		return "", profile, err
 	}
 	if strings.Contains(data, `"omitted_claim_ids":[`) {
-		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded: required source passages do not fit the evidence budget")}
+		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded: required source passages do not fit the evidence budget"), []string{"evidence"}}
 	}
 	if len(prompt) > budget.InputBytes {
-		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded for %s: %d > %d bytes; required context cannot be omitted", role, len(prompt), budget.InputBytes)}
+		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded for %s: %d > %d bytes; required context cannot be omitted", role, len(prompt), budget.InputBytes), mandatory}
 	}
 	return prompt, profile, nil
 }
@@ -195,7 +206,15 @@ func executionPlanHash(idea model.TradeIdea) string {
 	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 
-type promptCapacityError struct{ error }
+// promptCapacityError distinguishes a capacity refusal (this prompt was never
+// dispatched) from any other prompt-preparation failure. omitted names the
+// mandatory requirements implicated — see DomainStatus.Omitted's doc comment
+// for why that is a different fact from assembleSections' own (always-empty
+// in production) omitted return.
+type promptCapacityError struct {
+	error
+	omitted []string
+}
 
 func promptFailureKind(err error) string {
 	var capacity promptCapacityError
@@ -203,4 +222,14 @@ func promptFailureKind(err error) string {
 		return "input_capacity"
 	}
 	return "input_preparation"
+}
+
+// promptOmitted extracts the mandatory requirements a capacity refusal named,
+// or nil for any other error (including no error at all).
+func promptOmitted(err error) []string {
+	var capacity promptCapacityError
+	if errors.As(err, &capacity) {
+		return capacity.omitted
+	}
+	return nil
 }

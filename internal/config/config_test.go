@@ -678,6 +678,14 @@ func TestChiefEngineMigrationMatrix(t *testing.T) {
 		{name: "claude with fallback explicitly false",
 			toml:       "chief_engine=\"claude\"\n[chief_fallback]\nenabled=false\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\n",
 			wantEngine: "claude", wantFallback: false},
+		// R28: the sixth truth-table row, tested at neither layer before this.
+		// enabled=false (above) and enabled omitted (further above) both take
+		// the disabled/nil-defaults-active paths; this is the third row,
+		// enabled=true explicit, and it must take the SAME active path as
+		// omitted rather than a special-cased one that could silently diverge.
+		{name: "claude with fallback explicitly true",
+			toml:       "chief_engine=\"claude\"\n[chief_fallback]\nenabled=true\nbase_url=\"https://x/v1\"\nmodel=\"m\"\napi_key=\"k\"\n",
+			wantEngine: "claude", wantFallback: true},
 		{name: "api with valid dedicated settings",
 			toml:       "chief_engine=\"api\"\n[chief_api]\nbase_url=\"https://y/v1\"\nmodel=\"n\"\napi_key=\"k2\"\n",
 			wantEngine: "api", wantFallback: false},

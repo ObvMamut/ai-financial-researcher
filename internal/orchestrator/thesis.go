@@ -116,7 +116,7 @@ func (t *thesisRunner) callSections(ctx context.Context, role, name string, sect
 	}
 	prompt, profile, e := t.preparePrompt(role, name, sections, outputTokens)
 	if e != nil {
-		r := model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, Err: e.Error(), FailureKind: promptFailureKind(e), Prompt: profile}
+		r := model.Report{Agent: name, CLI: target.CLI, Status: model.StatusFailed, Err: e.Error(), FailureKind: promptFailureKind(e), Prompt: profile, Omitted: promptOmitted(e)}
 		agentStatus(t.ch, name, r.Status, &r)
 		return r, e
 	}
@@ -145,7 +145,7 @@ func (t *thesisRunner) callSections(ctx context.Context, role, name string, sect
 	return r, nil
 }
 func reportStatus(r model.Report) model.DomainStatus {
-	return model.DomainStatus{FailureKind: r.FailureKind, Prompt: r.Prompt, Domain: r.Agent, Status: r.Status, Err: r.Err, Attempts: r.Attempts, Duration: r.Duration, Tokens: r.Tokens, Usage: r.Usage}
+	return model.DomainStatus{FailureKind: r.FailureKind, Prompt: r.Prompt, Domain: r.Agent, Status: r.Status, Err: r.Err, Attempts: r.Attempts, Duration: r.Duration, Tokens: r.Tokens, Usage: r.Usage, Omitted: r.Omitted}
 }
 func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run, reg *agents.Registry, uni *universe.Universe, p *pool, cheap model.CLI, chiefE chiefEngine, svc *marketdata.Service, prices marketdata.PriceSource, fx *marketdata.FXRates, ps *Prescreen, indices []string, start time.Time, stages map[string]int64) error {
 	if err := validateResearchBudgets(cfg.Research); err != nil {
@@ -236,7 +236,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	}
 	for _, r := range research {
 		statuses = append(statuses, r.Reports...)
-		errs = append(errs, r.Errors...)
+		errs = append(errs, researchOnlyErrors(r)...)
 	}
 	if e = run.WriteDataPack("research", research); e != nil {
 		return e
@@ -746,6 +746,34 @@ func (t *thesisRunner) sizeEvidence(role string, docs []model.EvidenceDocument, 
 	return rendered
 }
 
+// researchOnlyErrors returns a company's Errors that have no corresponding
+// entry among its own call Reports — a document-fetch or artifact-persist
+// failure, say, neither of which comes from a researchCallSections call. A
+// model-call failure (round, revision or challenge) already appears in
+// r.Reports with the identical error text (both come from the same
+// underlying error's Error() string), so re-adding it here would report one
+// failure as both a company note (r.Errors, folded into run-level
+// meta.DataErrors unattributed) and a domain error (the "ticker-call: err"
+// entry every failed/invalid DomainStatus already contributes elsewhere).
+// The detail itself is not lost either way: r.Reports (and its Err field) is
+// unaffected and is what the run's second, comprehensive pass over every
+// DomainStatus already attributes by name.
+func researchOnlyErrors(r thesisResearch) []string {
+	covered := make(map[string]bool, len(r.Reports))
+	for _, s := range r.Reports {
+		if s.Status != model.StatusDone || s.Payload == "invalid" {
+			covered[s.Err] = true
+		}
+	}
+	var out []string
+	for _, e := range r.Errors {
+		if !covered[e] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initial []model.EvidenceDocument, qp *quant.Pack, series map[string]*quant.Series) thesisResearch {
 	out := thesisResearch{Candidate: c, Documents: initial}
 	out.Outcome = model.ResearchOutcome{Ticker: c.Ticker, Transport: model.OutcomeOK, Parsing: model.OutcomeOK, Review: model.ReviewUnavailable}
@@ -1055,8 +1083,8 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", fmt.Sprintf("%s-round-%d", safeName, round+1), sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
-		if transport == model.OutcomeFailed {
-			out.Outcome.Transport = model.OutcomeFailed
+		if transport == model.OutcomeFailed || transport == model.OutcomeNotAttempted {
+			out.Outcome.Transport = transport
 		}
 		if e != nil {
 			// A call that did not return, or a payload that would not decode
@@ -1091,12 +1119,21 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	challenge := func(suffix string) {
 		previous := challengeReference(out.Challenge)
 		sections := challengeSections(base("thesis-challenger", previousChallengeSection(previous)), previous)
-		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-challenger", safeName+"-challenge"+suffix, sections, &out.Challenge, challengeSchema)
+		// transport/parsing are this challenge call's own outcome, not the
+		// dossier's: out.Outcome.Transport/.Parsing describe whether the
+		// RESEARCH (round/revision) calls that built the dossier completed,
+		// and out.Outcome.Review (set from out.Challenge.Verdict below)
+		// already fully carries a challenge failure, including a capacity
+		// refusal. Folding this call's own transport/parsing into the
+		// dossier's aggregate used to overwrite a genuinely completed
+		// dossier's "ok" with "failed" whenever only the review afterward
+		// could not be attempted — ORCL's real September 15 record shows
+		// exactly that: challenge-final was a zero-attempt capacity refusal
+		// while its revision had already succeeded (contract "compacted"),
+		// yet the outcome read transport/parsing "failed" for the whole
+		// company. That reset a completed dossier to an apparent zero.
+		reports, _, _, e := researchCallSections(ctx, t, "thesis-challenger", safeName+"-challenge"+suffix, sections, &out.Challenge, challengeSchema)
 		out.addResearchReports(reports)
-		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
-		if transport == model.OutcomeFailed {
-			out.Outcome.Transport = model.OutcomeFailed
-		}
 		if e != nil {
 			// A review that never happened is not a rejection. Recording it as
 			// one is how BSX — whose research call failed outright — reached the
@@ -1117,7 +1154,7 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	// the repair attempt — reviewing it spends two more calls to rediscover that
 	// there is nothing there, and risks recording the emptiness as an adverse
 	// verdict. Say plainly that the review did not happen.
-	if out.Outcome.Transport == model.OutcomeFailed || out.Outcome.Parsing == model.OutcomeFailed || out.Outcome.Contract == model.OutcomeFailed {
+	if researchDossierFailed(out.Outcome) {
 		out.Challenge = model.ThesisChallenge{Ticker: ticker, Verdict: model.ReviewUnavailable, Reason: "No independent challenge was run: the research loop produced no readable dossier to review."}
 		out.Outcome.Notes = appendUnique(out.Outcome.Notes, "independent challenge skipped: no dossier to review")
 	} else {
@@ -1130,8 +1167,8 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", safeName+"-revision", sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
 		out.Outcome.Parsing = worsePayload(out.Outcome.Parsing, parsing)
-		if transport == model.OutcomeFailed {
-			out.Outcome.Transport = model.OutcomeFailed
+		if transport == model.OutcomeFailed || transport == model.OutcomeNotAttempted {
+			out.Outcome.Transport = transport
 		}
 		if e != nil {
 			out.Errors = append(out.Errors, e.Error())
@@ -1163,7 +1200,7 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	if out.Challenge.Verdict == "reject" {
 		out.Dossier.Status = "rejected"
 	}
-	if out.Outcome.Transport == model.OutcomeFailed || out.Outcome.Parsing == model.OutcomeFailed || out.Outcome.Contract == model.OutcomeFailed || out.Outcome.Review == model.ReviewUnavailable {
+	if researchDossierFailed(out.Outcome) || out.Outcome.Review == model.ReviewUnavailable {
 		out.Dossier.Status = "watchlist"
 	}
 	out.Outcome.Decision = out.Dossier.Status
@@ -1177,13 +1214,27 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	return out
 }
 
+// researchDossierFailed reports whether the dossier-producing calls (research
+// rounds and any revision) left no readable dossier behind: transport,
+// parsing or contract. It deliberately excludes Review — a challenge's own
+// outcome (including its own capacity refusal) is a separate fact, folded
+// into Outcome.Review, not into whether the dossier itself is usable. Before
+// this distinction existed, an independent challenge that could not be
+// attempted overwrote a genuinely completed dossier's transport/parsing with
+// "failed", which is the exact defect
+// TestUsableDossierFollowedByUnavailableReviewStaysVisibleAsResearchCompleted
+// pins.
+func researchDossierFailed(o model.ResearchOutcome) bool {
+	return o.Transport == model.OutcomeFailed || o.Transport == model.OutcomeNotAttempted ||
+		o.Parsing == model.OutcomeFailed || o.Parsing == model.OutcomeNotAttempted ||
+		o.Contract == model.OutcomeFailed
+}
+
 // researchFailed reports whether this candidate never produced usable research,
 // as opposed to producing research that was examined and found wanting. The
 // distinction decides whether a decision may say "rejected".
 func (r thesisResearch) researchFailed() bool {
-	return r.Outcome.Transport == model.OutcomeFailed ||
-		r.Outcome.Parsing == model.OutcomeFailed ||
-		r.Outcome.Contract == model.OutcomeFailed ||
+	return researchDossierFailed(r.Outcome) ||
 		r.Outcome.Review == model.ReviewUnavailable ||
 		r.Outcome.Evidence == model.EvidenceNone
 }

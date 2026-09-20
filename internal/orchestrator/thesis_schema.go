@@ -253,6 +253,14 @@ func researchCallSections[T any](ctx context.Context, t *thesisRunner, role, nam
 	}
 	if callErr != nil {
 		status.Payload = "invalid"
+		if r.Attempts == 0 && r.FailureKind == "input_capacity" {
+			// Dispatch was refused before a subprocess ran or an HTTP request
+			// was sent: neither the transport nor the parser ever touched
+			// this call, so neither claim of "failed" is true. The company
+			// still fails (see model.OutcomeNotAttempted's own comment) —
+			// only this fact about *how* is corrected.
+			return []model.DomainStatus{status}, model.OutcomeNotAttempted, model.OutcomeNotAttempted, callErr
+		}
 		return []model.DomainStatus{status}, model.OutcomeFailed, model.OutcomeFailed, callErr
 	}
 	parsing, repairs, decodeErr := decodeOrRepair(ctx, t, role, name, r.Stdout, v, check)
@@ -291,7 +299,7 @@ func clearComputedComparisons(d *model.CandidateDossier) {
 // worsePayload keeps the worst parsing outcome a candidate saw. A dossier that
 // needed a repair on one round is a repaired dossier however clean the rest were.
 func worsePayload(current, next string) string {
-	rank := map[string]int{model.OutcomeOK: 0, model.OutcomeRepaired: 1, model.OutcomeFailed: 2}
+	rank := map[string]int{model.OutcomeOK: 0, model.OutcomeRepaired: 1, model.OutcomeNotAttempted: 2, model.OutcomeFailed: 3}
 	if current == "" {
 		return next
 	}

@@ -164,6 +164,13 @@ type Report struct {
 	// attempts. Usage distinguishes unknown CLI counts from reported zeroes.
 	Tokens int
 	Usage  []TokenUsage
+	// Omitted names the mandatory prompt sections implicated in an
+	// input-capacity refusal (FailureKind == "input_capacity"): what the
+	// requirement was that could not fit, not sections actually dropped from
+	// an assembled prompt (see PromptProfile.Omitted for that — a different
+	// fact, and empty in practice because production never runs
+	// assembleSections under a real limit). nil on every other outcome.
+	Omitted []string
 }
 
 // TradeIdea is one final deliverable: direction, confidence, rationale, and
@@ -476,6 +483,18 @@ type DomainStatus struct {
 	// recorded `done` while eight of them carried nothing a decoder could read,
 	// so metadata said the research had completed and the dossiers were empty.
 	Payload string `json:"payload,omitempty"`
+
+	// Omitted names the mandatory prompt requirements implicated when this
+	// call was refused on input capacity before it ever dispatched
+	// (FailureKind == "input_capacity", Attempts == 0) — what the September
+	// 15 audit could not say without a byte-level re-derivation of the saved
+	// prompt. It is not the list of sections actually dropped to make a
+	// prompt fit (see PromptProfile.Omitted for that): production never
+	// exercises real section-dropping, so that list is empty here in
+	// practice, and Omitted names the mandatory content that made dropping
+	// anything else pointless instead. Empty or absent means nothing to
+	// report — every other outcome, and every artifact predating this field.
+	Omitted []string `json:"omitted,omitempty"`
 
 	// Ungrounded lists the shortlisted tickers this domain found no verified
 	// data for. A domain whose whole shortlist is ungrounded is a degraded run,

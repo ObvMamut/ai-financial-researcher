@@ -160,6 +160,193 @@ func TestUnrepairablePayloadIsAResearchFailureNotARejection(t *testing.T) {
 	}
 }
 
+// TestZeroAttemptCapacityRefusalDoesNotClaimTransportOrParsingFailure pins
+// Task 14's defect: an input-capacity refusal recorded Transport and Parsing
+// as "failed" even though neither the model call nor any decoding ever
+// happened — preparePrompt refused the assembled prompt on its own
+// len(prompt) > InputBytes check before any subprocess ran or HTTP request
+// was sent. Confirmed against real evidence: runs/2026-09-15T17-00-30/
+// metadata.json records exactly this shape for SNOW, OKTA and ORCL (attempts
+// 0, failure_kind "input_capacity", yet transport/parsing both "failed").
+func TestZeroAttemptCapacityRefusalDoesNotClaimTransportOrParsingFailure(t *testing.T) {
+	calls := 0
+	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
+		calls++
+		d := supportedResearch().Dossier
+		return fenced(d)
+	})
+	defer done()
+	// A budget the persona wrapper alone already exceeds (agents/thesis-
+	// researcher.md is ~10KB on its own): nothing to trim, every mandatory
+	// section implicated, and the very first round call is refused before
+	// any request reaches the fixture server.
+	runner.cfg.Research.Budgets.Researcher = model.RoleBudget{InputBytes: 4096, ResponseBytes: 1024}
+
+	got := runner.investigate(context.Background(), model.Candidate{Ticker: "AAA", Name: "Company"}, nil, pack, nil)
+
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0 — an oversized prompt must never be dispatched", calls)
+	}
+	if got.Outcome.Transport != model.OutcomeNotAttempted {
+		t.Errorf("Transport = %q, want %q — no call was ever dispatched", got.Outcome.Transport, model.OutcomeNotAttempted)
+	}
+	if got.Outcome.Parsing != model.OutcomeNotAttempted {
+		t.Errorf("Parsing = %q, want %q — no payload was ever received to parse", got.Outcome.Parsing, model.OutcomeNotAttempted)
+	}
+	if len(got.Reports) == 0 {
+		t.Fatal("no domain report recorded for the refused call")
+	}
+	r := got.Reports[0]
+	if r.Attempts != 0 {
+		t.Errorf("Attempts = %d, want 0", r.Attempts)
+	}
+	if r.FailureKind != "input_capacity" {
+		t.Errorf("FailureKind = %q, want input_capacity", r.FailureKind)
+	}
+	if len(r.Omitted) == 0 {
+		t.Error("Omitted is empty; an infeasible prompt must name which mandatory requirements exceeded capacity")
+	}
+	for _, want := range []string{"identity", "evidence"} {
+		found := false
+		for _, o := range r.Omitted {
+			if o == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Omitted = %v, want it to include mandatory section %q", r.Omitted, want)
+		}
+	}
+}
+
+// TestResearchFailureNoteNamesACapacityRefusalDistinctlyFromAModelCallFailure
+// keeps the human-facing decision reason (SelectionDecision.Reason/
+// ReviewReason, rendered by both cmd/cfr/headless.go and internal/tui) as
+// accurate as the machine-readable fields: a company blocked by a capacity
+// refusal must not read as "a model call failed", which claims a dispatch
+// that never happened.
+func TestResearchFailureNoteNamesACapacityRefusalDistinctlyFromAModelCallFailure(t *testing.T) {
+	r := thesisResearch{Outcome: model.ResearchOutcome{Transport: model.OutcomeNotAttempted, Parsing: model.OutcomeNotAttempted, Review: model.ReviewUnavailable}}
+	note := researchFailureNote(r)
+	if strings.Contains(note, "a model call failed") {
+		t.Errorf("note = %q; a capacity refusal must not be described as a model call failing", note)
+	}
+	if !strings.Contains(note, "input capacity") {
+		t.Errorf("note = %q, want it to name the capacity refusal", note)
+	}
+}
+
+// TestOneFailureIsCountedOnceNotAsBothCompanyNoteAndDomainError pins Task
+// 14's aggregation fix: a call-outcome failure (round, revision or
+// challenge) used to be recorded twice in a run's DataErrors — once as the
+// raw, unattributed error text carried in a company's own Errors list (its
+// "company note"), and again, differently worded, as the ticker-tagged
+// "domain error" every failed/invalid DomainStatus contributes. Confirmed
+// against real evidence: runs/2026-09-15T17-00-30/metadata.json's
+// data_errors carries both
+// "input capacity exceeded for thesis-researcher: 103077 > 98304 bytes;
+// required context cannot be omitted" (unattributed) and
+// "research-4f4b5441-revision: input capacity exceeded for
+// thesis-researcher: 103077 > 98304 bytes; required context cannot be
+// omitted" (OKTA's revision, tagged) for the identical OKTA revision refusal.
+func TestOneFailureIsCountedOnceNotAsBothCompanyNoteAndDomainError(t *testing.T) {
+	const raw = "input capacity exceeded for thesis-researcher: 103077 > 98304 bytes; required context cannot be omitted"
+	r := thesisResearch{
+		Candidate: model.Candidate{Ticker: "OKTA"},
+		// A document-fetch failure has no DomainStatus counterpart and must
+		// still reach the run-level aggregate.
+		Errors: []string{raw, "document https://issuer.example/x: fetch timed out"},
+		Reports: []model.DomainStatus{
+			{Domain: "research-4f4b5441-revision", Status: model.StatusFailed, FailureKind: "input_capacity", Attempts: 0, Payload: "invalid", Err: raw},
+		},
+	}
+
+	got := researchOnlyErrors(r)
+
+	count := 0
+	for _, e := range got {
+		if e == raw {
+			count++
+		}
+	}
+	if count != 0 {
+		t.Fatalf("the call-outcome failure survived as an orphaned company error: %v (it must be left for the domain-tagged pass alone to add)", got)
+	}
+	found := false
+	for _, e := range got {
+		if strings.Contains(e, "fetch timed out") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an unrelated, uncovered error was dropped: %v", got)
+	}
+	// The detail stays reachable in the artifact either way.
+	if r.Reports[0].Err != raw {
+		t.Fatal("detailed evidence missing from the domain report")
+	}
+}
+
+// TestUsableDossierFollowedByUnavailableReviewStaysVisibleAsResearchCompleted
+// pins Task 14's stage-progress fix. Before it, a challenge call's own
+// transport/parsing outcome was folded into the same Outcome.Transport/
+// .Parsing fields that describe the dossier itself, so a challenge that could
+// not be attempted (capacity-refused, same as any other transport problem)
+// overwrote a genuinely completed dossier's "ok" with "failed" — resetting
+// completed research to an apparent zero. ORCL's real September 15 record
+// shows exactly this: its revision had already succeeded (contract
+// "compacted") when challenge-final was a zero-attempt capacity refusal, yet
+// the outcome read transport/parsing "failed" for the whole company.
+//
+// The fix: Outcome.Transport/.Parsing describe only the dossier-producing
+// calls (research rounds and revision); a challenge's own outcome is fully
+// carried by Outcome.Review, independently. The company must still fail
+// overall (research_failed() and the run's Failed count), and still stay
+// blocked for selection — only the completed dossier's own record must not
+// be corrupted by a review that could not be attempted afterward.
+func TestUsableDossierFollowedByUnavailableReviewStaysVisibleAsResearchCompleted(t *testing.T) {
+	id := fixtureEvidenceID(t)
+	claim := model.ResearchClaim{ID: "c1", Kind: "inference", Text: "Delivery update may reprice expectations", EvidenceIDs: []string{id}, Passages: []model.ClaimPassage{{EvidenceID: id, Quote: "Issuer raised guidance and expects its delivery update in two weeks.", IssuerRole: "issuer giving guidance"}}}
+	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
+		// Only the research round ever reaches the model: the challenger's
+		// budget below refuses its call before any request is dispatched.
+		d := supportedResearch().Dossier
+		d.Claims = []model.ResearchClaim{claim}
+		return fenced(d)
+	})
+	defer done()
+	// The researcher keeps its default (generous) budget — the round must
+	// genuinely complete — while the challenger's is too small for even its
+	// own persona text, so the independent challenge is refused outright.
+	runner.cfg.Research.Budgets.Challenger = model.RoleBudget{InputBytes: 4096, ResponseBytes: 1024}
+
+	got := runner.investigate(context.Background(), model.Candidate{Ticker: "AAA", Name: "Company"}, nil, pack, nil)
+
+	if got.Outcome.Transport != model.OutcomeOK {
+		t.Fatalf("Transport = %q, want ok — the research round genuinely completed", got.Outcome.Transport)
+	}
+	if got.Outcome.Parsing != model.OutcomeOK {
+		t.Fatalf("Parsing = %q, want ok", got.Outcome.Parsing)
+	}
+	if got.Outcome.Review != model.ReviewUnavailable {
+		t.Fatalf("Review = %q, want unavailable — the challenge was capacity-refused", got.Outcome.Review)
+	}
+	if got.Dossier.Status != "watchlist" {
+		t.Errorf("Dossier.Status = %q, want watchlist — still blocked for selection", got.Dossier.Status)
+	}
+	if !got.researchFailed() {
+		t.Error("researchFailed() must stay true: the review never completed, so this candidate is still not a plan")
+	}
+
+	summary := model.SummarizeResearch([]model.ResearchOutcome{got.Outcome}, nil)
+	if summary.Researched != 1 {
+		t.Errorf("Researched = %d, want 1 — a completed dossier must stay visible even though its review could not be attempted", summary.Researched)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("Failed = %d, want 1 — the company still failed overall (no review completed)", summary.Failed)
+	}
+}
+
 // BSX: Claude read the research failure correctly and said watchlist; Go
 // overwrote it with "rejected" and swapped in the challenger's words. Both
 // halves are preserved now — the decision's reason stays the selector's, and

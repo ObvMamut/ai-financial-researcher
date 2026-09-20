@@ -512,6 +512,48 @@ func TestHistoricalClaudeToAPIFallbackStillWorks(t *testing.T) {
 	}
 }
 
+// TestChiefFallbackFiresWhenExplicitlyEnabledOnClaudePrimary closes ruling
+// R28's Gate B gap: the chief_fallback truth table's sixth row —
+// chief_engine="claude" (the default), [chief_fallback] enabled EXPLICITLY
+// true, credentials present — was tested at neither the config layer nor
+// here. ChiefFallbackActive (config.go) takes the identical code path for
+// enabled=true and enabled omitted (fallback.go:49's gate is `!= nil &&
+// !*enabled`, so only an explicit false differs), so a regression that
+// special-cased "omitted" instead of testing the boolean's value would flip
+// this exact configuration from "fallback fires" to "run degrades" while
+// every other existing test kept passing.
+//
+// TestHistoricalClaudeToAPIFallbackStillWorks is the template; the only
+// difference is ChiefFallbackEnabled set to &trueVal instead of left nil.
+func TestChiefFallbackFiresWhenExplicitlyEnabledOnClaudePrimary(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "chief-fail")
+	fallbackSrv, fallbackHits := countingChiefServer(t, fallbackIdeasContent)
+
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.ChiefFallback = model.APIConfig{BaseURL: fallbackSrv.URL, Model: "deepseek-reasoner", APIKey: "sk-test"}
+	trueVal := true
+	cfg.ChiefFallbackEnabled = &trueVal
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	assertFallbackFired(t, complete)
+
+	if got := atomic.LoadInt32(fallbackHits); got != 1 {
+		t.Errorf("fallback endpoint saw %d requests, want exactly 1", got)
+	}
+	foundFailedPrimary := false
+	for _, d := range complete.Meta.Domains {
+		if d.Domain == "chief-analyst" && d.Status == model.StatusFailed {
+			foundFailedPrimary = true
+		}
+	}
+	if !foundFailedPrimary {
+		t.Errorf("the primary chief-analyst failure must still be recorded alongside a successful fallback: %+v", complete.Meta.Domains)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task 5: permanent-failure stop.
 //

@@ -79,6 +79,103 @@ func TestResearchUsageDoesNotAddReasoningOrCacheSubsets(t *testing.T) {
 	}
 }
 
+// TestIncompleteUsageStaysALowerBoundNeverAMeasuredZero mixes a Claude CLI
+// report whose usage could not be parsed (plain-text stdout outside the
+// print-mode JSON envelope leaves every count unknown, decodeClaudeOutput's
+// zero-value TokenUsage) with one API report carrying real, complete usage.
+// The aggregate must: (1) let the unparsed call contribute exactly 0 to every
+// token total, never an estimate; (2) still mark itself incomplete — a
+// lower bound, not a measured total — via CompleteAttempts trailing Attempts;
+// and (3) never derive a dollar figure anywhere.
+func TestIncompleteUsageStaysALowerBoundNeverAMeasuredZero(t *testing.T) {
+	u := ResearchUsage{}
+	// The Claude CLI call: one attempt, usage entirely unknown.
+	u.add(model.DomainStatus{Status: model.StatusDone, Attempts: 1, Usage: []model.TokenUsage{{}}})
+	// The API call: one attempt, real usage.
+	prompt, completion, total := 100, 50, 150
+	u.add(model.DomainStatus{Status: model.StatusDone, Attempts: 1, Usage: []model.TokenUsage{{PromptTokens: &prompt, CompletionTokens: &completion, TotalTokens: &total}}})
+
+	if u.Attempts != 2 {
+		t.Fatalf("Attempts = %d, want 2", u.Attempts)
+	}
+	if u.CompleteAttempts != 1 {
+		t.Fatalf("CompleteAttempts = %d, want 1 — the unparsed attempt must not count as complete", u.CompleteAttempts)
+	}
+	if u.IncompleteAttempts != 1 {
+		t.Fatalf("IncompleteAttempts = %d, want 1 — the aggregate must mark itself a lower bound, never a measured total", u.IncompleteAttempts)
+	}
+	if u.TotalTokens != total {
+		t.Fatalf("TotalTokens = %d, want %d — the unparsed call must contribute 0, never an estimate", u.TotalTokens, total)
+	}
+	if u.PromptTokens != prompt || u.CompletionTokens != completion {
+		t.Fatalf("the unparsed call polluted prompt/completion totals: %+v", u)
+	}
+
+	// No dollar figure is derived anywhere: the aggregate carries no cost
+	// field, and nothing here turns a token count into a price.
+	b, err := json.Marshal(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ToLower(string(b))
+	for _, forbidden := range []string{"cost", "dollar", "usd", "price", "$"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("usage aggregate must never derive a dollar figure: %s", b)
+		}
+	}
+}
+
+// TestNotAttemptedOutcomeCountsAsFailureNeverAsDeferred pins ruling R27: a
+// zero-attempt capacity refusal (model.OutcomeNotAttempted) is a company that
+// failed, not one whose research was deferred by policy. model.OutcomeNotRun
+// is a different fact — an event-window block, where research was never
+// *intended* — and both consumers already special-case it into Deferred.
+// Reusing OutcomeNotRun for a capacity refusal was measured against the real
+// September 15 run to move 3 failures out of the failure count and into
+// deferrals, silently making an overflowing run look healthy. Verify by
+// mutation: swapping OutcomeNotAttempted for OutcomeNotRun in the fixture
+// below must fail this test, and only this test.
+func TestNotAttemptedOutcomeCountsAsFailureNeverAsDeferred(t *testing.T) {
+	outcomes := []model.ResearchOutcome{
+		{Ticker: "OKTA", Transport: model.OutcomeNotAttempted, Parsing: model.OutcomeNotAttempted, Evidence: model.EvidenceDocuments, Review: model.ReviewUnavailable},
+	}
+
+	summary := model.SummarizeResearch(outcomes, nil)
+	if summary.Deferred != 0 {
+		t.Errorf("Deferred = %d, want 0 — a capacity refusal is not a policy deferral", summary.Deferred)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("Failed = %d, want 1 — the company still failed", summary.Failed)
+	}
+	if summary.Researched != 0 {
+		t.Errorf("Researched = %d, want 0 — no readable dossier was produced", summary.Researched)
+	}
+
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 15, 17, 0, 0, 0, time.UTC)
+	run := evaluationRun(t, dir, "capacity", "thesis", now, nil)
+	if err := run.WriteMeta(model.RunMeta{ResearchMode: "thesis", Outcome: "degraded", ResearchOutcomes: outcomes}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CompareResearch(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Runs) != 1 {
+		t.Fatalf("lost run: %+v", rep)
+	}
+	d := rep.Runs[0]
+	if d.DeferredCompanies != 0 {
+		t.Errorf("DeferredCompanies = %d, want 0", d.DeferredCompanies)
+	}
+	if d.FailedResearch != 1 {
+		t.Errorf("FailedResearch = %d, want 1", d.FailedResearch)
+	}
+	if d.AttemptedCompanies != 1 {
+		t.Errorf("AttemptedCompanies = %d, want 1 — research was intended, not deferred", d.AttemptedCompanies)
+	}
+}
+
 func pairFixture(t *testing.T) (string, string, *store.Run, *store.Run) {
 	t.Helper()
 	dir := t.TempDir()
