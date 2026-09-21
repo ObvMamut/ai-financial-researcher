@@ -1522,9 +1522,20 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// chiefModel is the model of whichever engine's output actually shipped
 	// (the fallback's, if it rescued the run) — never
 	// cfg.Models[model.CLIClaude] unconditionally, which is the Task 6 bug:
-	// it reported "opus" for a run a DeepSeek call answered. SynthesisModel
-	// keeps its historical name and place (the scoreboard cohort key already
-	// reads it) but carries this same corrected value going forward.
+	// it reported "opus" for a run a DeepSeek call answered.
+	//
+	// That description holds whenever chiefAcceptedEngine is non-empty. When
+	// BOTH the primary and the fallback attempt fail — chiefAcceptedEngine
+	// stays "" and outcome becomes "degraded" via buildDegradedIdeas —
+	// chiefModel still resolves to chiefE.Model, the primary's ATTEMPTED
+	// model, because synthesisFallbackEngine is only ever set alongside
+	// chiefAcceptedEngine (never independently) and so cannot override it in
+	// this case. The value is real (it names a model that was genuinely
+	// called), never invented, but it did not "ship" anything: check
+	// ChiefAccepted before reading ChiefModel as provenance for what the run
+	// actually used. SynthesisModel keeps its historical name and place (the
+	// scoreboard cohort key already reads it) but carries this same value,
+	// with the same caveat, going forward.
 	chiefModel := chiefE.Model
 	if synthesisFallbackEngine != "" {
 		chiefModel = synthesisFallbackEngine

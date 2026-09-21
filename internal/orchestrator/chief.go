@@ -69,13 +69,20 @@ func resolveChiefEngine(cfg Config) (chiefEngine, error) {
 // thesis pipeline's own Chief role budget already caps the Chief's response
 // at 24576 bytes (model.ResearchBudgets.Defaults().Chief.ResponseBytes) —
 // which, at this package's own ~3-bytes/token heuristic, is exactly 8192
-// tokens: apiengine.go's defaultMaxTokens. That constant is documented as
-// bounding "a specialist report," but the Chief's response — the board plus
-// already-condensed evidence, read once — is not larger in kind, and reusing
-// the existing constant is the considered choice: minting a second constant
-// with the identical value could only drift from this one later, never add
-// information now. An operator who sets [chief_api].max_tokens explicitly
-// always overrides this.
+// tokens: apiengine.go's defaultMaxTokens.
+//
+// That derivation justifies the VALUE for the thesis pipeline; it does not
+// justify applying it to the legacy pipeline's Chief, which reaches this same
+// function through the same chiefTarget (orchestrator.go's run, the initial
+// and corrective Chief calls) but has no research-role byte budget of its own
+// to derive a cap from at all. The reused value is still the right default
+// there — 8192 tokens covers legacy's five-report-plus-scores synthesis
+// comfortably, and an operator who sets [chief_api].max_tokens explicitly
+// always overrides this — but that is a separate, unstated justification
+// from the one above, not a consequence of it. Reusing defaultMaxTokens
+// rather than minting a second identical constant is still the considered
+// choice for both pipelines: a second constant could only drift from this
+// one later, never add information now.
 func (e chiefEngine) outputTokens() int {
 	if e.API.MaxTokens > 0 {
 		return e.API.MaxTokens
