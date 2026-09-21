@@ -559,16 +559,23 @@ from response semantics, and both can be reviewed before live model spending.
 
 | Package | Implementation | Local verification | Live acceptance |
 | --- | --- | --- | --- |
-| WP1 baseline | Pending | Pending | Existing run supplies baseline only |
-| WP2 config/migration | Pending | Pending | Pending |
-| WP3 Chief routing | Pending | Pending | Pending |
-| WP4 response normalization | Pending | Pending | Pending |
-| WP5 bounded compaction | Pending | Pending | Pending |
-| WP6 complete prompt budgets | Pending | Pending | Pending |
+| WP1 baseline | Implemented | Implemented | Existing run supplies baseline only |
+| WP2 config/migration | Implemented | Implemented | Pending |
+| WP3 Chief routing | Implemented | Implemented | Pending |
+| WP4 response normalization | Implemented | Implemented | Pending |
+| WP5 bounded compaction | Implemented | Implemented | Pending |
+| WP6 complete prompt budgets | Implemented | Implemented | Pending |
 | WP7 research/source quality | Pending | Pending | Pending |
-| WP8 diagnostics | Pending | Pending | Pending |
+| WP8 diagnostics (provenance/tests bullets only) | Implemented | Implemented | Pending |
 | WP9 integrated verification | Pending | Pending | Not a live gate by itself |
 | WP10 acceptance/evaluation | Pending | Prerequisite packages | Pending |
+
+WP1–WP6 and the provenance/tests bullets of WP8 are implemented and locally verified by
+[the chief engine and capacity implementation record](2026-09-17-chief-engine-and-capacity.md),
+per its own SDD plan
+([docs/plans/2026-09-17-chief-engine-and-capacity-plan.md](2026-09-17-chief-engine-and-capacity-plan.md)).
+WP7, the remainder of WP8 (warning typing by region, filtered-vs-lost evidence labels),
+WP9 and WP10 remain Pending and are deferred to a follow-up plan, as that record states.
 
 The earlier audit ran `go test ./... -count=1`, `go build ./...`, `go vet ./...`
 and `git diff --check` successfully. Those results describe the pre-implementation
@@ -608,6 +615,9 @@ No user choice blocks the plan. Resolve these engineering details from evidence:
 - [September 12 reliability follow-up](2026-09-12-thesis-research-reliability-followup.md)
 - [September 13 implementation record](2026-09-13-reliability-implementation.md)
 - [September 15 recovery implementation](2026-09-15-thesis-recovery.md)
+- [Chief engine and capacity plan](2026-09-17-chief-engine-and-capacity-plan.md) and its
+  [implementation record](2026-09-17-chief-engine-and-capacity.md) — implements WP1–WP6
+  and WP8's provenance/tests bullets above
 - [Bounded acceptance runbook](2026-09-12-reliability-acceptance.md)
 - [Thesis workflow](../workflow/thesis-research.md)
 - [Output schema](../workflow/output-schema.md)

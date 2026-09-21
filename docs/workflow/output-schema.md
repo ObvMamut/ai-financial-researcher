@@ -440,3 +440,98 @@ references validated numerical comparison claims. Fresh research artifacts use
 historical repeated-claim challenges remain readable. Prompt profiles, failure
 kinds and optional source/comparison provenance are additive metadata. See
 [thesis research reliability](thesis-research.md#reliability-contracts-and-diagnostics).
+
+### Prompt profile and capacity fields (additive, `model.PromptProfile`)
+
+Every field below is additive: an absent field on a historical run means
+*unrecorded*, never *measured zero* and never *failed*. A profile with no
+`response_contract_version` predates the payload-based response contract and
+is read under its original semantics — its `bytes` field was the raw response,
+full stop.
+
+- `response_contract_version`: `2` once the response is measured as a compact
+  JSON payload rather than raw bytes (see `thesis-research.md`'s byte-budget
+  table). Distinct from the profile's own `version` field, which is the
+  profile schema's version and is unrelated.
+- `response` (`model.ResponseMeasure`): `raw_bytes`, `payload_bytes`,
+  `normalization` (the method string, `"json.Compact of the fenced payload"`),
+  `raw_sha256`, `payload_sha256`, `normalized` (false when no fenced payload
+  could be extracted at all, in which case `payload_bytes == raw_bytes`).
+- `components_bytes`: a map of named prompt section → its exact redacted byte
+  size, from the section-measured assembly (`assembleSections`). Sections are
+  a flat, non-overlapping partition of the prompt; every byte is attributed to
+  exactly one name, never folded into a neighbour.
+- `omitted` on the **prompt profile** (`PromptProfile.Omitted`) names optional
+  sections `assembleSections` actually dropped to make an assembled prompt
+  fit. It is empty in essentially every real run today: production always
+  calls `assembleSections` with `noSectionLimit` (`math.MaxInt`), so real
+  section-dropping is not currently exercised — this is the latent
+  macro-drop hazard noted below.
+
+  `omitted` on **`DomainStatus`/`Report`** (a different field, same name, a
+  different fact) names the *mandatory* requirements implicated when a call
+  was refused on input capacity *before* it ever dispatched (`FailureKind:
+  "input_capacity"`, `Attempts: 0`) — naming which requirement did not fit,
+  rather than leaving the refusal component-less the way the September 15
+  audit's capacity failures were. This is the field populated in practice;
+  read it, not the prompt profile's, for why a real call was refused.
+- `compaction.allowance` (`model.CompactionAllowance`, on the compacting
+  domain's `DomainStatus`): `payload_bytes`, `limit`, `protected_bytes`,
+  `original_excess`, `narrative_budget`, `per_field` (bytes, not characters),
+  `feasible`. `feasible: false` means protected content alone already
+  exceeded the response budget and the compaction call was never dispatched —
+  a measured, per-company verdict, not a guarantee that every oversized
+  dossier recovers.
+
+**Which artifact carries which snapshot.** `input-<name>.json` is written by
+`preparePrompt` *before* the call is dispatched, so it can never carry a
+response measurement — only the request side (`components_bytes`, and the
+prompt profile's own `omitted` if the call was refused before dispatch).
+`metadata.json`, via each `DomainStatus.Prompt`, carries the same profile
+*after* `responseCapacity` has filled in `response` and
+`response_contract_version`. Both are correct; they are snapshots at
+different points in the same call. Read `metadata.json` for response
+measurement, not the `input-*.json` capture.
+
+### Outcome and error-attribution fields (additive)
+
+- `model.OutcomeNotAttempted` (`"not_attempted"`): a call refused before
+  dispatch — no subprocess ran, no HTTP request was sent — distinct from
+  `model.OutcomeNotRun` (`"not_run"`, research never intended for this
+  company, e.g. an early-earnings watchlist skip). The two must never be
+  aliased: a capacity refusal and a policy deferral are different facts, and
+  collapsing them changes failure/deferred counts.
+- `DomainStatus.Omitted` / `Report.Omitted` (`[]string`, JSON `omitted`): the
+  mandatory-requirement field described above, attached directly to the
+  domain/report record so a reader does not have to cross-reference the
+  prompt artifact to see why a call was refused.
+- A company's own `Errors` list no longer duplicates a call-outcome failure
+  already attributed to a `DomainStatus`; a run's `data_errors` carries each
+  such failure once, ticker-tagged, from the domain-attributed pass. An error
+  with no `DomainStatus` counterpart (a document-fetch or artifact-persist
+  failure) still reaches the aggregate.
+
+### Chief provenance fields (additive, `model.RunMeta`)
+
+- `chief_engine`: the configured primary (`claude` | `api`).
+- `chief_model`: the model actually addressed for the accepted response —
+  never assumed from the configured engine, since a fallback or a corrective
+  retry can address a different model than the primary attempt.
+- `chief_attempted`: every engine actually called, in attempt order
+  (comma-separated), including a primary that failed before a fallback fired.
+- `chief_accepted`: the engine whose output was used for the final result.
+
+`synthesis_model` keeps its pre-existing meaning (the model named in
+`cfg.Models[model.CLIClaude]`) and its place; it is no longer the sole source
+of provenance once the Chief can run on a non-Claude engine — reading it alone
+under an API Chief understates what happened. An absent `chief_*` field on a
+historical run means the run predates engine-selection provenance, not that
+the Chief ran on Claude.
+
+`ideas.json` and `cfr run --json`'s stdout encode `IdeasResult`, never
+`RunMeta`, so they carry only a compact two-field subset — `chief_engine` and
+`chief_accepted` — not the full quartet. `chief_engine` present with
+`chief_accepted` empty is a known fact (a Chief ran, or was deliberately
+skipped on thesis's all-research-failed path, and nothing was accepted); both
+absent means the run predates these fields. Read `metadata.json`'s `RunMeta`
+for `chief_model` and the full `chief_attempted` trail.

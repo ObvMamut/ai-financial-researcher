@@ -469,21 +469,40 @@ exceeding them does not invalidate complete research. Three requests per round
 and total input/response byte budgets remain hard limits.
 
 A complete schema-valid researcher response over the byte budget may spend the
-one repair allowance on compaction of narrative prose only. Protected wire fields
-(including unknown extensions), claims, exact quotations, numerical values, events,
-requests, uncertainties, conditions and status must remain unchanged. Go compares
-them before accepting the compacted response. Original narratives are persisted
-in the compaction call's diagnostics and supplied to subsequent research/challenge.
-A supported challenge must explicitly confirm `compaction_assessment: preserved`.
-A compaction that fails, changes protected fields, exceeds input capacity or remains
-over budget stops without another repair. It does not increase provider token caps.
+one repair allowance on compaction of narrative prose only. What room that
+compaction has is measured, not assumed: `measureCompaction` decodes the raw
+payload, blanks the twelve narrative fields, and re-compacts to find
+`protected_bytes` — the floor the call may never cut into — then derives
+`narrative_budget = limit − protected_bytes − headroom` (a declared 256-byte
+constant covering JSON escaping and UTF-8 expansion the model cannot be
+expected to predict), and allocates that budget across the fields in
+proportion to each field's current length, with a floor for any field that is
+currently non-empty. The model is given the resulting per-field byte
+allocations directly — never a fixed character count — so a company with
+little narrative to cut is asked to cut little, and a company whose protected
+content alone already exceeds the response limit is refused before dispatch
+rather than sent a doomed call: `Feasible: false` on the recorded
+`CompactionAllowance`, zero model calls, `FailureKind: "input_capacity"`.
+Feasibility is a measured, per-company verdict, not a guarantee — some
+oversized dossiers remain infeasible after this change, and that is a correct
+answer, not a regression. Protected wire fields (including unknown extensions),
+claims, exact quotations, numerical values, events, requests, uncertainties,
+conditions and status must remain unchanged. Go compares them before accepting
+the compacted response. Original narratives are persisted in the compaction
+call's diagnostics and supplied to subsequent research/challenge as an
+explicitly budgeted `compaction_originals` section, itself subject to the same
+mandatory/optional section fitting as everything else — dropped and named
+under a tight budget rather than silently overflowing it. A supported challenge
+must explicitly confirm `compaction_assessment: preserved`. A compaction that
+fails, changes protected fields, exceeds input capacity or remains over budget
+stops without another repair. It does not increase provider token caps.
 A complete malformed payload can still receive one formatting repair, never followed
 by a compaction retry. Explicit provider `finish_reason=length` is an `output_limit` failure with
 one request and preserved usage; it gets no unchanged retry or schema repair.
 Transient retries retain their existing policy. A failed revision skips final
 challenge. Failed research remains a watchlist, not a substantive rejection.
 
-Default complete assembled-input / response limits (UTF-8 bytes):
+Default complete-input / response-payload limits (UTF-8 bytes):
 
 | Role | Input | Response |
 | --- | ---: | ---: |
@@ -491,6 +510,21 @@ Default complete assembled-input / response limits (UTF-8 bytes):
 | Researcher/revision | 98,304 | 20,480 |
 | Challenger/plan review | 98,304 | 12,288 |
 | Chief/corrective/fallback | 196,608 | 24,576 |
+
+The Input column measures the whole assembled prompt, complete, as before. The
+Response column does not — it measures `json.Compact` of the last fenced JSON
+block in the model's output (`response_contract_version: 2`; `internal/model`'s
+`ResponseMeasure`), the same block the pipeline's own parser reads. Two
+consequences follow, and both are deliberate rather than incidental: raw
+transport bytes are recorded (`raw_bytes`, `raw_sha256`) for audit but bound
+nothing, so a response with interior whitespace or a comment before the fence
+that pushes it over the limit as raw text can still pass on payload bytes
+alone; and because only the *last* fenced block is measured, a response of
+tens of thousands of raw bytes whose final fenced block compacts to a few
+hundred bytes also passes — the budget bounds what is actually parsed, not
+what the model emitted around it. A profile with no `response_contract_version`
+predates this change and is read under its original semantics: for that
+profile alone, the raw response was the bound.
 
 Configure `[research.budgets.<role>]` with `input_bytes` and `response_bytes`;
 roles are `triage`, `researcher`, `challenger`, `chief`. Environment variables are
@@ -500,14 +534,29 @@ smaller than input. Existing precedence applies. Provider output-token limits do
 not increase. Byte limits and the recorded `ceil(bytes/3)` estimate do not promise
 an exact token count or fit within an undocumented model context window.
 
-Company prompts cap selected evidence text at 24,000 characters. Chief inputs use
-only cited evidence and compact outcome records, retaining all selected companies,
-including failed/deferred ones. Accepted quotations appear in source text once;
-Chief claim records retain source and issuer-role references. Full dossiers,
-request ledgers and source documents remain in research artifacts. Source
-`selected_spans` use Unicode-character offsets into original stored text;
-`omitted_text` distinguishes prompt omission from source download truncation.
-If required quotations cannot fit, `omitted_claim_ids` records the omission and
+Research, revision and challenge prompts size their evidence section adaptively
+(`sizeEvidence`) for exactly the room left in that call, rather than a fixed
+character count: the section is measured redacted, against what the rest of the
+call's own sections and its one appended mandatory addition (`revision_issues`
+or `previous_challenge`) already cost, and fit by bisection over
+`promptDocuments`'s optional-text ceiling. An evidence-light call is granted
+more room; a call sharing space with a large mandatory addition gets
+correspondingly less. Plan review is the one exception and still caps evidence
+at a fixed 24,000 characters, deliberately never trimmed further — a plan
+review has nothing safe to drop, since idea, dossier and evidence are exactly
+what it is reviewing. The Chief board budgets globally across the whole
+shortlist rather than per company (`chiefBoard`): every cited claim's required
+quotations are reserved first, across all companies at once, and only the
+remainder funds optional case narrative (by rank, so the board argues every
+company to the same depth or none) and then source context (proportional to
+unmet need). Chief inputs use only cited evidence and compact outcome records,
+retaining all selected companies, including failed/deferred ones. Accepted
+quotations appear in source text once; Chief claim records retain source and
+issuer-role references. Full dossiers, request ledgers and source documents
+remain in research artifacts. Source `selected_spans` use Unicode-character
+offsets into original stored text; capacity decisions themselves are made in
+UTF-8 bytes, after redaction. `omitted_text` distinguishes prompt omission from
+source download truncation. If required quotations cannot fit, `omitted_claim_ids` records the omission and
 preflight stops the call. Future-dated publications retain an unavailable record
 but their content is excluded from model inputs.
 
