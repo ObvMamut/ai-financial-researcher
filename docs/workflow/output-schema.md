@@ -521,12 +521,18 @@ measurement, not the `input-*.json` capture.
   (comma-separated), including a primary that failed before a fallback fired.
 - `chief_accepted`: the engine whose output was used for the final result.
 
-`synthesis_model` keeps its pre-existing meaning (the model named in
-`cfg.Models[model.CLIClaude]`) and its place; it is no longer the sole source
-of provenance once the Chief can run on a non-Claude engine — reading it alone
-under an API Chief understates what happened. An absent `chief_*` field on a
-historical run means the run predates engine-selection provenance, not that
-the Chief ran on Claude.
+`synthesis_model` keeps its pre-existing name and place in `RunMeta`, but not
+its pre-existing value: before Task 6 it was unconditionally
+`cfg.Models[model.CLIClaude]`, which reported a Claude model name for a run
+`chief_engine="api"` or the fallback actually answered. It now carries
+`chiefModel` — the model of whichever engine's output actually shipped, the
+fallback's if it rescued the run — the same corrected value `chief_model`
+above carries. It is no longer the *sole* source of provenance once the Chief
+can run on a non-Claude engine — reading it alone still cannot distinguish the
+configured primary from what was attempted or accepted, which is what
+`chief_engine`/`chief_attempted`/`chief_accepted` are for. An absent `chief_*`
+field on a historical run means the run predates engine-selection provenance,
+not that the Chief ran on Claude.
 
 `ideas.json` and `cfr run --json`'s stdout encode `IdeasResult`, never
 `RunMeta`, so they carry only a compact two-field subset — `chief_engine` and

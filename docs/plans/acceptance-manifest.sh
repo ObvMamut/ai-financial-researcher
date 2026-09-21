@@ -35,7 +35,20 @@ set -eu
 cd "$(dirname "$0")/../.." # repo root, relative to this file's fixed location
 
 TMPDIR_MANIFEST="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_MANIFEST"' EXIT
+# Configured secrets are briefly staged in $TMPDIR_MANIFEST/secrets (see the
+# self-check below) so cleanup must fire on interruption, not only on a normal
+# exit: POSIX sh's EXIT trap alone does not fire on SIGINT/SIGTERM/SIGHUP, so a
+# Ctrl-C mid-run could otherwise leave live keys on disk in this mktemp -d
+# (mode 0700, but still a leftover) until the OS reaps /tmp. A bare `trap CMD
+# INT` is not enough either: with a trap installed, the shell no longer
+# terminates on the signal by default, so the script would resume running
+# after a Ctrl-C unless the handler exits explicitly — the exit codes below
+# are the conventional 128+signal.
+cleanup_manifest() { rm -rf "$TMPDIR_MANIFEST"; }
+trap cleanup_manifest EXIT
+trap 'cleanup_manifest; exit 130' INT
+trap 'cleanup_manifest; exit 143' TERM
+trap 'cleanup_manifest; exit 129' HUP
 
 # ---------------------------------------------------------------------------
 # Small helpers

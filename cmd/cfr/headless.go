@@ -14,6 +14,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/config"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 // runHeadless implements `cfr run`: drive the full pipeline without the TUI.
@@ -73,7 +74,11 @@ func runHeadless(settings *config.Settings, args []string) int {
 	// unconfigured-engine error mid-run.
 	settingsCopy.ChiefEngine = *chiefEngine
 	if err := settingsCopy.ValidateChiefEngine(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// ValidateChiefEngine's errors name fields, never values (pinned by
+		// internal/config/redaction_test.go), so this redaction is currently
+		// a no-op — kept for symmetry with research_pair.go's identical call
+		// and as a standing guard if that ever stops being true.
+		fmt.Fprintf(os.Stderr, "error: %s\n", redact.String(err.Error()))
 		return 2
 	}
 	settings = &settingsCopy

@@ -288,8 +288,13 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	// that can be dropped without losing anything the board is judged on.
 	// The board budget below nevertheless charges itself macro's actual
 	// measured bytes, so a board sized with macro present is a board macro is
-	// never dropped from: the drop would only fire on an overflow this
-	// budget has already prevented.
+	// never dropped from. This is NOT true on the capacity-error path below
+	// (boardErr != nil): chiefBoard deliberately proceeds and assembles the
+	// floor board anyway, so the budget has NOT prevented that overflow —
+	// macro survives there only because assembleSections is called with
+	// noSectionLimit in production, so no optional section is ever actually
+	// dropped, macro included. If a real section limit is ever introduced,
+	// this guarantee must be re-derived, not assumed to still hold.
 	macroSection := promptSection{Name: "macro", Mandatory: false, Body: "\nMacro:\n" + macroR.Stdout}
 	riskSection := promptSection{Name: "risk_policy", Mandatory: true, Body: "\nMaximum risk policy (minimum stop/RR and expectancy floors do not apply):\n" + jsonText(cfg.Risk)}
 	usableDossiers := 0

@@ -93,12 +93,13 @@ Executed with the repository Go toolchain:
 - `go build ./...`, `go vet ./...`: passed, at every task boundary and at the final HEAD.
 - `go test ./... -count=1`: passed, 13/13 packages, at every task boundary and at the
   final HEAD.
-- `gofmt -l .`: `internal/orchestrator/riskgate_test.go` only, at every check across the
-  whole branch. This is a pre-existing toolchain divergence (`go.mod` declares Go 1.26.3;
-  the development machine runs go1.27.1), dated to before this plan's baseline commit
-  (`7c126f3`), not a regression introduced by any task here, and deliberately kept out of
-  every commit. **It remains an open operator decision** — either bump `go.mod`'s Go
-  directive or pin the toolchain — before `gofmt -l .` can read empty at Gate B.
+- `gofmt -l .`: empty at HEAD. Through Task 15 this reported
+  `internal/orchestrator/riskgate_test.go` only — a pre-existing toolchain divergence
+  (`go.mod` declared Go 1.26.3; the development machine runs go1.27.1), dated to before
+  this plan's baseline commit (`7c126f3`), not a regression introduced by any task here.
+  Put to the user as an operator decision rather than resolved silently: bump `go.mod`'s
+  Go directive to 1.27.1 (chosen) or pin the toolchain to 1.26.3. `go.mod` now declares
+  1.27.1 and the file is reformatted to match.
 - `git diff --check`: clean at every commit.
 
 **LLY recovers by normalization alone.** The response-contract boundary case: a captured
@@ -190,12 +191,32 @@ spend.
 
 **`DomainStatus.Payload == "invalid"` on a zero-attempt capacity refusal** is the same
 class of inaccuracy `OutcomeNotAttempted` fixes elsewhere (no response was ever received,
-so "invalid" implies one arrived and did not decode), but it feeds
-`InvalidPayloads`/`PrimaryChiefFailed` counts elsewhere in `research_diagnostics.go` and
-was left untouched rather than changed without an explicit requirement to do so.
+so "invalid" implies one arrived and did not decode), and was left untouched rather than
+changed without an explicit requirement to do so. It feeds `InvalidPayloads`
+(`research_diagnostics.go`) directly; `PrimaryChiefFailed` is gated on
+`Domain == "chief-analyst"` and is not reachable from this path (a capacity-refused
+compaction domain is always named `<company>-compaction`), so the practical effect is
+narrower than a first reading of "feeds `InvalidPayloads`/`PrimaryChiefFailed`" would
+suggest — only the former is affected.
 
-**`go.mod`'s Go 1.26.3 vs. this machine's go1.27.1** remains an open operator decision,
-unrelated to any change in this plan.
+**The final whole-branch review** (Opus, over the full branch) found no correctness or
+security defect in production code, confirmed every mutation-testing claim it re-ran
+independently, and confirmed the real SNOW/OKTA/ORCL recovery against the actual
+September 15 artifacts. It found three items worth a short fix round before merge: a
+doc/code contradiction in `synthesis_model`'s documented meaning (now corrected above),
+the two stale G-2 statements this record originally carried (now corrected above), and
+a pre-existing gap in the engine-boundary redaction test — `TestPromptsAndReportsCannotCarryACredential`
+asserted on the CLI's captured stdout (the inbound scrub) rather than on the outbound
+prompt the model provider actually receives, so removing the line that redacts the
+outbound prompt (`runner.go`, the legacy pipeline's only redaction, since it builds
+prompts outside `preparePrompt`) shipped the suite green. That review also
+independently reproduced a long-parked gap of the same shape: removing thesis's
+`preparePrompt`-side redaction also ships green, though a probe showed two independent
+downstream layers (the outbound scrub and the persisted-artifact scrub) still catch the
+credential before it reaches the wire or disk — so its real cost was a *measurement*
+defect (byte counts computed on pre-redaction text while the wire and artifact carry
+post-redaction text) rather than a leak. Both gaps were closed together in one
+dedicated fix round; see the branch history after this record's commit for that diff.
 
 ## Remaining acceptance
 
