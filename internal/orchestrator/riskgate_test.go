@@ -215,12 +215,12 @@ func TestExpectancyFloorDoesNotGradeVolatility(t *testing.T) {
 	mk := func(sigma float64) (*model.TradeIdea, quant.Metrics) {
 		unit := sigma * math.Sqrt(days) * 100
 		return &model.TradeIdea{
-				Ticker: "AAA", Direction: model.DirectionBuy,
-				Entry: 100, Stop: 100 - 1.35*unit, Target: 100 + 2.57*unit, TimeframeDays: days,
-			}, quant.Metrics{
-				Symbol: "AAA", LastClose: 100, SigmaDaily: sigma,
-				AvgDollarVol20: 5e8, AvgDollarVol20USD: 5e8, Currency: "USD", FXToUSD: 1,
-			}
+			Ticker: "AAA", Direction: model.DirectionBuy,
+			Entry: 100, Stop: 100 - 1.35*unit, Target: 100 + 2.57*unit, TimeframeDays: days,
+		}, quant.Metrics{
+			Symbol: "AAA", LastClose: 100, SigmaDaily: sigma,
+			AvgDollarVol20: 5e8, AvgDollarVol20USD: 5e8, Currency: "USD", FXToUSD: 1,
+		}
 	}
 	calmIdea, calmM := mk(0.0109) // BBVA.MC on that run: dropped at −3.1 bps
 	loudIdea, loudM := mk(0.0249) // STLAM.MI: shipped at +28.7 bps

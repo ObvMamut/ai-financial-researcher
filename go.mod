@@ -1,6 +1,6 @@
 module github.com/mamut/claude-financial-researcher
 
-go 1.26.3
+go 1.27.1
 
 require (
 	github.com/NimbleMarkets/ntcharts v0.5.1
