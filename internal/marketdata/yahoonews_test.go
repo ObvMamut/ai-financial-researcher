@@ -283,3 +283,44 @@ func TestPackFlagsTwoTickersServedTheSameHeadlines(t *testing.T) {
 		t.Errorf("a ticker with its own headlines was flagged: %q", joined)
 	}
 }
+
+func TestYahooNewsMappedFallbackIsBoundedAndKeepsLocalIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second, ticker string
+		wantCalls, wantFacts        int
+	}{
+		{"unresolved", newsItem("unrelated", "Wire", 2, "OTHER"), newsItem("issuer release", "Issuer", 1, "ASML"), "ASML.AS", 2, 1},
+		{"still unrelated", newsItem("unrelated", "Wire", 2, "OTHER"), newsItem("also unrelated", "Wire", 1, "OTHER"), "ASML.AS", 2, 0},
+		{"quiet", "", newsItem("issuer release", "Issuer", 1, "ASML"), "ASML.AS", 1, 0},
+		{"stale", newsItem("stale", "Wire", 24*30, "ASML.AS"), "", "ASML.AS", 1, 0},
+		{"local works", newsItem("local release", "Issuer", 1, "ASML.AS"), "", "ASML.AS", 1, 1},
+		{"OTC excluded", newsItem("unrelated", "Wire", 2, "OTHER"), "", "BMW.DE", 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var asked []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				asked = append(asked, r.URL.Query().Get("q"))
+				item := tc.first
+				if len(asked) > 1 {
+					item = tc.second
+				}
+				fmt.Fprintf(w, `{"news":[%s]}`, item)
+			}))
+			defer server.Close()
+			t.Setenv("CFR_YAHOO_BASE", server.URL)
+			td, err := NewYahooNewsProvider().Fetch(context.Background(), "news", tc.ticker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(asked) != tc.wantCalls || len(td.Facts) != tc.wantFacts || td.Ticker != tc.ticker {
+				t.Fatalf("asked=%v data=%+v", asked, td)
+			}
+			if tc.wantCalls == 2 && asked[1] != "ASML" {
+				t.Fatalf("wrong mapping: %v", asked)
+			}
+			if tc.wantCalls == 2 && tc.wantFacts > 0 && !strings.Contains(td.Facts[0].Value, "mapped ADR ASML; local listing ASML.AS") {
+				t.Fatal("ADR provenance missing")
+			}
+		})
+	}
+}

@@ -45,9 +45,19 @@ func cleanDocumentBounded(s string) (string, bool) {
 	}
 	return s, false
 }
+
+// truncatedHexID hashes s and returns the first n hex characters — the one
+// hashing/truncation convention every content-derived ID in this package
+// shares, so a future change to collision resistance applies once rather than
+// per call site. fmt.Sprintf("%x", h[:n/2]) and fmt.Sprintf("%x", h)[:n] are
+// the same bytes; this always takes the latter form.
+func truncatedHexID(s string, n int) string {
+	h := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", h)[:n]
+}
+
 func EvidenceID(ticker, source, text string) string {
-	h := sha256.Sum256([]byte(ticker + "\n" + source + "\n" + text))
-	return fmt.Sprintf("ev-%x", h[:10])
+	return "ev-" + truncatedHexID(ticker+"\n"+source+"\n"+text, 20)
 }
 
 // EvidenceFromPack preserves provider as-of semantics in Text: as_of is not

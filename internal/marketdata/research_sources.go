@@ -10,6 +10,8 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
+var researchQuarterPage = regexp.MustCompile(`^q[1-4]-[0-9]{4}$`)
+
 var researchURLDate = regexp.MustCompile(`\d{4}[-/]\d{2}[-/]\d{2}`)
 
 // RankResearchLinks puts issuer results and release pages ahead of navigation.
@@ -39,6 +41,12 @@ func RankResearchLinks(links []string, issuer string) []string {
 		s := 0
 		if base != nil && u.Hostname() == base.Hostname() {
 			s += 4
+			// Prefer the seed's language/section before spending bounded reads
+			// on translated copies of the same release.
+			first := strings.Split(strings.Trim(base.Path, "/"), "/")[0]
+			if first != "" && strings.HasPrefix(u.Path, "/"+first+"/") {
+				s += 5
+			}
 			seedPath := strings.TrimRight(strings.ToLower(base.Path), "/")
 			if seedPath != "" && strings.HasPrefix(strings.ToLower(u.Path), seedPath+"/") {
 				s += 8
@@ -103,14 +111,17 @@ func ResearchNavigationURL(raw string) bool {
 		return false
 	}
 	p := strings.ToLower(strings.TrimRight(u.Path, "/"))
-	if strings.Contains(p, "/browse-edgar") {
+	if strings.Contains(p, "/browse-edgar") || strings.Contains(p, "/subscribe-to-news") || strings.Contains(p, "/unsubscribe-from-") {
 		return true
 	}
 	if strings.HasSuffix(p, "/default.aspx") {
 		p = strings.TrimSuffix(p, "/default.aspx")
 	}
+	if strings.Contains(p, "/investors/financial-results/") && researchQuarterPage.MatchString(path.Base(p)) {
+		return true
+	}
 	switch path.Base(p) {
-	case ".", "/", "overview", "index.php", "home.html", "news", "latest-news", "news-archives", "investor-news", "newsroom", "news-releases", "press-releases", "press-release", "financial-results", "quarterly-results", "ir-news-filings", "ir-financial-reports-quarterly-results", "news-and-resource", "news-press-releases", "resources", "resource-video", "resource-logos", "resource-company", "resource-campus", "esg-resource", "library", "presentations", "events", "upcoming-events", "past-events":
+	case ".", "/", "overview", "tech-explained", "index.php", "home.html", "news", "latest-news", "news-archives", "investor-news", "newsroom", "news-releases", "press-releases", "press-release", "financial-results", "sec-filings", "stock-exchange-releases", "quarterly-results", "ir-news-filings", "ir-financial-reports-quarterly-results", "news-and-resource", "news-press-releases", "resources", "resource-video", "resource-logos", "resource-company", "resource-campus", "esg-resource", "library", "presentations", "events", "upcoming-events", "past-events":
 		return true
 	}
 	return p == ""

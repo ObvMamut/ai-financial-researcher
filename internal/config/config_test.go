@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
 // clearEnv blanks every env var Load reads so the host environment can't leak
@@ -796,5 +797,34 @@ api_key = "chief-key"
 	}
 	if s.API.APIKey != "cheap-key" || s.ChiefAPI.APIKey != "chief-key" {
 		t.Errorf("API/ChiefAPI keys crossed: API=%+v ChiefAPI=%+v", s.API, s.ChiefAPI)
+	}
+}
+
+func TestManifestConfigHonorsChiefEndpointEnvironmentOverrides(t *testing.T) {
+	home, cwd := isolate(t)
+	dir := filepath.Join(home, ".config", "cfr")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[chief_api]\nbase_url='https://user.example.test'\nmodel='user-model'\napi_key='user-manifest-credential'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("chief_engine='api'\n[chief_api]\nbase_url='https://project.example.test'\nmodel='project-model'\napi_key='project-manifest-credential'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CFR_CHIEF_API_BASE_URL", "https://chief.example.test")
+	t.Setenv("CFR_CHIEF_API_MODEL", "fixture-chief-model")
+	t.Setenv("CFR_CHIEF_API_KEY", "environment-manifest-credential")
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ChiefAPI.BaseURL != "https://chief.example.test" || s.ChiefAPI.Model != "fixture-chief-model" {
+		t.Fatal("environment did not win")
+	}
+	for _, secret := range []string{"user-manifest-credential", "project-manifest-credential", "environment-manifest-credential"} {
+		if !redact.ContainsCredential(secret) {
+			t.Fatal("overridden credential not registered")
+		}
 	}
 }

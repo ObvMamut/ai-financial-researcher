@@ -26,14 +26,7 @@ type promptSection struct {
 	Mandatory bool // mandatory sections are never trimmed; they fail the call instead
 }
 
-// noSectionLimit is the limit assembleSections is called with at every
-// production site today. This task's job is to make section sizes visible
-// and named, not to start dropping them under a real budget — that overflow
-// question belongs to later tasks (see task-11-context.md's "do not try to
-// solve the overflow here"). Passing an effectively unbounded limit here
-// keeps every prompt byte-for-byte identical to what the old concatenation
-// produced; preparePrompt's existing len(prompt) > budget.InputBytes check,
-// unchanged below, still rejects an oversized prompt exactly as before.
+// noSectionLimit retains complete refused inputs for audit and unit fixtures.
 const noSectionLimit = math.MaxInt
 
 // assembleSections concatenates sections in order, each measured by its own

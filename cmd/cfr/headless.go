@@ -148,6 +148,9 @@ func writeIdeasJSON(w io.Writer, ideas *model.IdeasResult) error {
 // printIdeasText renders the final ideas as a human-readable summary.
 func printIdeasText(res *model.IdeasResult, meta *model.RunMeta) {
 	fmt.Printf("%d idea(s) — mode %s, generated %s\n", len(res.Ideas), res.Mode, res.GeneratedAt)
+	if line := model.SourceDiagnosticsLine(meta); line != "" {
+		fmt.Println(line)
+	}
 	if line := model.ChiefProvenanceLine(meta); line != "" {
 		fmt.Println(line)
 	}

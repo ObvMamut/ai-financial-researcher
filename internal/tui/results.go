@@ -99,6 +99,9 @@ func (m resultsModel) View() string {
 		m.ideas.GeneratedAt, m.ideas.Mode)))
 	sb.WriteString("\n\n")
 
+	if line := model.SourceDiagnosticsLine(m.meta); line != "" {
+		sb.WriteString(mutedStyle.Render(line) + "\n")
+	}
 	if line := model.ChiefProvenanceLine(m.meta); line != "" {
 		sb.WriteString(mutedStyle.Render(line))
 		sb.WriteString("\n\n")

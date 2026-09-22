@@ -665,7 +665,8 @@ type RunMeta struct {
 	// the packs. These previously lived only in data/<domain>.json, so a run
 	// that lost eight tickers to rate limiting read the same as one that lost
 	// none.
-	DataErrors []string `json:"data_errors,omitempty"`
+	DataErrors        []string           `json:"data_errors,omitempty"`
+	SourceDiagnostics []SourceDiagnostic `json:"source_diagnostics,omitempty"`
 
 	// PersonaSHA maps each agent role to a short hash of the persona file used.
 	// Personas are runtime data, editable without a code change, so this is what

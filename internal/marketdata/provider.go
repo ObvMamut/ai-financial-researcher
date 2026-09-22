@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // ErrUnavailable is returned when a provider cannot satisfy a request
@@ -42,9 +44,10 @@ type Fact struct {
 // disappearing. A withheld fact is not a fetch failure, but the reader still has
 // to know the provider had something and chose not to print it.
 type TickerData struct {
-	Ticker   string   `json:"ticker"`
-	Facts    []Fact   `json:"facts"`
-	Warnings []string `json:"warnings,omitempty"`
+	Ticker      string                   `json:"ticker"`
+	Facts       []Fact                   `json:"facts"`
+	Warnings    []string                 `json:"warnings,omitempty"`
+	Diagnostics []model.SourceDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // Provider defines the interface for data sources.

@@ -22,14 +22,15 @@ import (
 )
 
 type thesisResearch struct {
-	Eligibility string                   `json:"eligibility,omitempty"`
-	Temporal    researchTimeFacts        `json:"temporal_facts"`
-	NextEvent   string                   `json:"next_event,omitempty"`
-	Candidate   model.Candidate          `json:"candidate"`
-	Documents   []model.EvidenceDocument `json:"documents"`
-	Dossier     model.CandidateDossier   `json:"dossier"`
-	Challenge   model.ThesisChallenge    `json:"challenge"`
-	Reports     []model.DomainStatus     `json:"reports"`
+	SourceDiagnostics []model.SourceDiagnostic `json:"source_diagnostics,omitempty"`
+	Eligibility       string                   `json:"eligibility,omitempty"`
+	Temporal          researchTimeFacts        `json:"temporal_facts"`
+	NextEvent         string                   `json:"next_event,omitempty"`
+	Candidate         model.Candidate          `json:"candidate"`
+	Documents         []model.EvidenceDocument `json:"documents"`
+	Dossier           model.CandidateDossier   `json:"dossier"`
+	Challenge         model.ThesisChallenge    `json:"challenge"`
+	Reports           []model.DomainStatus     `json:"reports"`
 	// Outcome separates transport, parsing, evidence and review. A candidate
 	// whose research never produced a readable dossier is not a candidate the
 	// pipeline examined and turned down, and the run has to be able to say so.
@@ -40,16 +41,17 @@ type thesisResearch struct {
 	Errors  []string               `json:"errors,omitempty"`
 }
 type thesisRunner struct {
-	fx       *marketdata.FXRates
-	cfg      Config
-	ch       chan<- Event
-	run      *store.Run
-	reg      *agents.Registry
-	pool     *pool
-	cheap    model.CLI
-	svc      *marketdata.Service
-	sources  map[string][]string
-	calendar marketdata.ResearchCalendar
+	discoveryDiagnostics []model.SourceDiagnostic // written under discovery's mutex, read after its wait
+	fx                   *marketdata.FXRates
+	cfg                  Config
+	ch                   chan<- Event
+	run                  *store.Run
+	reg                  *agents.Registry
+	pool                 *pool
+	cheap                model.CLI
+	svc                  *marketdata.Service
+	sources              map[string][]string
+	calendar             marketdata.ResearchCalendar
 }
 
 func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
@@ -282,20 +284,9 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	// tail-drop is the wrong instrument for it.
 	boardPrefix := "Maximum ideas: 5 (single mode: 1). Research:\n"
 	quantSection := promptSection{Name: "quant", Mandatory: true, Body: "\nVerified quant:\n" + qp.CompactBlock()}
-	// Macro is one regime fact per market and carries zero weight in the
-	// base score (basescore.go) — the Chief reads it as context, not
-	// evidence a name is scored against — so it is the one Chief section
-	// that can be dropped without losing anything the board is judged on.
-	// The board budget below nevertheless charges itself macro's actual
-	// measured bytes, so a board sized with macro present is a board macro is
-	// never dropped from. This is NOT true on the capacity-error path below
-	// (boardErr != nil): chiefBoard deliberately proceeds and assembles the
-	// floor board anyway, so the budget has NOT prevented that overflow —
-	// macro survives there only because assembleSections is called with
-	// noSectionLimit in production, so no optional section is ever actually
-	// dropped, macro included. If a real section limit is ever introduced,
-	// this guarantee must be re-derived, not assumed to still hold.
-	macroSection := promptSection{Name: "macro", Mandatory: false, Body: "\nMacro:\n" + macroR.Stdout}
+	// Reserve macro alongside the board so capacity cannot silently remove
+	// the market context used for selection.
+	macroSection := promptSection{Name: "macro", Mandatory: true, Body: "\nMacro:\n" + macroR.Stdout}
 	riskSection := promptSection{Name: "risk_policy", Mandatory: true, Body: "\nMaximum risk policy (minimum stop/RR and expectancy floors do not apply):\n" + jsonText(cfg.Risk)}
 	usableDossiers := 0
 	for _, r := range research {
@@ -358,6 +349,9 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 				}
 				responseCapacity(&rr, profile)
 				statuses = append(statuses, reportStatus(rr))
+				if pe != nil {
+					statuses[len(statuses)-1].Payload = model.OutcomeNotAttempted
+				}
 				if e = run.WriteReport("chief-analyst-fallback", rr.Stdout); e != nil {
 					return e
 				}
@@ -446,7 +440,11 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	// ChiefAttempted) stays on RunMeta below.
 	result.ChiefEngine = string(chiefE.CLI)
 	result.ChiefAccepted = chiefAcceptedEngine
-	meta := model.RunMeta{ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: chiefModel, ChiefEngine: string(chiefE.CLI), ChiefModel: chiefModel, ChiefAttempted: strings.Join(chiefAttemptedEngines, ","), ChiefAccepted: chiefAcceptedEngine, PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir)}
+	sourceDiagnostics := append([]model.SourceDiagnostic(nil), t.discoveryDiagnostics...)
+	for _, r := range research {
+		sourceDiagnostics = append(sourceDiagnostics, r.SourceDiagnostics...)
+	}
+	meta := model.RunMeta{SourceDiagnostics: sourceDiagnostics, ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: chiefModel, ChiefEngine: string(chiefE.CLI), ChiefModel: chiefModel, ChiefAttempted: strings.Join(chiefAttemptedEngines, ","), ChiefAccepted: chiefAcceptedEngine, PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir)}
 	for _, s := range statuses {
 		if s.Domain == "chief-analyst-fallback" {
 			meta.SynthesisFallbackEngine = cfg.ChiefFallback.Model
@@ -601,6 +599,7 @@ func (t *thesisRunner) discover(ctx context.Context, uni *universe.Universe, ps 
 			mu.Lock()
 			news[c.Ticker] = docs
 			errs = append(errs, pack.Errors...)
+			t.discoveryDiagnostics = append(t.discoveryDiagnostics, pack.Diagnostics...)
 			mu.Unlock()
 		}(c)
 	}
@@ -727,10 +726,14 @@ func (t *thesisRunner) sizeEvidence(role string, docs []model.EvidenceDocument, 
 	wrapper, _ := t.promptWrapperBytes(role)
 	used := wrapper + len(evidenceLabel)
 	for _, s := range other {
-		used += len(redact.String(s.Body))
+		if s.Mandatory {
+			used += len(redact.String(s.Body))
+		}
 	}
 	for _, s := range reserve {
-		used += len(redact.String(s.Body))
+		if s.Mandatory {
+			used += len(redact.String(s.Body))
+		}
 	}
 	available := t.cfg.Research.Budgets.ForRole(role).InputBytes - used
 	if available < 0 {
@@ -807,6 +810,7 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		}
 		out.Documents = append(out.Documents, marketdata.EvidenceFromPack(pack, ticker, researchTime(ctx).UTC())...)
 		out.Errors = append(out.Errors, pack.Errors...)
+		out.SourceDiagnostics = append(out.SourceDiagnostics, pack.Diagnostics...)
 		if domain == "news" && earningsBlocked(ticker, out.NextEvent, t.run.TS, t.calendar) {
 			t.deferForEarnings(&out, qp)
 			return out
@@ -1090,7 +1094,7 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 			{Name: "dossier_hash", Mandatory: true, Body: "\nDossier hash: " + dossierHash(out.Dossier)},
 			{Name: "previous_dossier", Mandatory: true, Body: "\nPrevious dossier:\n" + jsonText(dossierReference(out.Dossier))},
 			{Name: "quotations", Mandatory: true, Body: "\nAccepted source quotations, once per cited passage (resolve a claim's passage by its evidence_id; text is not repeated on the claim itself):\n" + jsonText(requiredQuotations(claims))},
-			{Name: "compaction_originals", Mandatory: false, Body: "\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(compactionOriginals(out.Reports))},
+			{Name: "compaction_originals", Mandatory: len(compactionOriginals(out.Reports)) > 0, Body: "\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(compactionOriginals(out.Reports))},
 			{Name: "retrieval_errors", Mandatory: false, Body: "\nRetrieval diagnostics:\n" + jsonText(out.Errors)},
 		}
 		evidence := promptSection{Name: "evidence", Mandatory: true, Body: evidenceLabel + jsonText(t.sizeEvidence(role, out.Documents, t.run.TS, claims, other, reserve))}
@@ -1224,6 +1228,9 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	}
 	out.Outcome.Decision = out.Dossier.Status
 	out.Temporal = temporalFacts(out, t.run.TS, t.calendar, qp)
+	for _, doc := range out.Documents {
+		out.SourceDiagnostics = append(out.SourceDiagnostics, marketdata.DocumentDiagnostics(doc)...)
+	}
 	if e := t.run.WriteDataPack(safeName, out); e != nil {
 		out.Errors = append(out.Errors, e.Error())
 		out.Outcome.Notes = appendUnique(out.Outcome.Notes, "evidence artifact not persisted: "+e.Error())

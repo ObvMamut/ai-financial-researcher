@@ -1,7 +1,11 @@
 package marketdata
 
 import (
+	"context"
 	"encoding/xml"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -274,5 +278,43 @@ func TestStakeDropsAScheduleWhoseReportingPersonIsTheIssuer(t *testing.T) {
 	}
 	if sameEntityName("Apex Co", "Apex Holdings Group") != true {
 		t.Error("the same company under two corporate suffixes did not match")
+	}
+}
+
+func TestOwnershipDiagnosticsDistinguishUnrelatedFromFetchFailure(t *testing.T) {
+	raw, err := os.ReadFile("testdata/sched13d_sample.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/submissions/") {
+					fmt.Fprintf(w, `{"cik":"1045810","name":"NVIDIA","filings":{"recent":{"accessionNumber":["0001045810-26-000001"],"filingDate":[%q],"form":["SCHEDULE 13D"],"primaryDocument":["schedule.xml"]}}}`, time.Now().Format("2006-01-02"))
+				} else if strings.Contains(r.URL.Path, "/Archives/") {
+					if fail {
+						http.Error(w, "blocked", 403)
+					} else {
+						w.Write(raw)
+					}
+				} else {
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("CFR_SEC_BASE", srv.URL)
+			p := NewEdgarProvider("test@example.com", nil).(*edgarProvider)
+			stakes, warnings, diagnostics := p.fetchStakesDetailed(context.Background(), "1045810", "NVDA")
+			if len(stakes) != 0 || len(warnings) != 1 || len(diagnostics) != 1 {
+				t.Fatalf("unexpected retrieval: %v %v %+v", stakes, warnings, diagnostics)
+			}
+			reason, disposition := "filtered_unrelated", "withheld"
+			if fail {
+				reason, disposition = "fetch_failed", "failed"
+			}
+			if diagnostics[0].Reason != reason || diagnostics[0].Disposition != disposition || diagnostics[0].Message != warnings[0] {
+				t.Fatalf("incorrect source classification: %+v", diagnostics)
+			}
+		})
 	}
 }

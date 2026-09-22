@@ -96,6 +96,34 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 		return TickerData{}, err
 	}
 
+	td, unresolved := p.newsData(resp, ticker, ticker)
+	if !unresolved {
+		return td, nil
+	}
+	adr := adrMap[strings.ToUpper(ticker)]
+	if adr == "" || strings.EqualFold(adr, ticker) {
+		return td, nil
+	}
+	// One mapped major-exchange query only, after an unresolved local feed.
+	// Transport errors, stale-only responses and quiet names never trigger it.
+	fallback, err := p.search(ctx, adr)
+	if err != nil {
+		return td, err
+	}
+	next, _ := p.newsData(fallback, ticker, adr)
+	// The first attempt's own diagnostics (e.g. "unresolved_symbol") describe a
+	// gap that no longer exists once the ADR-mapped fallback found facts; carry
+	// them forward only when the fallback is itself empty, exactly as Warnings
+	// already does, so a ticker that fully resolved via the mapping does not
+	// still report a stale withheld/unresolved entry.
+	if len(next.Facts) == 0 {
+		next.Diagnostics = append(td.Diagnostics, next.Diagnostics...)
+		next.Warnings = append(td.Warnings, next.Warnings...)
+	}
+	return next, nil
+}
+
+func (p *yahooNewsProvider) newsData(resp yahooSearchResp, ticker, query string) (TickerData, bool) {
 	cutoff := time.Now().Add(-newsMaxAge)
 	var arts []newsArticle
 	// Every filter below is correct on its own, and every one of them ends in
@@ -129,7 +157,7 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 			Publisher: strings.TrimSpace(n.Publisher),
 			Link:      n.Link,
 			Published: published,
-			Related:   relatesTo(n.RelatedTickers, ticker),
+			Related:   relatesTo(n.RelatedTickers, query),
 		})
 	}
 	if len(arts) == 0 {
@@ -143,22 +171,33 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 		// run reported itself complete. An empty news array stays silent —
 		// that one really is a quiet name.
 		if len(resp.News) > 0 {
-			td.Warnings = append(td.Warnings, drops.warning(len(resp.News), "providerPublishTime"))
+			message := drops.warning(len(resp.News), "providerPublishTime")
+			td.Warnings = append(td.Warnings, message)
+			reason := "filtered_items"
+			if drops.stale == len(resp.News) {
+				reason = "stale"
+			}
+			td.Diagnostics = append(td.Diagnostics, sourceDiagnostic(p.Name(), ticker, "news", reason, "withheld", message))
 		}
-		return td, nil
+		return td, false
 	}
 	// Newest first. A search endpoint orders by its own relevance score, which
 	// is not the order a catalyst read wants.
 	sort.SliceStable(arts, func(i, j int) bool { return arts[i].Published.After(arts[j].Published) })
 
 	td := TickerData{Ticker: ticker}
-	facts, warn := headlineFacts(arts, "")
+	note := ""
+	if query != ticker {
+		note = " (issuer news via mapped ADR " + query + "; local listing " + ticker + ")"
+	}
+	facts, warn := headlineFacts(arts, note)
 	if warn != "" {
 		td.Warnings = append(td.Warnings, warn)
-		return td, nil
+		td.Diagnostics = append(td.Diagnostics, sourceDiagnostic(p.Name(), ticker, "news", "unresolved_symbol", "withheld", warn))
+		return td, true
 	}
 	td.Facts = facts
-	return td, nil
+	return td, false
 }
 
 // relatesTo reports whether Yahoo tagged an item with this ticker.

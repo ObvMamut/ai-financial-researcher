@@ -41,7 +41,7 @@ assumed execution-cost scenarios are described in the
 
 ## Requirements
 
-- [Go](https://go.dev/) 1.26.3+ (see `go.mod`)
+- [Go](https://go.dev/) 1.27.1+ (see `go.mod`)
 - **Chief Analyst:** `claude` CLI (omitting `chief_engine` or `chief_engine=claude`
   requires `claude` logged in; `chief_engine=api` does not)
 - **Cheap research:** `agy` CLI, logged in, unless `cheap_engine=api` or `cheap_engine=local`
@@ -113,3 +113,10 @@ legacy and thesis with isolated inputs. Later use `cfr research-pair --evaluate
 .data/pair-2026-09-09 --refresh` to save outcome prices separately. See the
 [paired-evaluation workflow](docs/workflow/thesis-research.md#collecting-a-prospective-frozen-pair)
 for configuration, registered assumptions and 10/15-session maturity limits.
+
+### Acceptance manifest
+
+`go run ./cmd/cfr acceptance-manifest --indices sp500,eu50` writes resolved,
+redacted configuration and source/persona/code hashes without starting models or
+fetching market data. See the [continuation and regression record](docs/plans/2026-09-22-continuation.md)
+for offline checks and the live acceptance work still pending.

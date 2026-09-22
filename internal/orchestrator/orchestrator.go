@@ -617,6 +617,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// errors lived only in data/<domain>.json.
 	stageMS := map[string]int64{}
 	var dataErrors []string
+	var sourceDiagnostics []model.SourceDiagnostic
 	stage := func(name string, t time.Time) { stageMS[name] = time.Since(t).Milliseconds() }
 
 	// Prices route per symbol: Alpaca for US equities when a key is configured,
@@ -953,6 +954,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		}
 		logPackErrors(ch, sp.role, pack.Errors)
 		dataErrors = append(dataErrors, prefixed(sp.role, pack.Errors)...)
+		sourceDiagnostics = append(sourceDiagnostics, pack.Diagnostics...)
 		// No provider serves the quant domain — its evidence is the computed
 		// metrics pack — so data/quant.json was written byte-identical to
 		// data/macro.json but for the label, with an empty ByTicker. That
@@ -1563,6 +1565,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		ChiefAccepted:           chiefAcceptedEngine,
 		Stages:                  stageMS,
 		DataErrors:              dataErrors,
+		SourceDiagnostics:       sourceDiagnostics,
 		PersonaSHA:              reg.PersonaSHA(),
 		PersonaSet:              filepath.Base(cfg.AgentsDir),
 	}

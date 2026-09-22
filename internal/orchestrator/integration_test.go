@@ -108,7 +108,10 @@ func syntheticNews(symbol string) []byte {
 			title, title, publisher, url.PathEscape(title),
 			now.Add(-time.Duration(ageHours)*time.Hour).Unix(), rel)
 	}
-	tagged := !strings.Contains(symbol, ".")
+	// Keep the fixture's foreign coverage gap explicit even after the bounded
+	// mapped-ADR fallback: those issuer queries remain unresolved too.
+	unresolvedADR := map[string]bool{"ASML": true, "SAP": true, "SNY": true, "TM": true, "SONY": true, "TSM": true, "BABA": true}
+	tagged := !strings.Contains(symbol, ".") && !unresolvedADR[symbol]
 	return []byte(fmt.Sprintf(`{"news":[%s,%s],"quotes":[]}`,
 		item(symbol+" reports a quarter ahead of guidance", "Reuters", 20, tagged),
 		item(symbol+" names a new chief financial officer", "Bloomberg", 44, tagged)))
@@ -1004,12 +1007,21 @@ func TestChiefConfidenceIsAnchoredToTheComputedBase(t *testing.T) {
 // "off-base" for the first (over-confident) pass, "ok" for the corrective
 // pass once the prompt carries the "## Corrective pass" marker.
 func TestLegacyAPIChiefCorrectiveRepromptEndToEnd(t *testing.T) {
+	for _, mode := range []model.Mode{model.ModeSingle, model.ModeIndependent} {
+		for _, engine := range []string{"claude", "api"} {
+			t.Run(string(mode)+"/"+engine, func(t *testing.T) { testLegacyAPIChiefCorrective(t, mode, engine) })
+		}
+	}
+}
+
+func testLegacyAPIChiefCorrective(t *testing.T, runMode model.Mode, engine string) {
 	claudeBin, err := filepath.Abs("../../testdata/fakebin/claude")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := testConfig(t, model.ModeIndependent)
+	cfg := testConfig(t, runMode)
+	cfg.Ticker = "NVDA"
 	cfg.Indices = []string{"sp500"}
 	cfg.ChiefAdjustBand = 10
 
@@ -1043,9 +1055,17 @@ func TestLegacyAPIChiefCorrectiveRepromptEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg.ChiefEngine = "api"
+	cfg.ChiefEngine = engine
 	cfg.ChiefAPI = model.APIConfig{BaseURL: srv.URL, Model: "chief-model", APIKey: "chief-key"}
 
+	if engine == "claude" {
+		wrapper := filepath.Join(t.TempDir(), "chief-wrapper")
+		script := "#!/bin/sh\ncase \"$*\" in\n*'## Corrective pass'*) export CFR_FAKE_MODE=ok ;;\n*) export CFR_FAKE_MODE=off-base ;;\nesac\nexec '" + claudeBin + "' \"$@\"\n"
+		if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Binaries[model.CLIClaude] = wrapper
+	}
 	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
 	if runErr != nil {
 		t.Fatalf("unexpected EventError: %s", runErr.Message)
@@ -1056,7 +1076,7 @@ func TestLegacyAPIChiefCorrectiveRepromptEndToEnd(t *testing.T) {
 	if !strings.Contains(strings.Join(logs, "\n"), "corrective re-prompt") {
 		t.Errorf("expected the corrective re-prompt loop to run on an API Chief response:\n%s", strings.Join(logs, "\n"))
 	}
-	if got := atomic.LoadInt32(&hits); got != 2 {
+	if got := atomic.LoadInt32(&hits); engine == "api" && got != 2 {
 		t.Fatalf("chief endpoint saw %d requests, want 2 (initial + corrective)", got)
 	}
 	if len(complete.Ideas.Ideas) == 0 {

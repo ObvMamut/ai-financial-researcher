@@ -463,10 +463,9 @@ full stop.
   exactly one name, never folded into a neighbour.
 - `omitted` on the **prompt profile** (`PromptProfile.Omitted`) names optional
   sections `assembleSections` actually dropped to make an assembled prompt
-  fit. It is empty in essentially every real run today: production always
-  calls `assembleSections` with `noSectionLimit` (`math.MaxInt`), so real
-  section-dropping is not currently exercised — this is the latent
-  macro-drop hazard noted below.
+  fit. Profile version 2 applies the actual redacted input budget; required
+  macro context and compaction originals cannot be omitted. For refused inputs,
+  the persisted prompt retains the complete input for audit.
 
   `omitted` on **`DomainStatus`/`Report`** (a different field, same name, a
   different fact) names the *mandatory* requirements implicated when a call
@@ -486,7 +485,7 @@ full stop.
 **Which artifact carries which snapshot.** `input-<name>.json` is written by
 `preparePrompt` *before* the call is dispatched, so it can never carry a
 response measurement — only the request side (`components_bytes`, and the
-prompt profile's own `omitted` if the call was refused before dispatch).
+prompt profile's own `omitted` for optional sections dropped before dispatch).
 `metadata.json`, via each `DomainStatus.Prompt`, carries the same profile
 *after* `responseCapacity` has filled in `response` and
 `response_contract_version`. Both are correct; they are snapshots at
@@ -541,3 +540,26 @@ not that the Chief ran on Claude.
 skipped on thesis's all-research-failed path, and nothing was accepted); both
 absent means the run predates these fields. Read `metadata.json`'s `RunMeta`
 for `chief_model` and the full `chief_attempted` trail.
+
+
+### Source diagnostics and prompt version 2
+
+Optional `source_diagnostics` on run metadata and company research artifacts is an
+array of `{id, provider, ticker?, region?, stage, reason, disposition, message}`.
+IDs identify repeated observations; messages are redacted. Disposition values
+currently emitted are `failed`, `withheld`, `expected`, and `context`. Reason codes
+include `fetch_failed`, `unresolved_symbol`, `stale`, `filtered_items`,
+`filtered_unrelated`, `below_threshold`, `not_applicable`, `navigation_only`, and
+`provider_warning`. Omitted historical arrays mean unrecorded classification.
+Legacy `data_errors` is retained. These additive fields do not change schema v2.
+
+Prompt profile `version: 2` measures and fits redacted wrapped input, dropping
+only optional whole sections. Required compaction originals and macro context
+cannot be dropped. Preparation failures with zero attempts have payload
+`not_attempted`; no response decoding failure is implied. `response_contract_version`
+remains independently versioned at 2 for compact JSON response measurement.
+
+Research-comparison rows additionally expose `source_reasons`,
+`source_reasons_by_region`, and `stage_progress` (the existing Go-computed
+`ResearchSummary`). Reasons count unique IDs. The older `completed_research`
+metric retains its reviewed-workflow meaning for compatibility.

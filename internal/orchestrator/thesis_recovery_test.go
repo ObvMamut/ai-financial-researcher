@@ -327,8 +327,8 @@ func TestCompactionRefusesADoomedCallWhenProtectedContentAlreadyExceeds(t *testi
 			if calls != 0 {
 				t.Fatalf("a doomed compaction dispatched %d model call(s), want 0", calls)
 			}
-			if status.Attempts != 0 {
-				t.Fatalf("Attempts = %d, want 0", status.Attempts)
+			if status.Attempts != 0 || status.Status != model.StatusFailed || status.FailureKind != "input_capacity" || status.Payload != model.OutcomeNotAttempted {
+				t.Fatalf("incorrect preparation refusal: %+v", status)
 			}
 			if status.Contract != model.OutcomeFailed {
 				t.Fatalf("Contract = %q, want failed", status.Contract)

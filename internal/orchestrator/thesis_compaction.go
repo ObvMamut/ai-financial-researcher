@@ -271,7 +271,7 @@ func perFieldLines(perField, current map[string]int) string {
 func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string, limit int, out *model.CandidateDossier) (model.DomainStatus, error) {
 	allowance, err := measureCompaction(raw, limit)
 	if err != nil {
-		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Contract: model.OutcomeFailed, Payload: "invalid", Err: fmt.Sprintf("compaction allowance could not be measured: %v", err)}, err
+		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Status: model.StatusFailed, FailureKind: "input_preparation", Contract: model.OutcomeFailed, Payload: model.OutcomeNotAttempted, Err: fmt.Sprintf("compaction allowance could not be measured: %v", err)}, err
 	}
 	if !allowance.Feasible {
 		// Two distinct shapes reach here (see perFieldFloorsFit): a
@@ -288,12 +288,12 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 			}
 		}
 		err := fmt.Errorf("compaction is not feasible: a %d-byte narrative_budget (limit %d minus protected_bytes %d minus headroom %d) cannot cover the %d-byte floor required across its non-empty narrative fields", allowance.NarrativeBudget, limit, allowance.ProtectedBytes, compactionHeadroom, floors)
-		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Contract: model.OutcomeFailed, Payload: "invalid", Allowance: &allowance, Err: err.Error()}, err
+		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Status: model.StatusFailed, FailureKind: "input_capacity", Contract: model.OutcomeFailed, Payload: model.OutcomeNotAttempted, Allowance: &allowance, Err: err.Error()}, err
 	}
 
 	var original model.CandidateDossier
 	if err = decodeResearch(raw, &original); err != nil {
-		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Contract: model.OutcomeFailed, Payload: "invalid", Allowance: &allowance, Err: err.Error()}, err
+		return model.DomainStatus{Domain: name + "-compaction", Recovery: "compaction", Status: model.StatusFailed, FailureKind: "input_preparation", Contract: model.OutcomeFailed, Payload: model.OutcomeNotAttempted, Allowance: &allowance, Err: err.Error()}, err
 	}
 	originalNarratives := dossierNarratives(original)
 	current := make(map[string]int, len(dossierNarrativeFields))
@@ -321,6 +321,9 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 	s.Recovery, s.Contract, s.Payload = "compaction", model.OutcomeFailed, "invalid"
 	s.Allowance = &allowance
 	if err != nil {
+		if r.Attempts == 0 && r.FailureKind == "input_capacity" {
+			s.Payload = model.OutcomeNotAttempted
+		}
 		return s, err
 	}
 	var next model.CandidateDossier

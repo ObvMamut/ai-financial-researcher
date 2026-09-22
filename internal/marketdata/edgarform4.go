@@ -235,11 +235,12 @@ func (p *edgarProvider) fetchInsiderActivity(ctx context.Context, ticker string)
 			td.Warnings = append(td.Warnings, fmt.Sprintf(
 				"%s is a foreign private issuer: exempt from Section 16, so it files 20-F rather than Form 4 and there is no insider leg for it",
 				ticker))
+			td.Diagnostics = append(td.Diagnostics, sourceDiagnostic(p.Name(), ticker, "insider", "not_applicable", "expected", td.Warnings[len(td.Warnings)-1]))
 			p.addPlannedSales(&td, plannedURL, notices, noticeWarnings)
 			p.addActivistStakes(ctx, &td, cik)
 			p.addInstitutionalHoldings(ctx, &td, cik)
 			if len(td.Facts) == 0 {
-				return TickerData{}, fmt.Errorf(
+				return TickerData{Ticker: ticker, Diagnostics: td.Diagnostics}, fmt.Errorf(
 					"%w: %s is a foreign private issuer with no 13D/G, Form 144 or tracked 13F position — nothing in SEC's filings reaches it",
 					ErrNotApplicable, ticker)
 			}
@@ -366,7 +367,8 @@ func (p *edgarProvider) addInstitutionalHoldings(ctx context.Context, td *Ticker
 // addActivistStakes appends the 13D/G leg, on the same best-effort terms as the
 // Form 144 one.
 func (p *edgarProvider) addActivistStakes(ctx context.Context, td *TickerData, cik string) {
-	stakes, warnings := p.fetchStakes(ctx, cik)
+	stakes, warnings, diagnostics := p.fetchStakesDetailed(ctx, cik, td.Ticker)
+	td.Diagnostics = append(td.Diagnostics, diagnostics...)
 	td.Warnings = append(td.Warnings, warnings...)
 	if len(warnings) > 0 && len(stakes) == 0 {
 		return

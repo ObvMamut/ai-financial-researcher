@@ -78,7 +78,7 @@ in independent mode and one in single-stock mode; risk checks may remove ideas.
 ## Development and validation
 
 Run commands from the repository root. Use the Go toolchain required by `go.mod`
-(currently Go 1.26.3 or newer).
+(currently Go 1.27.1 or newer).
 
 ```sh
 go build ./...

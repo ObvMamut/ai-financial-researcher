@@ -62,20 +62,21 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 		sec.Body = redact.String(sec.Body)
 		redacted[i] = sec
 	}
-	// Named ahead of assembly, not derived from assembleSections' own omitted
-	// return: noSectionLimit means that return is always empty in production
-	// (nothing is ever actually dropped), so it cannot answer "which
-	// requirement exceeded capacity" for the len(prompt) > InputBytes check
-	// below. mandatory lists every section this call cannot trim away.
-	mandatory := make([]string, 0, len(redacted))
-	for _, sec := range redacted {
-		if sec.Mandatory {
-			mandatory = append(mandatory, sec.Name)
-		}
+	wrapper, err := t.promptWrapperBytes(role)
+	if err != nil {
+		return "", nil, err
 	}
-	data, sizes, omitted, aerr := assembleSections(redacted, noSectionLimit)
-	if aerr != nil {
-		return "", nil, aerr
+	data, sizes, omitted, capacityErr := assembleSections(redacted, budget.InputBytes-wrapper)
+	if capacityErr != nil {
+		if promptFailureKind(capacityErr) != "input_capacity" {
+			return "", nil, capacityErr
+		}
+		// Persist the complete refused input for audit. Nothing was dispatched
+		// or actually omitted from this artifact.
+		data, sizes, omitted, err = assembleSections(redacted, noSectionLimit)
+		if err != nil {
+			return "", nil, err
+		}
 	}
 	prompt, err := t.wrapPrompt(role, data)
 	if err != nil {
@@ -90,7 +91,7 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 	// profile could record "data" 150,876 alongside company_board 142,756
 	// plus macro/quant/risk_policy, summing to more than the prompt itself).
 	// sum(Components) now equals len(prompt) exactly, always.
-	profile := &model.PromptProfile{VisibleEvidence: visibleEvidence(data), Version: 1, Bytes: len(prompt), EstimatedTokens: (len(prompt) + 2) / 3, EstimateMethod: "ceil(UTF-8 bytes/3); heuristic, not provider usage or a context guarantee", InputLimit: budget.InputBytes, ResponseLimit: budget.ResponseBytes, OutputTokenLimit: outputTokens, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(prompt))), Components: map[string]int{"instructions": len(prompt) - len(data)}, Omitted: omitted}
+	profile := &model.PromptProfile{VisibleEvidence: visibleEvidence(data), Version: 2, Bytes: len(prompt), EstimatedTokens: (len(prompt) + 2) / 3, EstimateMethod: "ceil(UTF-8 bytes/3); heuristic, not provider usage or a context guarantee", InputLimit: budget.InputBytes, ResponseLimit: budget.ResponseBytes, OutputTokenLimit: outputTokens, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(prompt))), Components: map[string]int{"instructions": len(prompt) - len(data)}, Omitted: omitted}
 	for key, size := range sizes {
 		profile.Components[key] = size
 	}
@@ -109,10 +110,19 @@ func (t *thesisRunner) preparePrompt(role, name string, sections []promptSection
 	}{role, data, prompt, profile}); err != nil {
 		return "", profile, err
 	}
+	if capacityErr != nil {
+		return "", profile, capacityErr
+	}
 	if strings.Contains(data, `"omitted_claim_ids":[`) {
 		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded: required source passages do not fit the evidence budget"), []string{"evidence"}}
 	}
 	if len(prompt) > budget.InputBytes {
+		var mandatory []string
+		for _, sec := range redacted {
+			if sec.Mandatory {
+				mandatory = append(mandatory, sec.Name)
+			}
+		}
 		return "", profile, promptCapacityError{fmt.Errorf("input capacity exceeded for %s: %d > %d bytes; required context cannot be omitted", role, len(prompt), budget.InputBytes), mandatory}
 	}
 	return prompt, profile, nil
@@ -209,8 +219,7 @@ func executionPlanHash(idea model.TradeIdea) string {
 // promptCapacityError distinguishes a capacity refusal (this prompt was never
 // dispatched) from any other prompt-preparation failure. omitted names the
 // mandatory requirements implicated — see DomainStatus.Omitted's doc comment
-// for why that is a different fact from assembleSections' own (always-empty
-// in production) omitted return.
+// for why that differs from the optional sections omitted from a fitted prompt.
 type promptCapacityError struct {
 	error
 	omitted []string

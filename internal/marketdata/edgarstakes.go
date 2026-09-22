@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // Schedules 13D and 13G are the disclosures a holder crossing 5% of a class must
@@ -260,12 +262,15 @@ func (d *stakeDocument) stake(form, url string, filed time.Time) (stakeFiling, b
 	return s, true
 }
 
-// fetchStakes lists the 5%+ ownership schedules filed against an issuer in the
-// window. Like the Form 144 leg it is best-effort.
-func (p *edgarProvider) fetchStakes(ctx context.Context, cik string) ([]stakeFiling, []string) {
+func (p *edgarProvider) fetchStakesDetailed(ctx context.Context, cik, ticker string) ([]stakeFiling, []string, []model.SourceDiagnostic) {
+	var diagnostics []model.SourceDiagnostic
+	record := func(reason, disposition, message string) string {
+		diagnostics = append(diagnostics, sourceDiagnostic(p.Name(), ticker, "ownership", reason, disposition, message))
+		return message
+	}
 	filings, err := p.recentFilingsAny(ctx, cik, stakeForms, stakeLookbackDays, stakeMaxDocs)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("13D/G index: %v", err)}
+		return nil, []string{record("fetch_failed", "failed", fmt.Sprintf("13D/G index: %v", err))}, diagnostics
 	}
 	issuer := p.issuerName(ctx, cik)
 	var out []stakeFiling
@@ -273,7 +278,7 @@ func (p *edgarProvider) fetchStakes(ctx context.Context, cik string) ([]stakeFil
 	for _, f := range filings {
 		doc, err := p.fetchStakeDoc(ctx, cik, f.accession, f.document)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s %s: %v", f.form, f.accession, err))
+			warnings = append(warnings, record("fetch_failed", "failed", fmt.Sprintf("%s %s: %v", f.form, f.accession, err)))
 			continue
 		}
 		s, ok := doc.stake(f.form, f.url, f.filed)
@@ -281,24 +286,24 @@ func (p *edgarProvider) fetchStakes(ctx context.Context, cik string) ([]stakeFil
 			continue
 		}
 		if about, why := doc.aboutIssuer(cik, issuer, s.Holder); !about {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, record("filtered_unrelated", "withheld", fmt.Sprintf(
 				"%s filed %s is not a stake in this issuer: %s — dropped",
-				f.form, f.filed.Format("2006-01-02"), why))
+				f.form, f.filed.Format("2006-01-02"), why)))
 			continue
 		}
 		if s.Percent < stakeMinPercent {
 			// A "5%+ ownership schedule" reporting 0.2% is either a wind-down
 			// amendment or, far more often, a filing that is not about this
 			// issuer at all and slipped both tests above.
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, record("below_threshold", "withheld", fmt.Sprintf(
 				"%s filed %s by %s reports %.1f%%, below the %.0f%% a schedule is filed at — dropped",
-				f.form, f.filed.Format("2006-01-02"), s.Holder, s.Percent, stakeMinPercent))
+				f.form, f.filed.Format("2006-01-02"), s.Holder, s.Percent, stakeMinPercent)))
 			continue
 		}
 		out = append(out, s)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Filed.After(out[j].Filed) })
-	return out, warnings
+	return out, warnings, diagnostics
 }
 
 // issuerName is the registrant name EDGAR files this CIK under, used to tell a

@@ -565,17 +565,19 @@ from response semantics, and both can be reviewed before live model spending.
 | WP4 response normalization | Implemented | Implemented | Pending |
 | WP5 bounded compaction | Implemented | Implemented | Pending |
 | WP6 complete prompt budgets | Implemented | Implemented | Pending |
-| WP7 research/source quality | Pending | Pending | Pending |
-| WP8 diagnostics (provenance/tests bullets only) | Implemented | Implemented | Pending |
-| WP9 integrated verification | Pending | Pending | Not a live gate by itself |
+| WP7 research/source quality | Targeted audit/source changes implemented | Fixed-corpus regression coverage | Broader regional/quality gains unproven |
+| WP8 diagnostics | Implemented, additive typed source/stage/version fields | See continuation record | Pending |
+| WP9 integrated verification | Standing regression matrix implemented | See continuation record | Not a live gate by itself |
 | WP10 acceptance/evaluation | Pending | Prerequisite packages | Pending |
 
 WP1–WP6 and the provenance/tests bullets of WP8 are implemented and locally verified by
 [the chief engine and capacity implementation record](2026-09-17-chief-engine-and-capacity.md),
 per its own SDD plan
 ([docs/plans/2026-09-17-chief-engine-and-capacity-plan.md](2026-09-17-chief-engine-and-capacity-plan.md)).
-WP7, the remainder of WP8 (warning typing by region, filtered-vs-lost evidence labels),
-WP9 and WP10 remain Pending and are deferred to a follow-up plan, as that record states.
+The [September 22 continuation](2026-09-22-continuation.md) records WP7 audit and
+source changes, remaining WP8 diagnostics, and the WP9 regression matrix. WP7
+broader regional improvement and WP10 live acceptance remain unproven. Its fixed
+source capture is separate from model acceptance.
 
 The earlier audit ran `go test ./... -count=1`, `go build ./...`, `go vet ./...`
 and `git diff --check` successfully. Those results describe the pre-implementation

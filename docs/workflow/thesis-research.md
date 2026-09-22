@@ -490,9 +490,10 @@ claims, exact quotations, numerical values, events, requests, uncertainties,
 conditions and status must remain unchanged. Go compares them before accepting
 the compacted response. Original narratives are persisted in the compaction
 call's diagnostics and supplied to subsequent research/challenge as an
-explicitly budgeted `compaction_originals` section, itself subject to the same
-mandatory/optional section fitting as everything else — dropped and named
-under a tight budget rather than silently overflowing it. A supported challenge
+explicitly budgeted, mandatory `compaction_originals` section. Optional retrieval
+diagnostics/history are omitted first. If original narratives and other required
+review evidence cannot fit, preparation refuses the call with a named capacity
+failure and zero dispatched attempts. Original review evidence is never dropped. A supported challenge
 must explicitly confirm `compaction_assessment: preserved`. A compaction that
 fails, changes protected fields, exceeds input capacity or remains over budget
 stops without another repair. It does not increase provider token caps.
@@ -696,5 +697,48 @@ When no eligible company produced usable research, Chief and fallback synthesis
 are skipped. Go still writes empty ideas, per-company explanations and degraded
 artifacts (headless exit 3 for research failure). A legitimate reviewed no-trade
 result remains distinct. A known disabled-Claude-subscription error stops unchanged
-retries; Claude remains the primary engine and the separately configured fallback
-retains its existing authorization and provenance.
+retries; the configured Chief engine remains the primary and the separately
+configured Claude-only fallback retains its authorization and provenance.
+
+
+### Continuation contracts (September 22)
+
+Prompt profile version 2 applies the actual input byte cap after credential
+redaction and persona wrapping. Optional sections are omitted whole and named in
+`omitted`; required macro context, dossier identity, quotations and compaction
+originals remain mandatory. A refused prompt is saved for audit. Zero-attempt
+preparation failures carry payload `not_attempted`, not invalid JSON.
+
+Yahoo news first queries the local listing. Only a nonempty, recent but unresolved
+feed can trigger one query through the existing NYSE/NASDAQ ADR mapping. Quiet,
+stale-only, failed and unmapped feeds receive no alias retry. The returned facts
+retain the local ticker and explicitly label the ADR query. Issuer news never
+supplies a currency or price conversion. Link ranking prefers substantive releases
+and the seed language; navigation indexes and subscription pages are context.
+Uncited navigation text comes after substantive sources in prompt allocation.
+
+`source_diagnostics` records stable IDs, provider, ticker, listing region, stage,
+reason, disposition and redacted message. Dispositions distinguish failed fetches,
+withheld evidence, expected coverage gaps and context. Unrelated ownership filings
+are `filtered_unrelated`; unsupported instruments are `not_applicable`. Other
+provider warnings remain explicitly generic until typed at their source. Cache
+schema 5 and frozen snapshots preserve these records. Existing error lists and
+severity gates remain in place. Headless text and TUI share the source summary.
+The scoreboard deduplicates source reasons by ID, groups them by region, and adds
+`stage_progress` from the same research summary used by the result views. Its
+historical `completed_research` field still means a completed reviewed workflow.
+Cohorts include recorded Chief selection/model and prompt/response versions;
+absent historical versions remain unknown.
+
+`cfr acceptance-manifest [--indices sp500,eu50] [--ticker AAPL]` uses normal config
+precedence and runtime defaults without starting a run. It exports an allowlisted
+projection, configuration/source/persona hashes, dirty file hashes and capture
+time, with a final full-credential/prefix leakage check. The shell wrapper in
+`docs/plans/` delegates to this command. Run-specific timing belongs to the later
+run artifact, not the manifest's capture time.
+
+The source-only collector `go run ./cmd/cfr-source-capture --out NEW.json` is an
+explicit network operation: fixed six-company panel, at most eight documents per
+company, no config credentials or models, and refusal to overwrite a capture.
+Ordinary tests replay the committed September 21 corpus without network access.
+See [the continuation record](../plans/2026-09-22-continuation.md) for limitations.

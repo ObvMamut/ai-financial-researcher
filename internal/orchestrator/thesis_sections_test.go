@@ -249,3 +249,33 @@ func TestDuplicateSectionNameIsRejected(t *testing.T) {
 		t.Fatalf("error %q does not name the duplicate section", err.Error())
 	}
 }
+
+func TestProductionPromptFitsOptionalsAndPersistsRequiredRefusal(t *testing.T) {
+	runner, _, done := thesisFixture(t, func(string, int) string { t.Fatal("must not dispatch"); return "" })
+	defer done()
+	wrapper, err := runner.promptWrapperBytes("thesis-challenger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := []promptSection{{Name: "compaction_originals", Mandatory: true, Body: "material qualification"}, {Name: "retrieval_errors", Body: strings.Repeat("optional", 100)}}
+	runner.cfg.Research.Budgets.Challenger.InputBytes = wrapper + len(sections[0].Body)
+	prompt, profile, err := runner.preparePrompt("thesis-challenger", "fit-real", sections, 8192)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "material qualification") || strings.Contains(prompt, "optional") || !reflect.DeepEqual(profile.Omitted, []string{"retrieval_errors"}) {
+		t.Fatalf("incorrect fitted prompt: %+v", profile)
+	}
+	if profile.Version != 2 || profile.Bytes != runner.cfg.Research.Budgets.Challenger.InputBytes {
+		t.Fatalf("incorrect exact profile: %+v", profile)
+	}
+	runner.cfg.Research.Budgets.Challenger.InputBytes--
+	prompt, profile, err = runner.preparePrompt("thesis-challenger", "refuse-real", sections, 8192)
+	if prompt != "" || profile == nil || promptFailureKind(err) != "input_capacity" || !reflect.DeepEqual(promptOmitted(err), []string{"compaction_originals"}) {
+		t.Fatalf("required original was not refused: %q %+v %v", prompt, profile, err)
+	}
+	data, saved := readInputPack(t, runner.run.Dir, "refuse-real")
+	if !strings.Contains(data, "material qualification") || saved.Bytes != profile.Bytes {
+		t.Fatal("refused input not persisted")
+	}
+}

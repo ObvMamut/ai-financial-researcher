@@ -26,16 +26,22 @@ type ResearchUsage struct {
 }
 
 type ResearchRunDiagnostics struct {
-	LogicalCalls        int `json:"logical_calls"`
-	AttemptedCompanies  int `json:"attempted_companies"`
-	DeferredCompanies   int `json:"deferred_companies"`
-	CompletedResearch   int `json:"completed_research"`
-	FailedResearch      int `json:"failed_research"`
-	TruncatedCalls      int `json:"truncated_calls"`
-	TruncatedAttempts   int `json:"truncated_attempts"`
-	InferredTruncations int `json:"historically_inferred_truncated_calls"`
-	CapacityFailures    int `json:"capacity_failures"`
-	RecoveryAttempts    int `json:"recovery_attempts"`
+	SourceRegions map[string]map[string]int `json:"source_reasons_by_region,omitempty"`
+	// StageProgress separates completed research contracts from independent reviews.
+	// The older completed_research field retains its reviewed-workflow definition.
+	StageProgress       *model.ResearchSummary   `json:"stage_progress,omitempty"`
+	SourceDiagnostics   []model.SourceDiagnostic `json:"source_diagnostics,omitempty"`
+	SourceReasons       map[string]int           `json:"source_reasons,omitempty"`
+	LogicalCalls        int                      `json:"logical_calls"`
+	AttemptedCompanies  int                      `json:"attempted_companies"`
+	DeferredCompanies   int                      `json:"deferred_companies"`
+	CompletedResearch   int                      `json:"completed_research"`
+	FailedResearch      int                      `json:"failed_research"`
+	TruncatedCalls      int                      `json:"truncated_calls"`
+	TruncatedAttempts   int                      `json:"truncated_attempts"`
+	InferredTruncations int                      `json:"historically_inferred_truncated_calls"`
+	CapacityFailures    int                      `json:"capacity_failures"`
+	RecoveryAttempts    int                      `json:"recovery_attempts"`
 	// DispatchedAttempts sums DomainStatus.Attempts (subprocess attempts Go
 	// actually made) across every logical call. A zero-attempt call (input
 	// capacity rejected the prompt before a subprocess ever ran) is a logical
@@ -131,6 +137,24 @@ func researchDiagnostics(r store.RunSummary, ideas *model.IdeasResult, resultErr
 		d.DurationMS = meta.Duration
 		d.Outcome = meta.Outcome
 		d.DataErrors = len(meta.DataErrors)
+		d.SourceDiagnostics = append([]model.SourceDiagnostic(nil), meta.SourceDiagnostics...)
+		d.SourceReasons = map[string]int{}
+		d.SourceRegions = map[string]map[string]int{}
+		seenDiagnostics := map[string]bool{}
+		for _, item := range meta.SourceDiagnostics {
+			if !seenDiagnostics[item.ID] {
+				d.SourceReasons[item.Reason]++
+				region := item.Region
+				if region == "" {
+					region = "global"
+				}
+				if d.SourceRegions[region] == nil {
+					d.SourceRegions[region] = map[string]int{}
+				}
+				d.SourceRegions[region][item.Reason]++
+				seenDiagnostics[item.ID] = true
+			}
+		}
 		distinct := map[string]bool{}
 		for _, e := range meta.DataErrors {
 			distinct[e] = true
@@ -138,6 +162,11 @@ func researchDiagnostics(r store.RunSummary, ideas *model.IdeasResult, resultErr
 		d.DistinctDataErrors = len(distinct)
 		d.LogicalCalls = len(meta.Domains)
 		d.ResearchOutcomesAvailable = meta.ResearchOutcomes != nil
+		var decisions []model.SelectionDecision
+		if ideas != nil {
+			decisions = ideas.Decisions
+		}
+		d.StageProgress = model.SummarizeResearch(meta.ResearchOutcomes, decisions)
 		for _, o := range meta.ResearchOutcomes {
 			if o.Transport == model.OutcomeNotRun {
 				d.DeferredCompanies++

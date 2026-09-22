@@ -308,8 +308,15 @@ func Load() (*Settings, error) {
 		if err := s.applyFile(p); err != nil {
 			return nil, err
 		}
+		// Register after every file, not only once at the end: a later file
+		// that fails to parse makes Load return here, before the final call
+		// below ever runs, and any secret an earlier file already populated
+		// into s must still be redacted in whatever the caller does with that
+		// returned error (e.g. logging it further up the stack).
+		s.registerSecrets()
 	}
 	s.applyEnv()
+	s.registerSecrets()
 	if s.ResearchMode == "" {
 		s.ResearchMode = "legacy"
 	}
@@ -329,7 +336,6 @@ func Load() (*Settings, error) {
 	if err := s.ValidateChiefEngine(); err != nil {
 		return nil, err
 	}
-	s.registerSecrets()
 	return s, nil
 }
 
@@ -340,7 +346,7 @@ func Load() (*Settings, error) {
 // value post-Load — the same "fail before any data acquisition" guarantee
 // Load itself gives a file/env-only configuration.
 //
-// Note: this — like every check in Load — runs BEFORE registerSecrets, so
+// Validation errors name the field rather than echoing an untrusted value, so
 // none of its error messages may interpolate a credential value; they name
 // the offending field instead (see the registerSecrets doc comment).
 func (s *Settings) ValidateChiefEngine() error {
@@ -700,6 +706,12 @@ func (s *Settings) applyEnv() {
 			*dst = v
 		}
 	}
+	setSecret := func(dst *string, key string) {
+		if v := os.Getenv(key); v != "" {
+			redact.Register(v)
+			*dst = v
+		}
+	}
 	setPosInt := func(dst *int, key string) {
 		if v := os.Getenv(key); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -724,23 +736,23 @@ func (s *Settings) applyEnv() {
 	setPosInt(&s.Research.Budgets.Chief.ResponseBytes, "CFR_RESEARCH_CHIEF_RESPONSE_BYTES")
 	setStr(&s.RunsDir, "CFR_RUNS_DIR")
 	setStr(&s.AgentsDir, "CFR_AGENTS_DIR")
-	setStr(&s.Providers.AlphaVantageKey, "ALPHAVANTAGE_API_KEY")
-	setStr(&s.Providers.FredKey, "FRED_API_KEY")
+	setSecret(&s.Providers.AlphaVantageKey, "ALPHAVANTAGE_API_KEY")
+	setSecret(&s.Providers.FredKey, "FRED_API_KEY")
 	setStr(&s.Providers.ContactEmail, "CFR_CONTACT_EMAIL")
 	// Alpaca's own env names first, so a key already exported for the alpaca
 	// SDKs just works; the CFR_-prefixed alias is read second and therefore
 	// wins, matching how CFR_API_KEY overrides DEEPSEEK_API_KEY above.
-	setStr(&s.Providers.AlpacaKeyID, "APCA_API_KEY_ID")
-	setStr(&s.Providers.AlpacaSecret, "APCA_API_SECRET_KEY")
-	setStr(&s.Providers.AlpacaKeyID, "CFR_ALPACA_KEY_ID")
-	setStr(&s.Providers.AlpacaSecret, "CFR_ALPACA_SECRET_KEY")
+	setSecret(&s.Providers.AlpacaKeyID, "APCA_API_KEY_ID")
+	setSecret(&s.Providers.AlpacaSecret, "APCA_API_SECRET_KEY")
+	setSecret(&s.Providers.AlpacaKeyID, "CFR_ALPACA_KEY_ID")
+	setSecret(&s.Providers.AlpacaSecret, "CFR_ALPACA_SECRET_KEY")
 
 	// Cheap-research API engine. CFR_API_KEY is preferred; DEEPSEEK_API_KEY is
 	// accepted as an alias so a DeepSeek key already in the environment just works.
 	setStr(&s.API.BaseURL, "CFR_API_BASE_URL")
 	setStr(&s.API.Model, "CFR_API_MODEL")
-	setStr(&s.API.APIKey, "DEEPSEEK_API_KEY")
-	setStr(&s.API.APIKey, "CFR_API_KEY")
+	setSecret(&s.API.APIKey, "DEEPSEEK_API_KEY")
+	setSecret(&s.API.APIKey, "CFR_API_KEY")
 	if v := os.Getenv("CFR_CHEAP_ENGINE"); v != "" {
 		s.CheapEngine = model.CLI(v)
 	}
@@ -752,13 +764,13 @@ func (s *Settings) applyEnv() {
 	// from the cheap-research role's config.
 	setStr(&s.ChiefAPI.BaseURL, "CFR_CHIEF_API_BASE_URL")
 	setStr(&s.ChiefAPI.Model, "CFR_CHIEF_API_MODEL")
-	setStr(&s.ChiefAPI.APIKey, "CFR_CHIEF_API_KEY")
+	setSecret(&s.ChiefAPI.APIKey, "CFR_CHIEF_API_KEY")
 	setPosInt(&s.ChiefAPI.MaxTokens, "CFR_CHIEF_API_MAX_TOKENS")
 
 	// Local OpenAI-compatible server (Ollama/llama.cpp). Key is optional.
 	setStr(&s.Local.BaseURL, "CFR_LOCAL_BASE_URL")
 	setStr(&s.Local.Model, "CFR_LOCAL_MODEL")
-	setStr(&s.Local.APIKey, "CFR_LOCAL_KEY")
+	setSecret(&s.Local.APIKey, "CFR_LOCAL_KEY")
 	setPosInt(&s.API.MaxTokens, "CFR_API_MAX_TOKENS")
 	// [local] is configurable by env on every other key; max_tokens was the one
 	// omission, so a local model's context had to be set in a file even when
@@ -771,7 +783,7 @@ func (s *Settings) applyEnv() {
 	// cheap-research role's config.
 	setStr(&s.ChiefFallback.BaseURL, "CFR_CHIEF_FALLBACK_BASE_URL")
 	setStr(&s.ChiefFallback.Model, "CFR_CHIEF_FALLBACK_MODEL")
-	setStr(&s.ChiefFallback.APIKey, "CFR_CHIEF_FALLBACK_API_KEY")
+	setSecret(&s.ChiefFallback.APIKey, "CFR_CHIEF_FALLBACK_API_KEY")
 	if v := os.Getenv("CFR_CHIEF_FALLBACK_MAX_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.ChiefFallback.MaxTokens = n

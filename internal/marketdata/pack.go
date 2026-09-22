@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
@@ -22,8 +23,9 @@ type DataPack struct {
 	// publisher of every headline it carries and the endpoint of every provider
 	// that contributed. On a search-less engine it is the *only* set an agent may
 	// cite from, and the orchestrator enforces that against the written report.
-	Citable map[string]bool
-	Errors  []string // provider failures encountered while building the pack
+	Citable     map[string]bool
+	Diagnostics []model.SourceDiagnostic `json:"source_diagnostics,omitempty"`
+	Errors      []string                 // provider failures encountered while building the pack
 
 	// EventDates maps a ticker to its next verified scheduled binary event
 	// (currently earnings). It is derived from the same fact the prompt renders,
@@ -316,6 +318,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			macro, err = prov.MacroFetch(ctx)
 			if err != nil && !errors.Is(err, ErrNotApplicable) {
 				pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s macro: %v", prov.Name(), err)))
+				pack.Diagnostics = append(pack.Diagnostics, sourceDiagnostic(prov.Name(), "", "macro", "fetch_failed", "failed", err.Error()))
 			}
 			if err == nil && len(macro) > 0 && s.cache != nil {
 				s.cache.Set(prov.Source(), prov.Name(), "MacroFetch", "GLOBAL", macro)
@@ -370,7 +373,16 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 			if !found {
 				var err error
 				data, err = prov.Fetch(ctx, domain, t)
-				if err != nil && !errors.Is(err, ErrNotApplicable) {
+				if errors.Is(err, ErrNotApplicable) {
+					// A provider that already explained the gap in its own
+					// Diagnostics (e.g. the foreign-private-issuer exemption)
+					// speaks for itself; the generic fallback only fires when
+					// it returned none, so one real gap is never counted twice.
+					if len(data.Diagnostics) == 0 {
+						pack.Diagnostics = append(pack.Diagnostics, sourceDiagnostic(prov.Name(), t, domain, "not_applicable", "expected", "provider does not cover this listing/domain"))
+					}
+				} else if err != nil {
+					pack.Diagnostics = append(pack.Diagnostics, sourceDiagnostic(prov.Name(), t, domain, "fetch_failed", "failed", err.Error()))
 					pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s %s/%s: %v", prov.Name(), domain, t, err)))
 				}
 				if err == nil && len(data.Facts) > 0 && s.cache != nil {
@@ -378,9 +390,21 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 				}
 			}
 
+			pack.Diagnostics = append(pack.Diagnostics, data.Diagnostics...)
+
 			// A provider that withheld a figure has to say so where the run's
 			// reader will see it, whether or not it also returned usable facts.
 			for _, w := range data.Warnings {
+				represented := false
+				for _, d := range data.Diagnostics {
+					if d.Message == redact.String(w) {
+						represented = true
+						break
+					}
+				}
+				if !represented {
+					pack.Diagnostics = append(pack.Diagnostics, sourceDiagnostic(prov.Name(), t, domain, "provider_warning", "withheld", w))
+				}
 				pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s %s/%s: %s", prov.Name(), domain, t, w)))
 			}
 

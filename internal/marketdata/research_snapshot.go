@@ -64,6 +64,11 @@ func frozenPack(ctx context.Context, source *DataPack, domain string, tickers []
 		maps.Copy(p.Sources, source.Sources)
 		maps.Copy(p.Citable, source.Citable)
 		p.Errors = append(p.Errors, source.Errors...)
+		for _, d := range source.Diagnostics {
+			if d.Ticker == "" || slices.ContainsFunc(tickers, func(t string) bool { return strings.EqualFold(t, d.Ticker) }) {
+				p.Diagnostics = append(p.Diagnostics, d)
+			}
+		}
 	}
 	for _, name := range tickers {
 		t := strings.ToUpper(name)
@@ -78,6 +83,7 @@ func frozenPack(ctx context.Context, source *DataPack, domain string, tickers []
 		if td, ok := source.ByTicker[t]; ok {
 			td.Facts = slices.Clone(td.Facts)
 			td.Warnings = slices.Clone(td.Warnings)
+			td.Diagnostics = slices.Clone(td.Diagnostics)
 			p.ByTicker[t] = td
 			p.Coverage[t] = source.Coverage[t]
 		} else if covered, requested := source.Coverage[t]; !requested || covered {

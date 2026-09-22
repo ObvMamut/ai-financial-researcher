@@ -70,7 +70,7 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   FRED/AlphaVantage/Alpaca when keyed. Alpaca is a market-data source like the others and
   sits *inside* this rule, not as an exception to it: the constraint is about model access.)
 - **Cost split:** the **cheap engine** (agy CLI, remote API, *or* a local model) does cheap,
-  parallel research (screening + domain reports); **Claude** does the single heavy
+  parallel research (screening + domain reports); **the selected Chief engine** does the single heavy
   synthesis/scoring step (Chief Analyst). The split holds whichever cheap engine is selected,
   and in the common case (no `chief_fallback` configured, or the primary call succeeding)
   it holds exactly as before — the DeepSeek fallback is a reviewed reliability exception for
@@ -157,11 +157,11 @@ mechanical trade fallback. Writing targets are advisory within hard byte budgets
 a complete oversized dossier may use its one repair allowance for evidence-preserving
 narrative compaction, explicitly checked by the challenger. Reviewed entry conditions
 and future monitoring are separate from unresolved core evidence. All-failed research
-skips Chief synthesis and still persists degraded decisions and research counts. Preserve the normal Claude CLI/cheap-engine split.
+skips Chief synthesis and still persists degraded decisions and research counts. Preserve the configured Chief/cheap-engine split.
 `scoreboard --research-compare` compares separate cohorts at 10 and 15 sessions.
 `research-pair` explicitly registers and collects a common frozen corpus for
 legacy/thesis arms, with private caches and disabled model tools. It requires
-the existing API/local cheap engine and keeps the normal Chief on Claude CLI.
+the existing API/local cheap engine and uses the configured Chief engine with its dedicated credentials.
 Its later `--evaluate --refresh` path saves outcome prices separately, without
 rerunning models or changing calibration. See the paired-evaluation section in
 the thesis workflow for acquisition cutoffs and maturity limits.
@@ -313,6 +313,7 @@ go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
 go run ./cmd/cfr scoreboard --control              # shipped vs the composite alone vs the shortlist
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
+go run ./cmd/cfr acceptance-manifest               # resolved configuration and hashes; no model or data requests
 ```
 
 Configuration: `cfr.toml.example` documents every key. Precedence: defaults →

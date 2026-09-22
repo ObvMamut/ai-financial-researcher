@@ -102,11 +102,11 @@ Executed with the repository Go toolchain:
   1.27.1 and the file is reformatted to match.
 - `git diff --check`: clean at every commit.
 
-**LLY recovers by normalization alone.** The response-contract boundary case: a captured
-response of 20,493 raw bytes against a 20,480-byte limit, whose fenced JSON block compacts
-to 20,326 bytes, now passes on payload bytes with **zero recovery calls dispatched** —
-the exact regression this increment exists to fix. A comparably-sized case whose payload
-also exceeds the limit (not merely its raw bytes) still correctly fails.
+**LLY boundary correction (September 22).** The 20,493 raw / 20,326 compact
+byte response is the captured compaction result. The original dossier's compact
+payload was 20,883 bytes and required recovery. Local normalization accepts that
+compaction result without another recovery call; it does not prove zero model
+recovery for the original dossier.
 
 **The Chief board fits twelve companies globally**, measured against realistic-scale
 dossiers (15–25 KiB each, not synthetic fixtures sized to pass): board 179,824–180,944 of
@@ -174,30 +174,17 @@ September 15 data before being fixed rather than fixed on suspicion.
 
 ## Known gaps, carried forward deliberately
 
-**The Chief-board macro-drop hazard remains latent, by design, not by oversight.** The
-guarantee that a board sized with macro already paid for is a board macro is never
-dropped from is genuinely true today, but only because production always calls
-`assembleSections` with `noSectionLimit` (`math.MaxInt`) — no task in this plan introduces
-a real limit there, and none should without also closing this hazard, because a real limit
-would let the board's own capacity-error path exceed its budget before a mandatory-overflow
-error could fire, silently dropping macro rather than naming the overflow. Flagged for the
-final whole-branch review, not resolved here.
+The continuation closes the macro-drop and zero-attempt payload gaps described
+in the original record: production now fits real section budgets, macro is
+mandatory, required compaction originals survive or refuse preparation, and
+zero-attempt payloads are `not_attempted`. See the
+[September 22 continuation record](2026-09-22-continuation.md) for changes,
+source-corpus limits and current verification. The historical review below
+applies to the earlier implementation.
 
-**Not every oversized dossier is asserted to recover.** Task 9's measured
-feasible/infeasible verdict is per company, and Gate B does not require all six of the
-originally oversized responses to now fit — only that the verdict is measured rather than
-assumed, and that LLY (the boundary case) recovers by normalization alone with zero model
-spend.
-
-**`DomainStatus.Payload == "invalid"` on a zero-attempt capacity refusal** is the same
-class of inaccuracy `OutcomeNotAttempted` fixes elsewhere (no response was ever received,
-so "invalid" implies one arrived and did not decode), and was left untouched rather than
-changed without an explicit requirement to do so. It feeds `InvalidPayloads`
-(`research_diagnostics.go`) directly; `PrimaryChiefFailed` is gated on
-`Domain == "chief-analyst"` and is not reachable from this path (a capacity-refused
-compaction domain is always named `<company>-compaction`), so the practical effect is
-narrower than a first reading of "feeds `InvalidPayloads`/`PrimaryChiefFailed`" would
-suggest — only the former is affected.
+Not every oversized dossier is recoverable. Feasibility remains measured per
+company. The LLY example describes normalization of a compaction response, as
+corrected above.
 
 **The final whole-branch review** (Opus, over the full branch) found no correctness or
 security defect in production code, confirmed every mutation-testing claim it re-ran

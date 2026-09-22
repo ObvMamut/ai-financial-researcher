@@ -125,3 +125,16 @@ type redacted struct {
 
 func (r redacted) Error() string { return r.msg }
 func (r redacted) Unwrap() error { return r.wrapped }
+
+// ContainsCredential also recognizes an eight-byte credential prefix. It is
+// intended for final diagnostic-export gates, not ordinary prose replacement.
+func ContainsCredential(s string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, secret := range secrets {
+		if strings.Contains(s, secret) || strings.Contains(s, secret[:minSecret]) {
+			return true
+		}
+	}
+	return false
+}

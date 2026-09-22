@@ -210,7 +210,7 @@ func TestThesisAllFailedSkipsChiefAndPersistsDegradedResults(t *testing.T) {
 	testThesisResultFixture(t, true, false, "all_failed")
 }
 
-func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario string) {
+func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario string, configure ...func(*Config, model.IdeasResult)) {
 	t.Helper()
 	// Every network request is served locally, including discovery, prices and
 	// model calls. The Chief deliberately chooses no trade after the dossier
@@ -295,6 +295,9 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 		}
 		srv := fakeDeepSeekServer(t, "```json\n"+jsonText(model.IdeasResult{Ideas: []model.TradeIdea{}, Decisions: []model.SelectionDecision{{Ticker: "AAA", Status: "rejected", Reason: "The potential move is already priced in"}}})+"\n```")
 		cfg.ChiefFallback = model.APIConfig{BaseURL: srv.URL, Model: "deepseek-reasoner", APIKey: "fixture-fallback"}
+	}
+	for _, f := range configure {
+		f(&cfg, chiefResult)
 	}
 	cfg.applyDefaults()
 	if capacity {
@@ -451,10 +454,14 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 		// The primary claude call answered directly: configured, attempted
 		// and accepted all agree, and the model is the resolved primary's
 		// (cfg.Models[CLIClaude], defaulted to "opus"), never left unset.
-		if meta.ChiefEngine != "claude" || meta.ChiefAttempted != "claude" || meta.ChiefAccepted != "claude" {
+		if meta.ChiefEngine != string(cfg.ChiefEngine) || meta.ChiefAttempted != string(cfg.ChiefEngine) || meta.ChiefAccepted != string(cfg.ChiefEngine) {
 			t.Errorf("provenance mismatch on a clean primary success: engine=%q attempted=%q accepted=%q", meta.ChiefEngine, meta.ChiefAttempted, meta.ChiefAccepted)
 		}
-		if meta.ChiefModel != "opus" || meta.SynthesisModel != "opus" {
+		expectedModel := cfg.Models[model.CLIClaude]
+		if cfg.ChiefEngine == string(model.CLIApi) {
+			expectedModel = cfg.ChiefAPI.Model
+		}
+		if meta.ChiefModel != expectedModel || meta.SynthesisModel != expectedModel {
 			t.Errorf("ChiefModel/SynthesisModel = %q/%q, want opus/opus", meta.ChiefModel, meta.SynthesisModel)
 		}
 	}
@@ -519,4 +526,65 @@ func TestThesisLargeChiefPromptUsesStdin(t *testing.T) {
 
 func TestThesisChiefCapacityFailurePersistsDegradedArtifacts(t *testing.T) {
 	testThesisIndependentNoTrade(t, true, true)
+}
+
+func TestThesisChiefPipelineRoutingMatrix(t *testing.T) {
+	for _, mode := range []model.Mode{model.ModeSingle, model.ModeIndependent} {
+		for _, engine := range []model.CLI{model.CLIClaude, model.CLIApi} {
+			for _, corrective := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/corrective=%t", mode, engine, corrective), func(t *testing.T) {
+					testThesisResultFixture(t, false, false, "no_trade", func(cfg *Config, result model.IdeasResult) {
+						cfg.Mode, cfg.Ticker, cfg.ChiefEngine = mode, "AAA", string(engine)
+						initial := result
+						if corrective {
+							initial.Ideas = []model.TradeIdea{{Ticker: "AAA", Direction: model.DirectionBuy, Entry: 100, Stop: 0, Target: 0}}
+						}
+						expectedCalls := 1
+						if corrective {
+							expectedCalls = 2
+						}
+						if engine == model.CLIApi {
+							calls := 0
+							srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+								calls++
+								if r.Header.Get("Authorization") != "Bearer dedicated-chief-fixture" {
+									t.Error("Chief used wrong credentials")
+								}
+								var body struct {
+									Model    string `json:"model"`
+									Messages []struct {
+										Content string `json:"content"`
+									} `json:"messages"`
+								}
+								if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != "dedicated-chief" {
+									t.Errorf("Chief request: %+v %v", body, err)
+								}
+								reply := initial
+								if calls > 1 {
+									if len(body.Messages) == 0 || !strings.Contains(body.Messages[0].Content, "Revise or reject these unsupported constructions") {
+										t.Error("corrective findings missing")
+									}
+									reply = result
+								}
+								json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": fenced(reply)}}}})
+							}))
+							t.Cleanup(srv.Close)
+							t.Cleanup(func() {
+								if calls != expectedCalls {
+									t.Errorf("Chief calls = %d, want %d", calls, expectedCalls)
+								}
+							})
+							cfg.ChiefAPI = model.APIConfig{BaseURL: srv.URL, Model: "dedicated-chief", APIKey: "dedicated-chief-fixture"}
+							cfg.Binaries[model.CLIClaude] = filepath.Join(t.TempDir(), "missing-claude")
+						} else if corrective {
+							script := "#!/bin/sh\ncase \"$*\" in\n*'Revise or reject these unsupported constructions'*) cat <<'RESULT'\n" + fenced(result) + "\nRESULT\n;;\n*) cat <<'RESULT'\n" + fenced(initial) + "\nRESULT\n;;\nesac\n"
+							if err := os.WriteFile(cfg.Binaries[model.CLIClaude], []byte(script), 0700); err != nil {
+								t.Fatal(err)
+							}
+						}
+					})
+				})
+			}
+		}
+	}
 }

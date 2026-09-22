@@ -197,6 +197,9 @@ func TestZeroAttemptCapacityRefusalDoesNotClaimTransportOrParsingFailure(t *test
 		t.Fatal("no domain report recorded for the refused call")
 	}
 	r := got.Reports[0]
+	if r.Payload != model.OutcomeNotAttempted {
+		t.Errorf("Payload = %q, want not_attempted", r.Payload)
+	}
 	if r.Attempts != 0 {
 		t.Errorf("Attempts = %d, want 0", r.Attempts)
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1201,6 +1202,96 @@ func TestBoardIsMeasuredAfterRedaction(t *testing.T) {
 	}
 }
 
+// TestPreparePromptMeasuresSectionsAfterRedaction is G-1's own-prompt-assembly
+// counterpart to TestBoardIsMeasuredAfterRedaction above: preparePrompt
+// redacts each section body before assembleSections measures it
+// (thesis_budget.go:62) so a section's recorded size matches what actually
+// left the process. Removing that line does not leak the credential today —
+// runner.go's own outbound scrub (callAgent) and store.WriteDataPack's
+// redact.Bytes both still catch it before it reaches the wire or disk — but
+// it silently mismeasures: profile.Components and the len(prompt) >
+// budget.InputBytes capacity check at thesis_budget.go:115 would be computed
+// against the raw, unredacted byte count. Mirrors
+// TestBoardIsMeasuredAfterRedaction's technique: a secret shorter than
+// redact.Placeholder makes the direction of the size error unambiguous — if
+// the section were measured raw, its recorded size would be too small, not
+// too large.
+func TestPreparePromptMeasuresSectionsAfterRedaction(t *testing.T) {
+	const secret = "g1-shortkey7"
+	redact.Register(secret)
+	if len(secret) >= len(redact.Placeholder) {
+		t.Fatalf("fixture credential does not grow under redaction: %d vs %d", len(secret), len(redact.Placeholder))
+	}
+	runner, _, done := thesisFixture(t, func(string, int) string { return "unused" })
+	defer done()
+
+	// The real-world case internal/redact's own package doc cites: a
+	// provider's rejected-call error text quoting the query string, key
+	// included, landing in a retrieval-diagnostics section.
+	rawBody := "\nRetrieval diagnostics:\n[{\"error\":\"provider rejected https://example.test/query?function=OVERVIEW&apikey=" + secret + "\"}]"
+	redactedBody := redact.String(rawBody)
+	if redactedBody == rawBody {
+		t.Fatal("fixture body was not actually redacted; the test proves nothing")
+	}
+	sections := []promptSection{
+		{Name: "identity", Mandatory: true, Body: `Company identity: {"ticker":"AAA"}`},
+		{Name: "retrieval_errors", Mandatory: true, Body: rawBody},
+	}
+
+	prompt, profile, err := runner.preparePrompt("thesis-researcher", "g1-redaction", sections, 0)
+	if err != nil {
+		t.Fatalf("preparePrompt: %v", err)
+	}
+	if strings.Contains(prompt, secret) {
+		t.Fatalf("prepared prompt carries the raw credential: %s", prompt)
+	}
+	if !strings.Contains(prompt, redact.Placeholder) {
+		t.Fatalf("prepared prompt lost the diagnostic instead of redacting it: %s", prompt)
+	}
+	want := len(redactedBody)
+	if got := profile.Components["retrieval_errors"]; got != want {
+		t.Fatalf("retrieval_errors measured at %d bytes (raw body is %d); want the redacted size %d — the section was sized before redaction",
+			got, len(rawBody), want)
+	}
+
+	diskPrompt, diskProfile := readInputPack(t, runner.run.Dir, "g1-redaction")
+	if strings.Contains(diskPrompt, secret) {
+		t.Fatalf("persisted input pack carries the raw credential: %s", diskPrompt)
+	}
+	if got := diskProfile.Components["retrieval_errors"]; got != want {
+		t.Fatalf("persisted profile measured retrieval_errors at %d bytes, want the redacted size %d", got, want)
+	}
+}
+
+// TestWrapPromptRedactsEvenUnredactedData exercises wrapPrompt directly with
+// data that never went through preparePrompt's own per-section redaction
+// (thesis_budget.go:62), so wrapPrompt's whole-prompt pass (thesis_budget.go:35)
+// is the only thing standing between this credential and its return value —
+// isolating that line the way TestPreparePromptMeasuresSectionsAfterRedaction
+// isolates line 62 (which, run through preparePrompt, already hands wrapPrompt
+// clean data, so removing line 35 alone is invisible there).
+func TestWrapPromptRedactsEvenUnredactedData(t *testing.T) {
+	const secret = "g1-wrapkey99"
+	redact.Register(secret)
+	if len(secret) >= len(redact.Placeholder) {
+		t.Fatalf("fixture credential does not grow under redaction: %d vs %d", len(secret), len(redact.Placeholder))
+	}
+	runner, _, done := thesisFixture(t, func(string, int) string { return "unused" })
+	defer done()
+
+	data := "Evidence: provider rejected https://example.test/query?apikey=" + secret
+	prompt, err := runner.wrapPrompt("thesis-researcher", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prompt, secret) {
+		t.Fatalf("wrapPrompt returned the raw credential: %s", prompt)
+	}
+	if !strings.Contains(prompt, redact.Placeholder) {
+		t.Fatalf("wrapPrompt dropped the diagnostic instead of redacting it: %s", prompt)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task 13: revision and challenge prompt fitting (SNOW/OKTA/ORCL, 2026-09-15)
 // ---------------------------------------------------------------------------
@@ -1472,51 +1563,9 @@ func TestEachRequiredQuotationIsStoredOnceAndStillResolvable(t *testing.T) {
 	}
 }
 
-// TestSuccessfulCompactionDoesNotOverflowTheRevisionPrompt covers what Task
-// 11's fix round already built (compaction_originals, thesis.go's base()):
-// it is a NAMED, independently measured section — unlike the pre-Task-11
-// marker scan, which had no entry for it at all and silently folded its
-// bytes into previous_dossier, its immediate predecessor in the old
-// concatenation — and, being Mandatory: false, it is the section a real
-// limit sheds first rather than let a tight budget overflow silently.
-func TestSuccessfulCompactionDoesNotOverflowTheRevisionPrompt(t *testing.T) {
-	originals := map[string]map[string]string{"AAA-round-1": {"long_case": "Original uncompacted long case text describing the setup in full before it was shortened for budget."}}
-	body := "\nOriginal narratives from bounded compaction (check that no qualifications or counterarguments were lost):\n" + jsonText(originals)
-	section := promptSection{Name: "compaction_originals", Mandatory: false, Body: body}
-
-	text, sizes, omitted, err := assembleSections([]promptSection{{Name: "identity", Mandatory: true, Body: "id"}, section}, noSectionLimit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sizes["compaction_originals"] != len(body) {
-		t.Fatalf("compaction_originals measured at %d, want its own exact %d bytes", sizes["compaction_originals"], len(body))
-	}
-	if !strings.Contains(text, "Original uncompacted long case text") {
-		t.Fatal("compaction_originals missing from the assembled prompt at an unbounded limit")
-	}
-	if len(omitted) != 0 {
-		t.Fatalf("omitted = %v, want none at an unbounded limit", omitted)
-	}
-
-	// Dropped and named, never silently overflowing, once the budget really
-	// is tight.
-	tight := len("id") + 1
-	text, sizes, omitted, err = assembleSections([]promptSection{{Name: "identity", Mandatory: true, Body: "id"}, section}, tight)
-	if err != nil {
-		t.Fatalf("the mandatory total alone (%d bytes) must fit a %d-byte limit: %v", len("id"), tight, err)
-	}
-	if len(omitted) != 1 || omitted[0] != "compaction_originals" {
-		t.Fatalf("omitted = %v, want exactly [compaction_originals]", omitted)
-	}
-	if _, ok := sizes["compaction_originals"]; ok {
-		t.Fatal("a dropped section must not still be counted in sizes")
-	}
-	if strings.Contains(text, "Original uncompacted") {
-		t.Fatal("a dropped section's content still reached the assembled text")
-	}
-
-	// End to end: a real compaction's originals reach the challenge prompt
-	// as this SAME named, measured section — not folded into previous_dossier.
+// Successful compaction must retain original qualifications in the real
+// challenger input; originals are required review evidence under a tight limit.
+func TestSuccessfulCompactionRetainsOriginalReviewEvidence(t *testing.T) {
 	id := fixtureEvidenceID(t)
 	d := supportedResearch().Dossier
 	d.LongCase = "Material qualification: delivery timing remains uncertain. " + strings.Repeat("Repeated explanation. ", 1400)
@@ -1542,6 +1591,25 @@ func TestSuccessfulCompactionDoesNotOverflowTheRevisionPrompt(t *testing.T) {
 	if profile.Components["compaction_originals"] == 0 {
 		t.Fatalf("compaction_originals is not a measured, named component of the challenge prompt: %+v", profile.Components)
 	}
+	wrapper, err := runner.promptWrapperBytes("thesis-challenger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.cfg.Research.Budgets.Challenger.InputBytes = wrapper + 6000
+	tight := runner.investigate(context.Background(), model.Candidate{Ticker: "AAA"}, nil, pack, nil)
+	found := false
+	for _, call := range tight.Reports {
+		if strings.HasSuffix(call.Domain, "-challenge") {
+			found = true
+			if call.Attempts != 0 || call.FailureKind != "input_capacity" || !slices.Contains(call.Omitted, "compaction_originals") {
+				t.Fatalf("required originals silently lost: %+v", call)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing refused challenge")
+	}
+
 }
 
 // TestRepeatedRequestResultsCompactToIDsWithoutForgettingOutcomes pins

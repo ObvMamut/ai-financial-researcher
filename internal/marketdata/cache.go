@@ -33,7 +33,8 @@ import (
 // none, and addPositioningSignal has no reconstruction path for the new labels
 // by design — the raw fact and its verdict are always written together by one
 // provider, which is only true as long as this bump happens.
-const factSchemaVersion = 4
+// Version 5 retains typed source diagnostics alongside cached facts and warnings.
+const factSchemaVersion = 5
 
 type Cache struct {
 	baseDir string

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
@@ -98,6 +99,9 @@ func promptDocuments(docs []model.EvidenceDocument, budget int, claims ...model.
 		}
 		if len(byID[d.ID]) > 0 {
 			return 3
+		}
+		if d.NavigationOnly || marketdata.ResearchNavigationURL(d.URL) {
+			return 0
 		}
 		if d.Kind == "document" {
 			return 2

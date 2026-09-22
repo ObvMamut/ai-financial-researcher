@@ -94,26 +94,13 @@ func CompareResearchWithOptions(ctx context.Context, dir string, prices marketda
 		}
 		key := fmt.Sprintf("%s/schema-%d", mode, ideas.SchemaVersion)
 		if meta != nil {
-			// chiefEngineLabel is folded in separately from SynthesisModel,
-			// which already usually does this job for free once Task 6 fixes
-			// its value: a claude-Chief run and an api-Chief run normally
-			// carry different model names and so land in different cohorts
-			// without any extra key material. The case that string equality
-			// alone cannot resolve is a historical run recorded before
-			// ChiefEngine existed: it can carry the exact same SynthesisModel
-			// value ("opus") as a new, explicitly-confirmed claude run, but
-			// that historical value is not trustworthy provenance — see
-			// testdata/research-sep15.json, which recorded "opus" while the
-			// DeepSeek fallback actually produced the accepted output. Pooling
-			// that kind of run with a confidently-labeled new "claude" cohort
-			// would silently attribute possibly-fallback-answered results to
-			// Claude, so an absent ChiefEngine gets its own label rather than
-			// merging into either.
-			chiefEngineLabel := meta.ChiefEngine
-			if chiefEngineLabel == "" {
-				chiefEngineLabel = "claude (unrecorded)"
+			configured, accepted := meta.ChiefEngine, meta.ChiefAccepted
+			if configured == "" {
+				configured, accepted = "unknown", "unknown"
+			} else if accepted == "" {
+				accepted = "none"
 			}
-			key += "/" + meta.Engine + ":" + meta.EngineModel + "/" + meta.SynthesisModel + "/chief:" + chiefEngineLabel + "/" + personaKey(meta)
+			key += "/" + meta.Engine + ":" + meta.EngineModel + "/" + meta.SynthesisModel + "/chief:" + configured + "/accepted:" + accepted + ":" + meta.ChiefModel + "/" + personaKey(meta) + "/" + contractKey(meta)
 			if meta.SynthesisFallbackEngine != "" {
 				key += "/fallback:" + meta.SynthesisFallbackEngine
 			}
@@ -299,4 +286,34 @@ func (r *ResearchComparison) FormatText() string {
 	}
 	b.WriteString(r.Notes + "\n")
 	return b.String()
+}
+
+// Actual recorded versions define cohorts. Zero/absent means unknown, and mixed
+// versions are preserved instead of attributing old results to today's contract.
+func contractKey(meta *model.RunMeta) string {
+	prompt, response := map[int]bool{}, map[int]bool{}
+	for _, call := range meta.Domains {
+		if call.Prompt == nil {
+			prompt[0], response[0] = true, true
+			continue
+		}
+		prompt[call.Prompt.Version] = true
+		response[call.Prompt.ResponseContractVersion] = true
+	}
+	label := func(versions map[int]bool) string {
+		if len(versions) == 0 {
+			return "unknown"
+		}
+		labels := []string{}
+		for v := range versions {
+			if v == 0 {
+				labels = append(labels, "unknown")
+			} else {
+				labels = append(labels, fmt.Sprint(v))
+			}
+		}
+		sort.Strings(labels)
+		return strings.Join(labels, ",")
+	}
+	return "prompt:" + label(prompt) + "/response:" + label(response)
 }

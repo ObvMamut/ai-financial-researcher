@@ -254,6 +254,7 @@ func researchCallSections[T any](ctx context.Context, t *thesisRunner, role, nam
 	if callErr != nil {
 		status.Payload = "invalid"
 		if r.Attempts == 0 && r.FailureKind == "input_capacity" {
+			status.Payload = model.OutcomeNotAttempted
 			// Dispatch was refused before a subprocess ran or an HTTP request
 			// was sent: neither the transport nor the parser ever touched
 			// this call, so neither claim of "failed" is true. The company

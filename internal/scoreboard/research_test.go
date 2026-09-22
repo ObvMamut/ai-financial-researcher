@@ -129,7 +129,7 @@ func TestThesisCalibrationDoesNotContaminateLegacy(t *testing.T) {
 // is exactly the bug Task 6 fixes going forward. Pooling that fixture's kind
 // of run with a confidently-labeled new "claude" run would silently attribute
 // possibly-DeepSeek-answered results to a Claude cohort, so the cohort key
-// must carry the engine label (falling back to "claude (unrecorded)" when the
+// must carry the engine label (falling back to "unknown" when the
 // field is absent) rather than relying on SynthesisModel string equality
 // alone.
 func TestScoreboardCohortSeparatesChiefEngines(t *testing.T) {
@@ -169,7 +169,7 @@ func TestScoreboardCohortSeparatesChiefEngines(t *testing.T) {
 	sawUnrecorded := false
 	sawExplicitClaude := false
 	for _, c := range report.Cohorts {
-		if strings.Contains(c.Key, "chief:claude (unrecorded)") {
+		if strings.Contains(c.Key, "chief:unknown") {
 			sawUnrecorded = true
 		}
 		if strings.Contains(c.Key, "chief:claude/") {
@@ -197,5 +197,27 @@ func TestResearchTextDoesNotPresentUnmeasuredReturnsAsZero(t *testing.T) {
 	report := ResearchComparison{Cohorts: []ResearchCohort{{Arms: map[string]ControlArm{"shipped/10": arm}}}}
 	if !strings.Contains(report.FormatText(), "return +0.00%") {
 		t.Fatal("measured zero return was hidden")
+	}
+}
+
+func TestResearchDiagnosticsKeepDossierAndReviewProgressSeparate(t *testing.T) {
+	meta := &model.RunMeta{ResearchOutcomes: []model.ResearchOutcome{{Transport: model.OutcomeOK, Parsing: model.OutcomeOK, Evidence: "full", Review: model.ReviewUnavailable}}, SourceDiagnostics: []model.SourceDiagnostic{{ID: "one", Reason: "unresolved_symbol"}, {ID: "one", Reason: "unresolved_symbol"}, {ID: "two", Reason: "not_applicable"}}}
+	d := researchDiagnostics(store.RunSummary{Dir: t.TempDir()}, nil, nil, meta, nil)
+	if d.StageProgress == nil || d.StageProgress.Researched != 1 || d.StageProgress.Reviewed != 0 || d.StageProgress.Failed != 1 {
+		t.Fatalf("stage progress: %+v", d.StageProgress)
+	}
+	if d.SourceReasons["unresolved_symbol"] != 1 || d.SourceReasons["not_applicable"] != 1 {
+		t.Fatalf("source counts duplicated: %v", d.SourceReasons)
+	}
+	if contractKey(meta) != "prompt:unknown/response:unknown" {
+		t.Fatal("historical contract was inferred")
+	}
+	meta.Domains = []model.DomainStatus{{Prompt: &model.PromptProfile{Version: 2, ResponseContractVersion: 2}}}
+	if contractKey(meta) != "prompt:2/response:2" {
+		t.Fatal(contractKey(meta))
+	}
+	meta.Domains = append(meta.Domains, model.DomainStatus{})
+	if contractKey(meta) != "prompt:2,unknown/response:2,unknown" {
+		t.Fatal("mixed contract versions erased")
 	}
 }
