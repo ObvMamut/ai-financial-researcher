@@ -908,3 +908,62 @@ func TestClaudeDisabledSubscriptionStopsWithoutUnchangedRetry(t *testing.T) {
 		t.Fatalf("permanent access failure lost or retried: %+v", r)
 	}
 }
+
+func TestSpliceNarrativesKeepsProtectedBytesAndTakesOnlyNarratives(t *testing.T) {
+	// Real dossiers carry all twelve narrative fields (the schema requires
+	// them), and compactionPreservesEvidence relies on that.
+	narratives := ""
+	for _, f := range dossierNarrativeFields {
+		narratives += fmt.Sprintf(`"%s":"old %s",`, f, f)
+	}
+	raw := "```json\n{" + `"ticker":"9988.HK","status":"watchlist",` + narratives +
+		`"claims":[{"id":"c1","quote":"R&D <up> 阿里巴巴 \"q\""}],"big":123456789012345678901234567890,"small":1.000,` +
+		`"future_extension":{"a":[1,2]}}` + "\n```"
+	reply := fenced(map[string]any{"long_case": "new long", "status": "rejected", "claims": []any{}})
+
+	got, err := spliceNarratives(raw, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compactionPreservesEvidence(raw, got); err != nil {
+		t.Fatalf("protected content changed: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := decodeResearch(got, &m); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]string{
+		"long_case":  `"new long"`,       // taken from the reply
+		"short_case": `"old short_case"`, // omitted by the reply: original kept
+		"status":     `"watchlist"`,      // protected: the reply's change is ignored
+		"small":      `1.000`,            // numeric spelling survives
+		"big":        `123456789012345678901234567890`,
+	} {
+		if string(m[field]) != want {
+			t.Errorf("%s = %s, want %s", field, m[field], want)
+		}
+	}
+	if !strings.Contains(got, `R&D <up> 阿里巴巴`) {
+		t.Errorf("protected text was re-escaped: %s", got)
+	}
+
+	sparse, err := spliceNarratives(fenced(map[string]any{"ticker": "AAA", "long_case": "x"}), fenced(map[string]any{"hypothesis": "invented"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sparse, "hypothesis") {
+		t.Error("a narrative field absent from the original must not be added")
+	}
+}
+
+func TestSpliceNarrativesRejectsUnusableReplies(t *testing.T) {
+	raw := fenced(map[string]any{"ticker": "AAA", "long_case": "x"})
+	for name, reply := range map[string]string{
+		"unparseable": "no fenced json here",
+		"non-string":  fenced(map[string]any{"long_case": 42}),
+	} {
+		if _, err := spliceNarratives(raw, reply); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

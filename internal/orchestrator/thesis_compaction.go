@@ -68,6 +68,42 @@ func compactionPreservesEvidence(before, after string) error {
 	return nil
 }
 
+// spliceNarratives builds the compacted payload from the original's own bytes:
+// every non-narrative field is copied from raw as its json.RawMessage, and only
+// the narrative strings present in both raw and reply are taken from reply. A
+// reply that also re-emits claims or status is harmless — those keys are never
+// read — so protected content is identical by construction rather than by
+// trusting the model to re-type it. SetEscapeHTML(false) keeps '<', '>' and '&'
+// in protected strings as written (see measureCompaction's floor comment).
+func spliceNarratives(raw, reply string) (string, error) {
+	var original map[string]json.RawMessage
+	if err := decodeResearch(raw, &original); err != nil {
+		return "", fmt.Errorf("original payload: %w", err)
+	}
+	var next map[string]json.RawMessage
+	if err := decodeResearch(reply, &next); err != nil {
+		return "", fmt.Errorf("compaction reply: %w", err)
+	}
+	for _, field := range dossierNarrativeFields {
+		v, inReply := next[field]
+		if _, inOriginal := original[field]; !inReply || !inOriginal {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			return "", fmt.Errorf("compaction reply %s is not a string", field)
+		}
+		original[field] = v
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(original); err != nil {
+		return "", err
+	}
+	return "```json\n" + strings.TrimSpace(buf.String()) + "\n```", nil
+}
+
 // compactionHeadroom absorbs what a model cannot be expected to predict when
 // writing to a byte budget rather than a character count: JSON string
 // escaping, and the re-serialization drift the PROTECTED (non-narrative)
