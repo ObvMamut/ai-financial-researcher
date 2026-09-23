@@ -221,3 +221,20 @@ func TestResearchDiagnosticsKeepDossierAndReviewProgressSeparate(t *testing.T) {
 		t.Fatal("mixed contract versions erased")
 	}
 }
+
+// Compaction now runs on the Chief engine, so its tokens must not be summed
+// into cheap research usage under the cheap model's name.
+func TestCompactionCallsAreTheirOwnUsageStage(t *testing.T) {
+	for name, want := range map[string]string{
+		"research-41534d4c2e4153-round-1-compaction":    "compaction",
+		"research-41534d4c2e4153-revision-compaction":   "compaction",
+		"research-41534d4c2e4153-round-1":               "research",
+		"research-41534d4c2e4153-round-1-schema-repair": "research",
+		"research-41534d4c2e4153-challenge-final":       "challenge",
+		"chief-analyst": "chief",
+	} {
+		if got := researchDiagnosticStage(name); got != want {
+			t.Errorf("%s -> %s, want %s", name, got, want)
+		}
+	}
+}

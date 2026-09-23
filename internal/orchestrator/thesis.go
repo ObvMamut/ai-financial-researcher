@@ -137,18 +137,13 @@ func (t *thesisRunner) callSections(ctx context.Context, role, name string, sect
 		// and can share model.CLIApi's value with a Chief routed to "api").
 		//
 		// A side effect of calling runAgent directly rather than
-		// t.pool.submit: a claude Chief call no longer occupies a pool
-		// worker slot, where it did before this call was split out of the
-		// shared submission path. This has no practical effect on a thesis
-		// run today — runThesis's two Chief call sites (both routed through
-		// this branch) are only ever reached after its research/challenge
-		// wg.Wait() has already drained every cheap-engine goroutine, so
-		// nothing is ever contending with the Chief for a slot — but it is a
-		// real, previously-undocumented behaviour delta, not a property this
-		// function itself guarantees: a future reader relying on the pool's
-		// worker count as a proxy for "every in-flight model call" would
-		// undercount by one while the Chief runs, and a future Chief call
-		// site dispatched before its own wg.Wait() would actually contend.
+		// t.pool.submit: an unthrottled call occupies no pool worker slot and
+		// is bounded only by its caller's own concurrency. The two synthesis
+		// sites run after research's wg.Wait(), one at a time. Dossier
+		// compaction (compactionTarget) does not: it runs inside the research
+		// goroutines, so up to cfg.Workers Chief-engine compactions can be in
+		// flight at once, alongside cheap calls — the pool's worker count is
+		// not a count of every in-flight model call.
 		r = runAgent(ctx, target.CLI, name, string(target.Stage), prompt, target.Timeout, target.Retry, target.Model, target.Binary, target.API)
 	}
 	responseCapacity(&r, profile)

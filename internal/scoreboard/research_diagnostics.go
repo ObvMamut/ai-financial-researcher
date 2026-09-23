@@ -291,6 +291,9 @@ func researchDiagnosticStage(name string) string {
 		return "chief_fallback"
 	case strings.HasPrefix(name, "chief-"):
 		return "chief"
+	case strings.HasSuffix(name, "-compaction"):
+		// Runs on the Chief engine, not the cheap one: keep its usage apart.
+		return "compaction"
 	case name == "macro":
 		return "macro"
 	case strings.HasPrefix(name, "event-discovery") || strings.Contains(name, "triage"):
