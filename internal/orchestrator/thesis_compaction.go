@@ -126,6 +126,24 @@ const compactionHeadroom = 256
 // instruction — a few words is not a shortened case, it is noise.
 const compactionPerFieldFloor = 40
 
+// compactionDeepCut is the narrative ratio below which "adaptive" compaction
+// asks for high reasoning effort. Measured on deepseek-v4-pro, 2026-09-23:
+// effort=low met a cut to 0.58 in 64s but overshot a cut to 0.35 by ~11%;
+// the default high effort met both, at up to 271s.
+const compactionDeepCut = 0.5
+
+// compactionEffort resolves the [chief_api] compaction_reasoning_effort
+// policy for one call, given the narrative ratio the allowance requires.
+func compactionEffort(policy string, needed float64) string {
+	if policy != "adaptive" {
+		return policy
+	}
+	if needed < compactionDeepCut {
+		return "high"
+	}
+	return "low"
+}
+
 // measureCompaction computes how much room a compaction call actually has,
 // instead of assuming a fixed per-field character count. On the six real
 // oversized responses that needed compaction, "aim for under 400 characters
@@ -350,7 +368,18 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 			"other field exactly as written in the original.\nOriginal response:\n%s",
 		allowance.Limit, perFieldLines(allowance.PerField, current), raw)
 
-	r, err := t.call(ctx, role, name+"-compaction", prompt, t.compactionTarget())
+	target := t.compactionTarget()
+	if target.CLI == model.CLIApi {
+		narrative := 0
+		for _, n := range current {
+			narrative += n
+		}
+		if narrative > 0 {
+			target.API.ReasoningEffort = compactionEffort(target.API.CompactionEffort, float64(allowance.NarrativeBudget)/float64(narrative))
+			allowance.ReasoningEffort = target.API.ReasoningEffort
+		}
+	}
+	r, err := t.call(ctx, role, name+"-compaction", prompt, target)
 	s := reportStatus(r)
 	s.Recovery, s.Contract, s.Payload = "compaction", model.OutcomeFailed, "invalid"
 	s.Allowance = &allowance

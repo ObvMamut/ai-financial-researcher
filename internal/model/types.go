@@ -451,6 +451,13 @@ type APIConfig struct {
 	// text with its JSON tail missing — which the pipeline read as a domain that
 	// scored nobody rather than as a failure. 0 means the engine's default.
 	MaxTokens int
+	// ReasoningEffort is sent as the request's reasoning_effort when set, and
+	// omitted otherwise: not every OpenAI-compatible provider accepts it.
+	ReasoningEffort string
+	// CompactionEffort is the [chief_api] compaction_reasoning_effort policy:
+	// "" (provider default), "adaptive", or a fixed "low" / "high" / "max".
+	// Only dossier compaction reads it; see compactionEffort.
+	CompactionEffort string
 }
 
 // DomainStatus tracks the outcome of a specialist research run.

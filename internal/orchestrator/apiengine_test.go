@@ -221,3 +221,25 @@ func TestAPIEngineReportsCompletionTokens(t *testing.T) {
 		t.Errorf("tokens = %d, want 345", tokens)
 	}
 }
+
+func TestReasoningEffortIsSentOnlyWhenSet(t *testing.T) {
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}}})
+	}))
+	defer srv.Close()
+	for _, effort := range []string{"low", ""} {
+		if _, _, err := callAPIEngineUsage(context.Background(), model.APIConfig{BaseURL: srv.URL, Model: "m", ReasoningEffort: effort}, "p"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if bodies[0]["reasoning_effort"] != "low" {
+		t.Fatalf("effort not sent: %v", bodies[0])
+	}
+	if _, present := bodies[1]["reasoning_effort"]; present {
+		t.Fatalf("empty effort must be omitted, not sent: %v", bodies[1])
+	}
+}

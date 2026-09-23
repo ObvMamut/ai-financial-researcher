@@ -269,6 +269,10 @@ type fileFormat struct {
 		Model     string `toml:"model"`
 		APIKey    string `toml:"api_key"`
 		MaxTokens int    `toml:"max_tokens"`
+		// CompactionReasoningEffort sets reasoning_effort on dossier
+		// compaction calls: "adaptive" (low for shallow cuts, high for deep
+		// ones), a fixed "low" / "high" / "max", or "" to send none.
+		CompactionReasoningEffort string `toml:"compaction_reasoning_effort"`
 	} `toml:"chief_api"`
 
 	// Local configures a local OpenAI-compatible server (Ollama/llama.cpp). The
@@ -352,6 +356,11 @@ func Load() (*Settings, error) {
 func (s *Settings) ValidateChiefEngine() error {
 	if s.ChiefEngine == "" {
 		s.ChiefEngine = "claude"
+	}
+	switch s.ChiefAPI.CompactionEffort {
+	case "", "adaptive", "low", "high", "max":
+	default:
+		return fmt.Errorf(`chief_api.compaction_reasoning_effort must be "", "adaptive", "low", "high" or "max"`)
 	}
 	switch s.ChiefEngine {
 	case "claude":
@@ -696,6 +705,7 @@ func (s *Settings) applyFile(path string) error {
 	setStr(&s.ChiefAPI.Model, f.ChiefAPI.Model)
 	setStr(&s.ChiefAPI.APIKey, f.ChiefAPI.APIKey)
 	setInt(&s.ChiefAPI.MaxTokens, f.ChiefAPI.MaxTokens)
+	setStr(&s.ChiefAPI.CompactionEffort, f.ChiefAPI.CompactionReasoningEffort)
 	return nil
 }
 

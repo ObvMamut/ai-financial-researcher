@@ -747,3 +747,52 @@ func TestCompactionRetriesATransientChiefFailure(t *testing.T) {
 		t.Fatalf("calls=%d err=%v recovery=%+v", calls, err, reports[1])
 	}
 }
+
+// Measured live on deepseek-v4-pro (2026-09-23): reasoning_effort=low met a
+// cut to 0.58 of the narrative in 64s but overshot a cut to 0.35 by ~11%,
+// which the default high effort met in 271s. "adaptive" spends the slow
+// effort only where the cut is deep.
+func TestCompactionReasoningEffortFollowsCutDepth(t *testing.T) {
+	for _, c := range []struct {
+		name, policy, want string
+		narrative          int
+	}{
+		{"deep cut, adaptive", "adaptive", "high", 60000},
+		{"shallow cut, adaptive", "adaptive", "low", 21000},
+		{"fixed policy", "max", "max", 21000},
+		{"no policy", "", "", 60000},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var efforts []any
+			chief := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var b map[string]any
+				json.NewDecoder(r.Body).Decode(&b)
+				efforts = append(efforts, b["reasoning_effort"])
+				json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+					"message": map[string]string{"content": fenced(map[string]any{"long_case": "short"})}}}})
+			}))
+			defer chief.Close()
+			d := supportedResearch().Dossier
+			d.ContractVersion = 2
+			d.LongCase = strings.Repeat("n", c.narrative)
+			runner, _, done := thesisFixture(t, func(string, int) string { return fenced(d) })
+			defer done()
+			runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: chief.URL, Model: "chief-model", APIKey: "k2", CompactionEffort: c.policy}}
+			var out model.CandidateDossier
+			reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "effort", "data", &out, dossierSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if len(efforts) == 1 && efforts[0] != nil {
+				got = efforts[0].(string)
+			}
+			if len(efforts) != 1 || got != c.want {
+				t.Fatalf("sent reasoning_effort %v, want %q", efforts, c.want)
+			}
+			if a := reports[1].Allowance; a == nil || a.ReasoningEffort != c.want {
+				t.Fatalf("effort not recorded on the allowance: %+v", a)
+			}
+		})
+	}
+}

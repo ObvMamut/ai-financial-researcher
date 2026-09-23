@@ -488,7 +488,15 @@ and returns only the twelve narrative fields. Go splices them into the original
 payload's own bytes, so protected fields are identical by construction; fields
 the reply omits keep their original text, and anything else the reply contains
 is ignored. The spliced payload is then measured against the limit in Go and
-still passes the protected-field comparison.
+still passes the protected-field comparison. The call keeps the ordinary
+transient-retry budget (`retry`), not `synthesis_max_attempts`, because it has
+no fallback. `[chief_api] compaction_reasoning_effort` optionally sets the
+request's `reasoning_effort`: `adaptive` sends `high` when the narratives must
+shrink below half their size and `low` otherwise (measured on deepseek-v4-pro:
+`low` met a 0.58 cut in 64s but overshot a 0.35 cut by about 11%; `high` met
+both, taking up to 271s); a fixed `low`/`high`/`max` is sent as written, and the
+default sends none. The effort used is recorded on the compaction's
+`allowance.reasoning_effort`.
 Feasibility is a measured, per-company verdict, not a guarantee — some
 oversized dossiers remain infeasible after this change, and that is a correct
 answer, not a regression. Protected wire fields (including unknown extensions),

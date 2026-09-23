@@ -525,7 +525,10 @@
 #input_bytes = 98304
 #response_bytes = 12288
 # An oversized researcher dossier gets one compaction, run on the Chief engine
-# ([chief_api] or the claude CLI), never the cheap engine.
+# ([chief_api] or the claude CLI), never the cheap engine. With chief_engine =
+# "api", [chief_api] compaction_reasoning_effort = "adaptive" sends
+# reasoning_effort low for shallow cuts and high for deep ones (DeepSeek v4:
+# ~4x faster on shallow cuts); omit it for providers that reject the field.
 #[research.budgets.researcher]
 #input_bytes = 98304
 #response_bytes = 20480

@@ -51,10 +51,11 @@ func callAPIEngineUsage(ctx context.Context, api model.APIConfig, prompt string)
 		maxTokens = defaultMaxTokens
 	}
 	reqBody := chatRequest{
-		Model:     api.Model,
-		Stream:    false,
-		MaxTokens: maxTokens,
-		Messages:  []chatMessage{{Role: "user", Content: prompt}},
+		Model:           api.Model,
+		Stream:          false,
+		MaxTokens:       maxTokens,
+		Messages:        []chatMessage{{Role: "user", Content: prompt}},
+		ReasoningEffort: api.ReasoningEffort,
 	}
 	buf, err := json.Marshal(reqBody)
 	if err != nil {
@@ -140,6 +141,9 @@ type chatRequest struct {
 	Stream    bool          `json:"stream"`
 	MaxTokens int           `json:"max_tokens,omitempty"`
 	Messages  []chatMessage `json:"messages"`
+	// ReasoningEffort is the OpenAI-format thinking effort control
+	// (https://api-docs.deepseek.com/guides/thinking_mode/). Omitted when empty.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type chatMessage struct {

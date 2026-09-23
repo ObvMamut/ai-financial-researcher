@@ -23,9 +23,10 @@ import (
 )
 
 type manifestProvider struct {
-	BaseURL   string `json:"base_url"`
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens"`
+	BaseURL          string `json:"base_url"`
+	Model            string `json:"model"`
+	MaxTokens        int    `json:"max_tokens"`
+	CompactionEffort string `json:"compaction_reasoning_effort,omitempty"`
 }
 
 type acceptanceManifest struct {
@@ -101,7 +102,7 @@ func writeAcceptanceManifest(s *config.Settings, args []string, out, diagnostics
 		return err
 	}
 	provider := func(a model.APIConfig) manifestProvider {
-		return manifestProvider{redact.String(a.BaseURL), redact.String(a.Model), a.MaxTokens}
+		return manifestProvider{redact.String(a.BaseURL), redact.String(a.Model), a.MaxTokens, a.CompactionEffort}
 	}
 	// Explicit allowlist: never marshal Settings, Config or APIConfig. Hash the
 	// same secret-free projection we print, including selectors and capability gates.

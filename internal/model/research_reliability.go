@@ -103,6 +103,7 @@ type CompactionAllowance struct {
 	NarrativeBudget int            `json:"narrative_budget"` // Limit - ProtectedBytes - headroom
 	PerField        map[string]int `json:"per_field"`        // bytes, not characters
 	Feasible        bool           `json:"feasible"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"` // effort the compaction call was sent with, if any
 }
 
 type RoleBudget struct {
