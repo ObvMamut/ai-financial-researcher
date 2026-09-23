@@ -69,7 +69,7 @@ func TestPrescreenRanksOnMomentumComposite(t *testing.T) {
 		row("MID", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.10; r.Ret63d = 0.04; r.RS63 = 0.01 }),
 		row("LOW", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -0.40; r.Ret63d = -0.15; r.RS63 = -0.20 }),
 	}
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 
 	hi, mid, lo := scoreOf(t, rows, "HIGH"), scoreOf(t, rows, "MID"), scoreOf(t, rows, "LOW")
 	if !(hi > mid && mid > lo) {
@@ -91,7 +91,7 @@ func TestPrescreenZScoresWithinIndex(t *testing.T) {
 		row("EU_A", "eu50", func(r *PrescreenRow) { r.Mom12_1 = 0.05 }),
 		row("EU_B", "eu50", func(r *PrescreenRow) { r.Mom12_1 = -0.05 }),
 	}
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 
 	if scoreOf(t, rows, "EU_A") <= 0 {
 		t.Errorf("eu50's leader scored %.3f, want > 0 — z-scores must be per index", scoreOf(t, rows, "EU_A"))
@@ -161,7 +161,7 @@ func TestPrescreenPenalisesShortTermExtensionOnly(t *testing.T) {
 		}
 	}
 	with := mk(2.5)
-	scorePrescreen(with)
+	ScorePrescreen(with)
 	if scoreOf(t, with, "SPIKED") >= scoreOf(t, with, "CALM") {
 		t.Errorf("an extended name must score below an identical calm one: %.3f vs %.3f",
 			scoreOf(t, with, "SPIKED"), scoreOf(t, with, "CALM"))
@@ -170,7 +170,7 @@ func TestPrescreenPenalisesShortTermExtensionOnly(t *testing.T) {
 	// A *counter*-trend recent move is not the reversal case: an uptrend that
 	// just dipped is a pullback entry, and must not be penalised.
 	against := mk(-2.5)
-	scorePrescreen(against)
+	ScorePrescreen(against)
 	if scoreOf(t, against, "SPIKED") < scoreOf(t, against, "CALM")-1e-9 {
 		t.Errorf("a counter-trend dip must not be penalised: %.3f vs %.3f",
 			scoreOf(t, against, "SPIKED"), scoreOf(t, against, "CALM"))
@@ -184,8 +184,8 @@ func TestPrescreenExcludesIlliquidAndShortHistory(t *testing.T) {
 		row("NEW", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 5.0; r.Bars = 40 }),
 		row("ALSOGOOD", "sp500", func(r *PrescreenRow) { r.Mom12_1 = -0.20 }),
 	}
-	applyPrescreenExclusions(rows, defaultPrescreenParams())
-	scorePrescreen(rows)
+	ApplyPrescreenExclusions(rows, DefaultPrescreenParams())
+	ScorePrescreen(rows)
 
 	if got := excludedReason(t, rows, "THIN"); !strings.Contains(got, "illiquid") {
 		t.Errorf("THIN excluded reason = %q, want an illiquidity reason", got)
@@ -213,7 +213,7 @@ func TestPrescreenTableCarriesTopAndBottom(t *testing.T) {
 		rows = append(rows, row(tk, "sp500", func(r *PrescreenRow) { r.Mom12_1 = mom; r.Close = 100 + float64(i) }))
 	}
 	rows = append(rows, row("Z", "nq100", func(r *PrescreenRow) { r.Mom12_1 = 0.9 }))
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
 
 	table := ps.Table("sp500", PrescreenParams{TopPerIndex: 2, BottomPerIndex: 2})
@@ -249,7 +249,7 @@ func TestPrescreenIsInvariantToTheBenchmarkLevel(t *testing.T) {
 				r.Mom12_1, r.Ret63d, r.RS63 = mom, r63, r63-bench
 			}))
 		}
-		scorePrescreen(rows)
+		ScorePrescreen(rows)
 		return rows
 	}
 	flat, bull := build(0.0), build(0.25)
@@ -264,14 +264,14 @@ func TestPrescreenIsInvariantToTheBenchmarkLevel(t *testing.T) {
 		}
 	}
 	// And the formula recorded in every artifact must describe what ran.
-	if strings.Contains(defaultPrescreenParams().Formula, "rs63") {
-		t.Errorf("prescreenFormula still advertises an rs63 term: %q", defaultPrescreenParams().Formula)
+	if strings.Contains(DefaultPrescreenParams().Formula, "rs63") {
+		t.Errorf("prescreenFormula still advertises an rs63 term: %q", DefaultPrescreenParams().Formula)
 	}
 }
 
 func TestPrescreenTableEmptyWithoutRows(t *testing.T) {
 	ps := &Prescreen{}
-	if got := ps.Table("sp500", defaultPrescreenParams()); got != "" {
+	if got := ps.Table("sp500", DefaultPrescreenParams()); got != "" {
 		t.Errorf("empty pre-screen rendered %q, want no table at all", got)
 	}
 }
@@ -284,7 +284,7 @@ func TestPrescreenRowFromMetrics(t *testing.T) {
 		AvgDollarVol20: 4.2e9, PriceTo52wHigh: 0.98,
 	}
 	c := model.Constituent{Ticker: "AAPL", Name: "Apple Inc.", Sector: "Technology", Index: "sp500"}
-	r := newPrescreenRow(c, m, 0.05, defaultPrescreenParams())
+	r := NewPrescreenRow(c, m, 0.05, DefaultPrescreenParams())
 
 	if r.RS63 != m.Ret63d-0.05 {
 		t.Errorf("RS63 = %.4f, want %.4f (63d return less the benchmark's)", r.RS63, m.Ret63d-0.05)
@@ -310,10 +310,10 @@ func TestPrescreenIsRobustToOutliers(t *testing.T) {
 	}
 	clean := make([]PrescreenRow, len(rows))
 	copy(clean, rows)
-	scorePrescreen(clean)
+	ScorePrescreen(clean)
 
 	withOutlier := append([]PrescreenRow{row("MU", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 6.44 })}, rows...)
-	scorePrescreen(withOutlier)
+	ScorePrescreen(withOutlier)
 
 	top := scoreOf(t, withOutlier, "MU")
 	second := scoreOf(t, withOutlier, "A")
@@ -368,7 +368,7 @@ func TestPrescreenReversalPenaltyNeverPaysABonus(t *testing.T) {
 	// penalty rather than the clamp at neutral, which has its own test.
 	rows := append(append([]PrescreenRow{}, anchors...),
 		subject("HOT_A", 0.9), subject("HOT_B", 0.9), subject("MILD", 0.3), subject("FLAT", 0.0))
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 	if trendOf(t, rows, "FLAT") <= 0 {
 		t.Fatalf("fixture is degenerate: the test names must share a positive composite, got %+.4f",
 			trendOf(t, rows, "FLAT"))
@@ -395,7 +395,7 @@ func TestPrescreenReversalPenaltyNeverPaysABonus(t *testing.T) {
 	}
 	shorts := append(append([]PrescreenRow{}, anchors...),
 		shortSubject("CRASHED", -0.9), shortSubject("STEADY", 0.0))
-	scorePrescreen(shorts)
+	ScorePrescreen(shorts)
 	if trendOf(t, shorts, "STEADY") >= 0 {
 		t.Fatalf("fixture is degenerate: the two shorts must share a negative composite, got %+.4f",
 			trendOf(t, shorts, "STEADY"))
@@ -543,7 +543,7 @@ func TestClassifySetups(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rows := append(append([]PrescreenRow{}, anchors...), row("SUBJ", "sp500", tc.mut))
-			scorePrescreen(rows)
+			ScorePrescreen(rows)
 			for _, r := range rows {
 				if r.Ticker == "SUBJ" && r.Setup != tc.want {
 					t.Errorf("setup = %q, want %q (trend %+.2f, 21d %+.1f%%, p/52wH %.2f, volTrend %.2f)",
@@ -561,7 +561,7 @@ func TestClassifySetupsLeavesExcludedRowsUnlabelled(t *testing.T) {
 		row("OK", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40 }),
 		row("THIN", "sp500", func(r *PrescreenRow) { r.Mom12_1 = 0.40; r.Excluded = "illiquid" }),
 	}
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 	for _, r := range rows {
 		if r.Ticker == "THIN" && r.Setup != "" {
 			t.Errorf("excluded row carries setup %q, want none", r.Setup)
@@ -590,7 +590,7 @@ func TestExtensionPenaltyFollowsTheCompositeNotTheYearOldMomentum(t *testing.T) 
 		mk("CRM_LIKE", -0.24, 0.40, 1.60), // bad year, vertical quarter
 		mk("CALM", -0.24, 0.40, 0.00),     // same trend, no extension
 	}
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 
 	crm, calm := scoreOf(t, rows, "CRM_LIKE"), scoreOf(t, rows, "CALM")
 	if trendOf(t, rows, "CRM_LIKE") <= 0 {
@@ -649,7 +649,7 @@ func TestPrescreenTableRendersEachArchetypeSection(t *testing.T) {
 			r.Mom12_1, r.Ret63d, r.PriceTo52wHigh, r.VolTrend = -0.70, -0.45, 0.40, 1.10
 		}),
 	}
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
 	// Sized to the fixture: at six names a 15-deep Continuation section would
 	// swallow rows the later sections need, which is not what happens against an
@@ -726,7 +726,7 @@ func TestPrescreenTableShowsBothSidesOfEachCounterTrendArchetype(t *testing.T) {
 			r.Ret21d, r.PriceTo52wHigh, r.VolTrend = 0.06, 0.55, 1.05
 		}))
 	}
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 	ps := &Prescreen{Rows: sortPrescreenRows(rows)}
 	table := ps.Table("sp500", PrescreenParams{
 		TopPerIndex: 1, PullbackPerIndex: 3, BasePerIndex: 3, BottomPerIndex: 0,
@@ -802,7 +802,7 @@ func TestExtensionPenaltyCannotReverseTheTrend(t *testing.T) {
 			r.STRZ, r.Stretch21 = -1.8, -2.2
 		}),
 	)
-	scorePrescreen(rows)
+	ScorePrescreen(rows)
 
 	trend, score := trendOf(t, rows, "FALLEN"), scoreOf(t, rows, "FALLEN")
 	if trend >= 0 {

@@ -102,7 +102,28 @@ type yahooChartResp struct {
 // History returns up to 2 years of daily bars for symbol, served from cache
 // while the entry is younger than the client's TTL.
 func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series, error) {
-	return y.history(ctx, symbol, y.ttl)
+	return y.history(ctx, symbol, yahooRange, y.ttl)
+}
+
+// HistoryRange returns daily bars over a longer Yahoo range ("5y", "10y",
+// "max") — the backtest lab's read, which needs years of history the live
+// two-year series does not carry. It is cache-first: an entry written within
+// maxAge on any of the last few calendar days is served without a request,
+// because a replay of years of history does not need this afternoon's bar and
+// a re-run should not re-download the universe. Each range is its own cache
+// entry, so this never serves or overwrites the live two-year series.
+func (y *YahooClient) HistoryRange(ctx context.Context, symbol, rng string, maxAge time.Duration) (*quant.Series, error) {
+	if y.cache != nil && maxAge > 0 {
+		days := int(maxAge / (24 * time.Hour))
+		for d := 0; d <= days; d++ {
+			var cached quant.Series
+			when, ok := y.cache.PeekTTL(d, y.baseURL, "yahoo", "chart"+rng, symbol, &cached)
+			if ok && len(cached.Bars) > 0 && time.Since(when) <= maxAge {
+				return &cached, nil
+			}
+		}
+	}
+	return y.history(ctx, symbol, rng, 0)
 }
 
 // HistoryFresh refetches symbol unconditionally, bypassing the cache. Stage 1.5
@@ -110,13 +131,13 @@ func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series
 // shortlist, which is how a genuinely stale cache entry gets corrected rather
 // than merely flagged.
 func (y *YahooClient) HistoryFresh(ctx context.Context, symbol string) (*quant.Series, error) {
-	return y.history(ctx, symbol, 0)
+	return y.history(ctx, symbol, yahooRange, 0)
 }
 
-func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Duration) (*quant.Series, error) {
+func (y *YahooClient) history(ctx context.Context, symbol, rng string, ttl time.Duration) (*quant.Series, error) {
 	var cached quant.Series
 	if y.cache != nil && ttl > 0 {
-		if found, _ := y.cache.GetTTL(y.baseURL, "yahoo", "chart"+yahooRange, symbol, ttl, &cached); found && len(cached.Bars) > 0 {
+		if found, _ := y.cache.GetTTL(y.baseURL, "yahoo", "chart"+rng, symbol, ttl, &cached); found && len(cached.Bars) > 0 {
 			return &cached, nil
 		}
 	}
@@ -126,7 +147,7 @@ func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Durat
 	}
 
 	u := fmt.Sprintf("%s/v8/finance/chart/%s?range=%s&interval=1d&includeAdjustedClose=true",
-		y.baseURL, url.PathEscape(yahooSymbol(symbol)), yahooRange)
+		y.baseURL, url.PathEscape(yahooSymbol(symbol)), rng)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -215,10 +236,10 @@ func (y *YahooClient) history(ctx context.Context, symbol string, ttl time.Durat
 	// timestamp when we decline to write, so the next call re-runs this
 	// comparison and Yahoo wins the moment it catches up.
 	if y.cache != nil {
-		if kept, ok := y.keepNewerCached(symbol, series); ok {
+		if kept, ok := y.keepNewerCached(symbol, rng, series); ok {
 			return kept, nil
 		}
-		_ = y.cache.SetTTL(y.baseURL, "yahoo", "chart"+yahooRange, symbol, series)
+		_ = y.cache.SetTTL(y.baseURL, "yahoo", "chart"+rng, symbol, series)
 	}
 	return series, nil
 }
@@ -241,11 +262,11 @@ const priceCacheLookbackDays = 4
 // stopping at the most recently written entry: within one run the first fetch
 // may already have written today's regressed series, and comparing against that
 // would compare the bad data with itself.
-func (y *YahooClient) keepNewerCached(symbol string, fetched *quant.Series) (*quant.Series, bool) {
+func (y *YahooClient) keepNewerCached(symbol, rng string, fetched *quant.Series) (*quant.Series, bool) {
 	var best *quant.Series
 	for d := 0; d <= priceCacheLookbackDays; d++ { // 0 is today
 		var cached quant.Series
-		if _, ok := y.cache.PeekTTL(d, y.baseURL, "yahoo", "chart"+yahooRange, symbol, &cached); !ok {
+		if _, ok := y.cache.PeekTTL(d, y.baseURL, "yahoo", "chart"+rng, symbol, &cached); !ok {
 			continue
 		}
 		if len(cached.Bars) == 0 {

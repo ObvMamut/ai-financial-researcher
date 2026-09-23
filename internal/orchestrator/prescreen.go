@@ -178,7 +178,9 @@ const (
 	driftMinScore = driftMinSigma / 2
 )
 
-func defaultPrescreenParams() PrescreenParams {
+// DefaultPrescreenParams is the live pre-screen's configuration before any
+// config override. The backtest lab (internal/backtest) starts from it too.
+func DefaultPrescreenParams() PrescreenParams {
 	return PrescreenParams{
 		TopPerIndex:      15,
 		PullbackPerIndex: prescreenPullbackPerIndex,
@@ -507,10 +509,10 @@ func orDash(s string) string {
 	return s
 }
 
-// newPrescreenRow projects one constituent's computed metrics onto the columns
+// NewPrescreenRow projects one constituent's computed metrics onto the columns
 // the ranking and the scout table use. benchRet63 is the index benchmark's own
 // 63d return, which turns a raw 63d move into relative strength.
-func newPrescreenRow(c model.Constituent, m quant.Metrics, benchRet63 float64, params PrescreenParams) PrescreenRow {
+func NewPrescreenRow(c model.Constituent, m quant.Metrics, benchRet63 float64, params PrescreenParams) PrescreenRow {
 	r := PrescreenRow{
 		Ticker:         strings.ToUpper(c.Ticker),
 		Name:           c.Name,
@@ -540,10 +542,10 @@ func newPrescreenRow(c model.Constituent, m quant.Metrics, benchRet63 float64, p
 	return r
 }
 
-// applyPrescreenExclusions marks the rows that must not be ranked at all. These
+// ApplyPrescreenExclusions marks the rows that must not be ranked at all. These
 // are hard: a name that cannot be traded in size, or whose history is too short
 // for the momentum term to mean anything, is not a candidate however it scores.
-func applyPrescreenExclusions(rows []PrescreenRow, params PrescreenParams) {
+func ApplyPrescreenExclusions(rows []PrescreenRow, params PrescreenParams) {
 	for i := range rows {
 		if rows[i].Excluded != "" {
 			continue
@@ -564,7 +566,7 @@ func applyPrescreenExclusions(rows []PrescreenRow, params PrescreenParams) {
 	}
 }
 
-// scorePrescreen fills in Score for every non-excluded row, z-scoring each term
+// ScorePrescreen fills in Score for every non-excluded row, z-scoring each term
 // within its own index.
 //
 // Within-index standardisation is the point: eu50 in a flat quarter would never
@@ -588,7 +590,7 @@ func applyPrescreenExclusions(rows []PrescreenRow, params PrescreenParams) {
 // rather than the documented 0.5. Standardising within the index *is* the
 // relative-strength adjustment; RS63 remains a displayed column because it reads
 // more directly than a z-score, but it cannot earn its own term here.
-func scorePrescreen(rows []PrescreenRow) {
+func ScorePrescreen(rows []PrescreenRow) {
 	byIndex := map[string][]int{}
 	var order []string
 	for i := range rows {
@@ -710,7 +712,7 @@ func scorePrescreen(rows []PrescreenRow) {
 }
 
 // classifySetups labels every scorable row with the trade shape it qualifies
-// as. It is the tail of scorePrescreen rather than a step of its own, because
+// as. It is the tail of ScorePrescreen rather than a step of its own, because
 // the tests read Trend and every caller that has a score needs a label.
 //
 // First match wins, drift before pullback before base before continuation, so
@@ -990,9 +992,9 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSourc
 			m := quant.Compute(s, nil)
 			m.ApplyFX(fxFor(ctx, fx, c.Ticker))
 			// RS63 is a displayed column, not a term in the composite (see
-			// scorePrescreen), so measuring each name against its own market
+			// ScorePrescreen), so measuring each name against its own market
 			// changes what the scout reads without moving the ranking.
-			r := newPrescreenRow(c, m, benchFor(idx, c.Ticker), params)
+			r := NewPrescreenRow(c, m, benchFor(idx, c.Ticker), params)
 			if when, ok := reportDates[strings.ToUpper(c.Ticker)]; ok {
 				if d, ok := computeDrift(s, benchmark(idx, c.Ticker), when, m.SigmaDaily); ok {
 					r.ReportDate, r.GapZ, r.PostZ = d.Date, d.GapZ, d.PostZ
@@ -1009,8 +1011,8 @@ func runPrescreen(ctx context.Context, ch chan<- Event, yc marketdata.PriceSourc
 	}
 	ps.Errors = append(ps.Errors, fx.Failures()...)
 
-	applyPrescreenExclusions(rows, params)
-	scorePrescreen(rows)
+	ApplyPrescreenExclusions(rows, params)
+	ScorePrescreen(rows)
 	ps.Rows = sortPrescreenRows(rows)
 	return ps
 }

@@ -306,3 +306,44 @@ func TestTheBetterCachedSeriesIsFoundAcrossADayBoundary(t *testing.T) {
 		t.Errorf("a week later the guard still pinned the old series: got %d bars", len(stale.Bars))
 	}
 }
+
+// HistoryRange is the backtest lab's read: it asks Yahoo for the range it was
+// given, serves a repeat from cache, and keeps its entry apart from the live
+// two-year series so neither can be served in place of the other.
+func TestYahooHistoryRangeCachesPerRange(t *testing.T) {
+	var hits atomic.Int64
+	var ranges []string
+	fixture, err := os.ReadFile("testdata/yahoo_chart_sample.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		ranges = append(ranges, r.URL.Query().Get("range"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(fixture)
+	}))
+	defer srv.Close()
+
+	y := NewYahooClient(NewCache(t.TempDir()))
+	y.baseURL = srv.URL
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if _, err := y.HistoryRange(ctx, "TEST", "5y", 24*time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("server hits = %d, want 1 (repeat must come from cache)", got)
+	}
+	if _, err := y.History(ctx, "TEST"); err != nil {
+		t.Fatal(err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("server hits = %d, want 2 (the 2y series must not be served from the 5y entry)", got)
+	}
+	if len(ranges) != 2 || ranges[0] != "5y" || ranges[1] != "2y" {
+		t.Errorf("requested ranges = %v, want [5y 2y]", ranges)
+	}
+}

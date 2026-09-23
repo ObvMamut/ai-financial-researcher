@@ -195,7 +195,7 @@ func TestDriftTableSplitsByTheReactionNotTheRanking(t *testing.T) {
 			Setup: SetupDrift, ReportDate: "2026-08-26", GapZ: -3, DriftSessions: 4, Drift: -2.5},
 	}
 	ps := &Prescreen{Rows: rows}
-	table := ps.Table("sp500", defaultPrescreenParams())
+	table := ps.Table("sp500", DefaultPrescreenParams())
 
 	long := strings.Index(table, "Drift (long)")
 	short := strings.Index(table, "Drift (short)")

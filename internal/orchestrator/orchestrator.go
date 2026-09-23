@@ -653,7 +653,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	//
 	// Rank every constituent before any model sees the index, so the scouts
 	// filter a computed shortlist instead of inventing one from familiarity.
-	prescreenParams := defaultPrescreenParams()
+	prescreenParams := DefaultPrescreenParams()
 	prescreenParams.TopPerIndex = cfg.PrescreenTopPerIndex
 	if cfg.PrescreenPullbackPerIndex > 0 {
 		prescreenParams.PullbackPerIndex = cfg.PrescreenPullbackPerIndex
