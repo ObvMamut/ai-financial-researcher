@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -206,6 +207,14 @@ func TestThesisConditionalIdeaCompletesFullPipeline(t *testing.T) {
 	testThesisResultFixture(t, false, false, "conditional")
 }
 
+// The thesis Chief, writing what its persona now asks for: no target, no
+// target reasoning, a stop nearer than the catastrophe floor. The plan ships
+// market-on-open with its stop widened in Go, and the plan review's missing
+// target_assessment is not held against a plan that has no target.
+func TestThesisMarketOnOpenPlanShipsWithoutATarget(t *testing.T) {
+	testThesisResultFixture(t, false, false, "no_target")
+}
+
 func TestThesisAllFailedSkipsChiefAndPersistsDegradedResults(t *testing.T) {
 	testThesisResultFixture(t, true, false, "all_failed")
 }
@@ -246,13 +255,15 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 			review := model.ThesisChallenge{Ticker: "AAA", Verdict: "supported", Reason: "Source supports the mechanism", Claims: []model.ResearchClaim{claim}, ConditionsReviewed: true}
 			if at := strings.Index(prompt, "Plan hash: "); at >= 0 {
 				review.PlanHash = strings.Fields(prompt[at+len("Plan hash: "):])[0]
-				review.TargetAssessment = "supported"
+				if scenario != "no_target" {
+					review.TargetAssessment = "supported"
+				}
 			}
 			value = review
 		case strings.Contains(prompt, "# Company researcher"):
 			d := supportedResearch().Dossier
 			d.Claims = []model.ResearchClaim{claim}
-			if scenario == "conditional" {
+			if scenario == "conditional" || scenario == "no_target" {
 				d.EntryConditions = []string{"Confirm an executable quote before entry"}
 				d.Monitoring = []string{"Monitor the upcoming delivery announcement"}
 			}
@@ -267,7 +278,8 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 	}))
 	defer modelServer.Close()
 	chiefResult := model.IdeasResult{Ideas: []model.TradeIdea{}, Decisions: []model.SelectionDecision{{Ticker: "AAA", Status: "rejected", Reason: "The potential move is already priced in"}}}
-	if scenario == "conditional" {
+	planned := scenario == "conditional" || scenario == "no_target"
+	if planned {
 		var chart struct {
 			Chart struct {
 				Result []struct {
@@ -282,6 +294,12 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 		price := closes[len(closes)-1]
 		chiefResult.Ideas = []model.TradeIdea{{Ticker: "AAA", Direction: model.DirectionBuy, Entry: price, Stop: price * .98, Target: price * 1.03, Why: "Delivery update changes expectations", TimeframeDays: 15, Thesis: &model.ThesisPlan{TargetMethod: "thesis_scenario", WhyNow: "delivery window", Invalidation: "delivery delay", CatalystWindow: "next two weeks", EntryReason: "verified last close", StopReason: "maximum tolerable scenario loss", TargetReason: "delivery conversion scenario", OutcomeLow: price * .97, OutcomeHigh: price * 1.05, EvidenceIDs: []string{doc.ID}}}}
 		chiefResult.Decisions = []model.SelectionDecision{{Ticker: "AAA", Status: "conditional", Reason: "Supported thesis pending execution check"}}
+		if scenario == "no_target" {
+			idea := &chiefResult.Ideas[0]
+			idea.Target = 0
+			idea.Thesis.TargetMethod, idea.Thesis.TargetReason = "", ""
+			idea.Thesis.StopReason = "catastrophe stop; the position exits on time"
+		}
 	}
 	chief := filepath.Join(t.TempDir(), "chief")
 	if err := os.WriteFile(chief, []byte("#!/bin/sh\ncat <<'RESULT'\n"+fenced(chiefResult)+"\nRESULT\n"), 0700); err != nil {
@@ -338,7 +356,7 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 		t.Fatal(err)
 	}
 	expectedIdeas := 0
-	if scenario == "conditional" {
+	if planned {
 		expectedIdeas = 1
 	}
 	if ideas.SchemaVersion != 2 || ideas.ResearchMode != "thesis" || len(ideas.Ideas) != expectedIdeas || len(ideas.Decisions) != 1 || scenario == "no_trade" && !capacity && ideas.Decisions[0].Status != "rejected" {
@@ -358,7 +376,21 @@ func testThesisResultFixture(t *testing.T, chiefFails, capacity bool, scenario s
 	if ideas.ChiefAccepted != meta.ChiefAccepted {
 		t.Errorf("ideas.ChiefAccepted = %q, want %q (must agree with metadata.json)", ideas.ChiefAccepted, meta.ChiefAccepted)
 	}
-	if scenario == "conditional" {
+	if scenario == "no_target" {
+		idea := ideas.Ideas[0]
+		if idea.EntryType != model.EntryMarketOnOpen || idea.Target != 0 || idea.RiskReward != 0 || idea.Shares <= 0 {
+			t.Fatalf("market-on-open plan not shipped as one: %+v", idea)
+		}
+		var qp quant.Pack
+		if ok, err := store.ReadQuantPack(run.Dir, &qp); !ok || err != nil {
+			t.Fatalf("quant pack: ok=%v err=%v", ok, err)
+		}
+		m := qp.ByTicker["AAA"]
+		if floor := 2 * m.SigmaDaily * math.Sqrt(15) * m.LastClose; idea.Entry-idea.Stop < floor-1e-9 {
+			t.Fatalf("stop %.2f sits inside the 2σ√15 floor %.2f below %.2f", idea.Stop, floor, idea.Entry)
+		}
+	}
+	if planned {
 		idea := ideas.Ideas[0]
 		if idea.Status != "conditional" || idea.Shares <= 0 || !slices.Contains(idea.Thesis.Prerequisites, "Confirm an executable quote before entry") || len(idea.Thesis.Monitoring) != 1 {
 			t.Fatalf("conditional plan incomplete: %+v", idea)

@@ -370,7 +370,15 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	planFindings, planReports := t.reviewPlans(ctx, result, research, "initial")
 	findings = append(findings, planFindings...)
 	statuses = append(statuses, planReports...)
-	if len(findings) > 0 && len(result.Ideas) > 0 {
+	// Observational findings (a widened catastrophe stop, a sizing note for
+	// the operator) are recorded as warnings but never buy the corrective
+	// call: re-emitting the JSON cannot change them. The legacy path already
+	// draws the same line (riskFinding.actionable).
+	actionable := false
+	for _, f := range findings {
+		actionable = actionable || f.actionable()
+	}
+	if actionable && len(result.Ideas) > 0 {
 		// The corrective call carries two more mandatory sections than the
 		// initial one, so its board is rebuilt for the smaller remainder
 		// rather than reused. Reusing it is what made this call unassemblable
@@ -1264,6 +1272,17 @@ func (r thesisResearch) researchFailed() bool {
 // Keep imports and artifacts deliberately local; never save credentials or raw
 // prompts containing engine settings. Only evidence, decisions and reports persist.
 
+// planTargetSupported is the final plan review's target test. A plan with a
+// target needs the reviewer to support it. A market-on-open plan without one
+// has no target provenance to support, so only an explicit dispute fails it;
+// the plan hash still binds either way.
+func planTargetSupported(idea model.TradeIdea, challenge model.ThesisChallenge) bool {
+	if challenge.TargetAssessment == "supported" {
+		return true
+	}
+	return idea.MarketOnOpen() && idea.Target <= 0 && challenge.TargetAssessment != "disputed"
+}
+
 func (t *thesisRunner) reviewPlans(ctx context.Context, res *model.IdeasResult, research []thesisResearch, phase string) ([]riskFinding, []model.DomainStatus) {
 	var findings []riskFinding
 	var reports []model.DomainStatus
@@ -1281,7 +1300,7 @@ func (t *thesisRunner) reviewPlans(ctx context.Context, res *model.IdeasResult, 
 		// safe to drop, since idea/dossier/evidence are exactly what it is
 		// reviewing.
 		sections := []promptSection{
-			{Name: "plan_hash", Mandatory: true, Body: "Plan hash: " + executionPlanHash(idea) + "\nReview this final execution plan, especially whether evidence supports its target and outcome range in 10–15 sessions. Reject rule-driven target stretching. You are reviewing feasibility, not forecasting probability.\n"},
+			{Name: "plan_hash", Mandatory: true, Body: "Plan hash: " + executionPlanHash(idea) + "\nReview this final execution plan, especially whether evidence supports its target and outcome range in 10–15 sessions. Reject rule-driven target stretching. You are reviewing feasibility, not forecasting probability.\nAn entry_type of market_on_open enters at the next session's open (entry is the reference close), exits on time, and carries a wide catastrophe stop; its target is optional. With no target, assess the outcome range and stop in place of a target and return target_assessment: supported when they are evidence-consistent.\n"},
 			{Name: "idea", Mandatory: true, Body: jsonText(idea)},
 			{Name: "temporal_facts", Mandatory: true, Body: "\nComputed temporal facts:\n" + jsonText(r.Temporal)},
 			{Name: "dossier_hash", Mandatory: true, Body: "\nDossier hash: " + dossierHash(r.Dossier)},
@@ -1292,7 +1311,7 @@ func (t *thesisRunner) reviewPlans(ctx context.Context, res *model.IdeasResult, 
 		rs, _, _, e := researchCallSections(ctx, t, "thesis-challenger", fmt.Sprintf("plan-review-%x-%s", []byte(idea.Ticker), phase), sections, &challenge, challengeSchema)
 		reports = append(reports, rs...)
 		challenge.MaterialIssues = append(challenge.MaterialIssues, validateReviewConsistency(r.Dossier, challenge)...)
-		if r.Dossier.ContractVersion == 2 && (challenge.PlanHash != executionPlanHash(idea) || challenge.TargetAssessment != "supported") {
+		if r.Dossier.ContractVersion == 2 && (challenge.PlanHash != executionPlanHash(idea) || !planTargetSupported(idea, challenge)) {
 			challenge.MaterialIssues = append(challenge.MaterialIssues, "execution review must support target provenance and match the supplied plan hash")
 		}
 		if e != nil || challenge.Ticker != idea.Ticker || challenge.Verdict != "supported" || len(challenge.MaterialIssues) > 0 || len(challenge.Requests) > 0 || !reviewHasClaims(challenge) || len(validateClaimsAt(challenge.Claims, r.Documents, idea.Ticker, t.run.TS)) > 0 || len(validateClaimPassages(challenge.Claims, r.Documents)) > 0 {

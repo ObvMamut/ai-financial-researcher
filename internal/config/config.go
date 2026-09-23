@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -223,6 +224,8 @@ type fileFormat struct {
 		TargetSigmaMax     float64 `toml:"target_sigma_max"`
 		EntryPatienceSigma float64 `toml:"entry_patience_sigma"`
 		EntryChaseSigma    float64 `toml:"entry_chase_sigma"`
+		EntryType          string  `toml:"entry_type"`
+		CatastropheStop    float64 `toml:"catastrophe_stop_sigma"`
 		ADVMinUSD          float64 `toml:"adv_min_usd"`
 		MaxPairCorr        float64 `toml:"max_pair_corr"`
 		MaxPortfolioBeta   float64 `toml:"max_portfolio_beta"`
@@ -454,6 +457,7 @@ func (s *Settings) validateRisk() error {
 		{"target_sigma_max", s.Risk.TargetSigmaMax},
 		{"entry_patience_sigma", s.Risk.EntryPatienceSigma},
 		{"entry_chase_sigma", s.Risk.EntryChaseSigma},
+		{"catastrophe_stop_sigma", s.Risk.CatastropheStopSigma},
 		{"max_pair_corr", s.Risk.MaxPairCorr},
 		{"max_portfolio_beta", s.Risk.MaxPortfolioBeta},
 		{"max_per_sector", float64(s.Risk.MaxPerSector)},
@@ -476,6 +480,11 @@ func (s *Settings) validateRisk() error {
 		if s.Risk.Set(c.key) && c.v < 0 {
 			return fmt.Errorf("config risk.%s = %v: must be >= 0 — set it to 0 to disable the check", c.key, c.v)
 		}
+	}
+	switch s.Risk.EntryType {
+	case "", model.EntryMarketOnOpen, model.EntryLimit:
+	default:
+		return fmt.Errorf("config risk.entry_type = %q: must be %q or %q", s.Risk.EntryType, model.EntryMarketOnOpen, model.EntryLimit)
 	}
 	// edge_sigma_daily, min_expectancy_r and min_expectancy_bps are unconstrained
 	// in sign on purpose: a negative edge is what a losing system has, and a
@@ -595,6 +604,10 @@ func (s *Settings) applyFile(path string) error {
 	setRisk(&s.Risk.TargetSigmaMax, "target_sigma_max", f.Risk.TargetSigmaMax)
 	setRisk(&s.Risk.EntryPatienceSigma, "entry_patience_sigma", f.Risk.EntryPatienceSigma)
 	setRisk(&s.Risk.EntryChaseSigma, "entry_chase_sigma", f.Risk.EntryChaseSigma)
+	setRisk(&s.Risk.CatastropheStopSigma, "catastrophe_stop_sigma", f.Risk.CatastropheStop)
+	if f.Risk.EntryType != "" {
+		s.Risk.EntryType = strings.ToLower(strings.TrimSpace(f.Risk.EntryType))
+	}
 	setRisk(&s.Risk.ADVMinUSD, "adv_min_usd", f.Risk.ADVMinUSD)
 	setRisk(&s.Risk.MaxPairCorr, "max_pair_corr", f.Risk.MaxPairCorr)
 	setRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", f.Risk.MaxPortfolioBeta)
@@ -921,6 +934,10 @@ func (s *Settings) applyEnv() {
 	envRisk(&s.Risk.TargetSigmaMax, "target_sigma_max", "CFR_TARGET_SIGMA_MAX")
 	envRisk(&s.Risk.EntryPatienceSigma, "entry_patience_sigma", "CFR_ENTRY_PATIENCE_SIGMA")
 	envRisk(&s.Risk.EntryChaseSigma, "entry_chase_sigma", "CFR_ENTRY_CHASE_SIGMA")
+	envRisk(&s.Risk.CatastropheStopSigma, "catastrophe_stop_sigma", "CFR_CATASTROPHE_STOP_SIGMA")
+	if v := strings.TrimSpace(os.Getenv("CFR_ENTRY_TYPE")); v != "" {
+		s.Risk.EntryType = strings.ToLower(v)
+	}
 	envRisk(&s.Risk.MaxPairCorr, "max_pair_corr", "CFR_MAX_PAIR_CORR")
 	envRisk(&s.Risk.MaxPortfolioBeta, "max_portfolio_beta", "CFR_MAX_PORTFOLIO_BETA")
 	if v, ok := os.LookupEnv("CFR_MAX_PER_SECTOR"); ok && v != "" {

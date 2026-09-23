@@ -80,6 +80,18 @@ const (
 	// of one book — is exactly that mistake, and it cost the next run three of
 	// its five ideas.
 	defaultMinExpectancyR = 0.005
+	// defaultCatastropheStopSigma is the nearest a market_on_open idea's stop
+	// may sit, in units of σ_daily·√h. The 2026-09-23 backtest (4,080 trades,
+	// next-open entry, 15-session hold, 30 bps costs) measured no stop at
+	// +0.71% a trade, a 2σ√h stop at +0.61%, 1σ√h at +0.49% and the old
+	// ~9%/15% stop/target at +0.30%: every nearer stop and every target cost
+	// return. Two sigma is the widest stop that still bounds a gap-and-run.
+	defaultCatastropheStopSigma = 2.0
+	// catastropheStopCeiling bounds a market_on_open stop at this multiple of
+	// the floor. Past it the "stop" no longer describes a loss anyone would
+	// sit through, and the risk budget would size the position to almost
+	// nothing.
+	catastropheStopCeiling = 2.0
 	// realizedPriorPairs is the weight, in closed trades, given to the simulated
 	// expectancy once a measured record exists. At n_closed == this the record
 	// and the simulation count equally; the record's share grows from there.
@@ -309,6 +321,10 @@ func riskDefaults(c model.RiskConfig) model.RiskConfig {
 	// isPatientEntry.
 	fill(&c.EntryPatienceSigma, "entry_patience_sigma", 1.5)
 	fill(&c.EntryChaseSigma, "entry_chase_sigma", 0.5)
+	fill(&c.CatastropheStopSigma, "catastrophe_stop_sigma", defaultCatastropheStopSigma)
+	if c.EntryType == "" {
+		c.EntryType = model.EntryMarketOnOpen
+	}
 	fill(&c.ADVMinUSD, "adv_min_usd", defaultADVMinUSD)
 	fill(&c.MaxPairCorr, "max_pair_corr", 0.75)
 	fill(&c.MaxPortfolioBeta, "max_portfolio_beta", 1.5)
@@ -329,6 +345,66 @@ func riskDefaults(c model.RiskConfig) model.RiskConfig {
 	// only verdict a figure denominated in basis points of entry can carry on
 	// its own.
 	return c
+}
+
+// applyEntryPolicy stamps how a newly generated idea enters and, for a
+// market_on_open idea, re-bases its levels on verified data. It returns one
+// message per change, for the run's warnings.
+//
+// It runs on every idea a Chief produces, in both research modes, before the
+// levels are validated. Ideas already on disk never pass through here, so an
+// ideas.json written before entry_type existed keeps replaying as the limit it
+// was.
+//
+// Market-on-open is the default because the live record's limits were
+// adversely selected — calls whose limit never traded made +3.09%, the filled
+// ones −0.90% — and a limit at the close fills at the next open anyway. So the
+// entry is not the model's to choose: it is the verified last close, the price
+// the stop and the share count are measured from. The stop is floored at
+// catastrophe_stop_sigma·σ_daily·√h from it, widening a nearer or wrong-side
+// stop in Go rather than spending the one corrective re-prompt on it: the
+// floor is a number the backtest chose, not a judgement the Chief can improve.
+func applyEntryPolicy(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []string {
+	cfg = riskDefaults(cfg)
+	if cfg.EntryType == model.EntryLimit {
+		idea.EntryType = model.EntryLimit
+		return nil
+	}
+	idea.EntryType = model.EntryMarketOnOpen
+	m, ok := quantFor(v, idea.Ticker)
+	if !ok || m.LastClose <= 0 {
+		return nil // the gate reports the missing price data
+	}
+	var msgs []string
+	ref := math.Round(m.LastClose*100) / 100
+	if idea.Entry > 0 && math.Abs(idea.Entry-ref) >= 0.005 {
+		msgs = append(msgs, fmt.Sprintf("entry %.2f replaced by the verified last close %.2f — a market-on-open idea fills at the next open, and its entry is only the reference price",
+			idea.Entry, ref))
+	}
+	idea.Entry = ref
+	if m.SigmaDaily <= 0 {
+		return msgs // the gate reports that volatility could not be computed
+	}
+	h := float64(idea.TimeframeDays)
+	if h <= 0 {
+		h = 10
+	}
+	// Measured on the unrounded close, the same unit gateIdea checks against.
+	floor := cfg.CatastropheStopSigma * m.SigmaDaily * math.Sqrt(h) * m.LastClose
+	var widened float64
+	if idea.Direction == model.DirectionSell {
+		if idea.Stop <= 0 || idea.Stop-ref < floor {
+			widened = math.Ceil((ref+floor)*100) / 100
+		}
+	} else if idea.Stop <= 0 || ref-idea.Stop < floor {
+		widened = math.Floor((ref-floor)*100) / 100
+	}
+	if widened > 0 {
+		msgs = append(msgs, fmt.Sprintf("stop %.2f widened to %.2f, the %.1fσ√%.0f catastrophe-stop floor from the reference close %.2f",
+			idea.Stop, widened, cfg.CatastropheStopSigma, h, ref))
+		idea.Stop = widened
+	}
+	return msgs
 }
 
 // gateIdea runs the per-idea checks and computes sizing and expectancy.
@@ -356,7 +432,16 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 		note("%s", msg)
 	}
 
-	if idea.Entry <= 0 || idea.Stop <= 0 || idea.Target <= 0 {
+	moo := idea.MarketOnOpen()
+	if moo {
+		// A market_on_open idea needs a reference price and a stop; a target
+		// is optional and informational (applyEntryPolicy, scoring.md).
+		if idea.Entry <= 0 || idea.Stop <= 0 {
+			hard("%s has no usable levels (entry %.2f / stop %.2f) — a market-on-open idea needs its reference close and a catastrophe stop",
+				idea.Ticker, idea.Entry, idea.Stop)
+			return out
+		}
+	} else if idea.Entry <= 0 || idea.Stop <= 0 || idea.Target <= 0 {
 		hard("%s has no usable levels (entry %.2f / stop %.2f / target %.2f) — every idea needs all three",
 			idea.Ticker, idea.Entry, idea.Stop, idea.Target)
 		return out
@@ -381,7 +466,12 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 
 	risk := math.Abs(idea.Entry - idea.Stop)
 	reward := math.Abs(idea.Target - idea.Entry)
-	if risk > 0 {
+	if moo {
+		// No take-profit binds, so there is no reward:risk to floor and no
+		// breakeven hit rate the geometry alone implies. A target the Chief
+		// chose to state anyway is recorded as it stands, unjudged.
+		idea.BreakevenWinRate = 0
+	} else if risk > 0 {
 		// Rounded like every neighbouring field: the raw quotient shipped as
 		// 0.3511450381679389 in ideas.json beside notionals rounded to the cent.
 		idea.BreakevenWinRate = math.Round(risk/(risk+reward)*10000) / 10000
@@ -434,14 +524,27 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 			idea.Ticker)
 		return out
 	}
-	if s := risk / unit; !v.Thesis && s < cfg.StopSigmaMin {
+	if moo {
+		// The catastrophe stop replaces both the stop band and the target
+		// band. applyEntryPolicy has already widened a nearer stop to the
+		// floor, so a finding here means the levels arrived by some other
+		// route.
+		floor := cfg.CatastropheStopSigma
+		if s := risk / unit; s < floor-1e-6 {
+			hard("%s: the stop is %.2fσ from the reference close, inside the %.1fσ catastrophe-stop floor (1σ over %.0f days ≈ %.2f)",
+				idea.Ticker, s, floor, h, unit)
+		} else if s > catastropheStopCeiling*floor {
+			hard("%s: the stop is %.2fσ from the reference close, beyond %.1fσ — that is not a stop the position would be held through, and the risk budget sizes it to almost nothing (1σ over %.0f days ≈ %.2f)",
+				idea.Ticker, s, catastropheStopCeiling*floor, h, unit)
+		}
+	} else if s := risk / unit; !v.Thesis && s < cfg.StopSigmaMin {
 		hard("%s: the stop is %.2fσ from entry, inside the %.1fσ floor — that is noise, not risk (1σ over %.0f days ≈ %.2f)",
 			idea.Ticker, s, cfg.StopSigmaMin, h, unit)
 	} else if s > cfg.StopSigmaMax {
 		hard("%s: the stop is %.2fσ from entry, beyond the %.1fσ ceiling — oversized risk (1σ over %.0f days ≈ %.2f)",
 			idea.Ticker, s, cfg.StopSigmaMax, h, unit)
 	}
-	if s := reward / unit; s > cfg.TargetSigmaMax {
+	if s := reward / unit; !moo && s > cfg.TargetSigmaMax {
 		hard("%s: the target is %.2fσ away, beyond the %.1fσ ceiling — a %.0f-day move that size is not a plan",
 			idea.Ticker, s, cfg.TargetSigmaMax, h)
 	}
@@ -456,6 +559,16 @@ func gateIdea(idea *model.TradeIdea, v verified, cfg model.RiskConfig) []riskFin
 	}
 	idea.ExpectancyBps = math.Round(evBps*10) / 10
 	idea.ExpectancyR = math.Round(evR*1000) / 1000
+	if moo {
+		// Recorded, never gated. The check exists to catch a stop/target
+		// geometry that loses money at the assumed edge — a near stop touched
+		// before a far target. A market_on_open idea has one barrier, placed
+		// at a floor the backtest chose, and a time exit; the simulation's
+		// level is then set by the assumed edge alone, and a floor inside an
+		// assumed distribution measures the assumption (see
+		// defaultMinExpectancyR). The number stays on the idea as a diagnostic.
+		return out
+	}
 	if !v.Thesis && evR < cfg.MinExpectancyR {
 		verdict := "the geometry loses money at the assumed edge"
 		if evR > 0 {
@@ -630,7 +743,7 @@ func walkPath(idea *model.TradeIdea, drift, sigma, dir float64, draws []float64,
 		if (dir > 0 && price <= idea.Stop) || (dir < 0 && price >= idea.Stop) {
 			return dir * (price - idea.Entry) / idea.Entry
 		}
-		if (dir > 0 && price >= idea.Target) || (dir < 0 && price <= idea.Target) {
+		if idea.Target > 0 && ((dir > 0 && price >= idea.Target) || (dir < 0 && price <= idea.Target)) {
 			return dir * (idea.Target - idea.Entry) / idea.Entry
 		}
 	}

@@ -615,6 +615,41 @@ entry_chase_sigma = 0.25
 	}
 }
 
+// entry_type selects how new ideas enter; the old limit behaviour stays one
+// setting away. catastrophe_stop_sigma is the market-on-open stop floor.
+func TestLoadFileAppliesEntryTypeKeys(t *testing.T) {
+	_, cwd := isolate(t)
+	toml := "[risk]\nentry_type = \"LIMIT\"\ncatastrophe_stop_sigma = 2.5\n"
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.Risk.EntryType != model.EntryLimit || s.Risk.CatastropheStopSigma != 2.5 || !s.Risk.Set("catastrophe_stop_sigma") {
+		t.Errorf("entry keys = %q / %v (set %v)", s.Risk.EntryType, s.Risk.CatastropheStopSigma, s.Risk.Set("catastrophe_stop_sigma"))
+	}
+
+	t.Setenv("CFR_ENTRY_TYPE", "market_on_open")
+	if s, err = Load(); err != nil || s.Risk.EntryType != model.EntryMarketOnOpen {
+		t.Errorf("env override: %v / %q", err, s.Risk.EntryType)
+	}
+
+	t.Setenv("CFR_ENTRY_TYPE", "stop_limit")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "entry_type") {
+		t.Errorf("an unknown entry type must be refused, got %v", err)
+	}
+	t.Setenv("CFR_ENTRY_TYPE", "")
+
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[risk]\ncatastrophe_stop_sigma = 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Error("catastrophe_stop_sigma = 0 would put the stop at the entry; it must be refused")
+	}
+}
+
 func TestThesisConfigPrecedenceAndBudgetValidation(t *testing.T) {
 	_, cwd := isolate(t)
 	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("research_mode = \"thesis\"\n[research]\nrounds=2\ndocuments=6\n"), 0600); err != nil {
