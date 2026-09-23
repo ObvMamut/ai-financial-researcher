@@ -740,7 +740,7 @@ func TestCompactionPromptCarriesTheMeasuredAllowance(t *testing.T) {
 	}
 	current := dossierNarratives(d)
 	for _, f := range []string{"long_case", "short_case"} {
-		want := fmt.Sprintf("%s: %d bytes (currently %d)", f, allowance.PerField[f], len(current[f]))
+		want := fmt.Sprintf("%s: %d bytes (currently %d)", f, int(float64(allowance.PerField[f])*compactionStatedTarget("")), len(current[f]))
 		if !strings.Contains(captured, want) {
 			t.Fatalf("prompt missing the measured per-field line %q", want)
 		}

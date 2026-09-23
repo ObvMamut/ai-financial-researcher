@@ -526,9 +526,10 @@
 #response_bytes = 12288
 # An oversized researcher dossier gets one compaction, run on the Chief engine
 # ([chief_api] or the claude CLI), never the cheap engine. With chief_engine =
-# "api", [chief_api] compaction_reasoning_effort = "low" sends reasoning_effort
-# low and states 85% budgets to absorb its measured overshoot (DeepSeek v4:
-# ~60s instead of up to 271s); omit it for providers that reject the field.
+# "api", [chief_api] compaction_reasoning_effort sets reasoning_effort on that
+# call ("low" | "high" | "max"). "high" is recommended for DeepSeek v4: it
+# lands within ~140 bytes of the budget where "low" misses by up to ~640, at
+# 50-360s per call instead of ~60s. Omit it for providers that reject the field.
 #[research.budgets.researcher]
 #input_bytes = 98304
 #response_bytes = 20480

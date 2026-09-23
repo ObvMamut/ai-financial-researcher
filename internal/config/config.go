@@ -270,8 +270,8 @@ type fileFormat struct {
 		APIKey    string `toml:"api_key"`
 		MaxTokens int    `toml:"max_tokens"`
 		// CompactionReasoningEffort sets reasoning_effort on dossier
-		// compaction calls: "low" (told 85% budgets to absorb its measured
-		// overshoot), "high", "max", or "" to send none.
+		// compaction calls: "low", "high", "max", or "" to send none. See
+		// compactionStatedTarget for the margin each is told.
 		CompactionReasoningEffort string `toml:"compaction_reasoning_effort"`
 	} `toml:"chief_api"`
 

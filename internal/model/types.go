@@ -456,7 +456,7 @@ type APIConfig struct {
 	ReasoningEffort string
 	// CompactionEffort is the [chief_api] compaction_reasoning_effort value:
 	// "" (provider default), "low", "high" or "max". Only dossier compaction
-	// reads it; see compactionLowEffortTarget.
+	// reads it; see compactionStatedTarget.
 	CompactionEffort string
 }
 

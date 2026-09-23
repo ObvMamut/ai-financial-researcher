@@ -494,9 +494,13 @@ no fallback. `[chief_api] compaction_reasoning_effort` optionally sets the
 request's `reasoning_effort` (`low`, `high` or `max`; the default sends none).
 Measured on deepseek-v4-pro, `high` delivered −19% to +2% of the per-field
 budgets in 81–271s, and `low` delivered +1% to +12% in about 60s whatever the
-cut depth, so a `low` call is told 85% of each field's allowance; the real
-allowance still decides feasibility and the final size check. The effort used
-is recorded on the compaction's `allowance.reasoning_effort`.
+cut depth. Across two full runs, `low` missed 3 of 7 compactions by up to 638
+bytes and `high` missed 3 of 11 by at most 140, plus one reasoning runaway to
+the token cap. Every call is therefore told a fraction of each field's real
+allowance — 85% at `low`, 90% otherwise — while the real allowance still
+decides feasibility and the final size check. `high` is the recommended
+setting. The effort used is recorded on the compaction's
+`allowance.reasoning_effort`.
 Feasibility is a measured, per-company verdict, not a guarantee — some
 oversized dossiers remain infeasible after this change, and that is a correct
 answer, not a regression. Protected wire fields (including unknown extensions),

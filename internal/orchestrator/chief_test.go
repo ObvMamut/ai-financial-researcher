@@ -751,18 +751,18 @@ func TestCompactionRetriesATransientChiefFailure(t *testing.T) {
 // Measured on deepseek-v4-pro (2026-09-23), delivered narrative bytes against
 // the per-field budgets it was given: effort=high landed at -19%..+2% across
 // four live compactions; effort=low at +1%..+12% across three, independent of
-// how deep the cut was. So a low-effort call is told budgets scaled by
-// compactionLowEffortTarget, while measurement and feasibility still use the
-// real allowance; high/max are told the real budgets.
+// how deep the cut was. Every call is told budgets scaled by
+// compactionStatedTarget (tighter for low), while measurement and
+// feasibility still use the real allowance.
 func TestCompactionReasoningEffortPolicy(t *testing.T) {
 	for _, c := range []struct {
 		policy, want string
 		scaled       bool
 	}{
 		{"low", "low", true},
-		{"high", "high", false},
-		{"max", "max", false},
-		{"", "", false},
+		{"high", "high", true},
+		{"max", "max", true},
+		{"", "", true},
 	} {
 		t.Run("policy="+c.policy, func(t *testing.T) {
 			var efforts []any
@@ -804,9 +804,12 @@ func TestCompactionReasoningEffortPolicy(t *testing.T) {
 				t.Fatalf("effort not recorded on the allowance: %+v", a)
 			}
 			real := fmt.Sprintf("long_case: %d bytes (currently", a.PerField["long_case"])
-			stated := fmt.Sprintf("long_case: %d bytes (currently", int(float64(a.PerField["long_case"])*compactionLowEffortTarget))
+			stated := fmt.Sprintf("long_case: %d bytes (currently", int(float64(a.PerField["long_case"])*compactionStatedTarget(c.want)))
 			if c.scaled && (!strings.Contains(prompts[0], stated) || strings.Contains(prompts[0], real)) {
-				t.Fatalf("low effort must be told the scaled budget %q", stated)
+				t.Fatalf("effort %q must be told the scaled budget %q", c.want, stated)
+			}
+			if compactionStatedTarget("low") >= compactionStatedTarget("high") {
+				t.Fatal("low effort overshoots more and must be told the tighter target")
 			}
 			if !c.scaled && !strings.Contains(prompts[0], real) {
 				t.Fatalf("effort %q must be told the real budget %q", c.policy, real)

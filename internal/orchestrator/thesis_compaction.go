@@ -126,13 +126,20 @@ const compactionHeadroom = 256
 // instruction — a few words is not a shortened case, it is noise.
 const compactionPerFieldFloor = 40
 
-// compactionLowEffortTarget scales the per-field budgets a reasoning_effort
-// "low" compaction is told. Measured on deepseek-v4-pro, 2026-09-23: low
-// effort delivered +1%..+12% over the budgets it was given, in ~60s, whatever
-// the cut depth; high effort delivered -19%..+2%, in 81-271s. Telling low 85%
-// of the allowance absorbs that overshoot. Feasibility and the final size
-// check still use the real allowance, so a miss is still a recorded failure.
-const compactionLowEffortTarget = 0.85
+// compactionStatedTarget is the fraction of each field's real allowance a
+// compaction call is told. Measured against deepseek-v4-pro on 2026-09-23:
+// every miss was a small overshoot of the stated budget — high effort by
+// +3..+140 bytes over the limit (at most ~5% of the narrative budget), low
+// effort by up to +12% even when told 85%. The 256-byte headroom was sized for
+// JSON escaping drift (<=63 bytes), not for that. Feasibility and the final
+// size check still use the real allowance, so a miss remains a recorded
+// failure; the margin only aims the model below the line it tends to cross.
+func compactionStatedTarget(effort string) float64 {
+	if effort == "low" {
+		return 0.85
+	}
+	return 0.90
+}
 
 // measureCompaction computes how much room a compaction call actually has,
 // instead of assuming a fixed per-field character count. On the six real
@@ -346,16 +353,13 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 	}
 
 	target := t.compactionTarget()
-	stated := allowance.PerField
 	if target.CLI == model.CLIApi && target.API.CompactionEffort != "" {
 		target.API.ReasoningEffort = target.API.CompactionEffort
 		allowance.ReasoningEffort = target.API.CompactionEffort
-		if target.API.CompactionEffort == "low" {
-			stated = make(map[string]int, len(allowance.PerField))
-			for f, n := range allowance.PerField {
-				stated[f] = int(float64(n) * compactionLowEffortTarget)
-			}
-		}
+	}
+	stated := make(map[string]int, len(allowance.PerField))
+	for f, n := range allowance.PerField {
+		stated[f] = int(float64(n) * compactionStatedTarget(allowance.ReasoningEffort))
 	}
 	prompt := fmt.Sprintf(
 		"Compact this complete dossier to fit a %d-byte response budget. "+
