@@ -170,8 +170,13 @@ func chiefTarget(e chiefEngine, cfg Config, purpose chiefPurpose) callTarget {
 }
 
 // compactionTarget is the dossier-compaction call's target: the run's own
-// resolved Chief engine, with the Chief's stage, timeout and retry budget —
-// never the cheap pool, whose model cannot perform the cut.
+// resolved Chief engine and synthesis timeout — never the cheap pool, whose
+// model cannot perform the cut. It keeps the ordinary transient-retry budget
+// rather than synthesis_max_attempts: that one (default 1) is sized for the
+// Chief's synthesis call, which has its own fallback; compaction has none,
+// and a single connection reset would otherwise fail the company.
 func (t *thesisRunner) compactionTarget() callTarget {
-	return chiefTarget(t.chief, t.cfg, chiefCompaction)
+	target := chiefTarget(t.chief, t.cfg, chiefCompaction)
+	target.Retry = t.cfg.Retry
+	return target
 }

@@ -682,12 +682,18 @@ func TestCompactionRunsOnTheChiefEngineNotTheCheapPool(t *testing.T) {
 	}
 }
 
+// Compaction takes the Chief's engine and long timeout but NOT its
+// synthesis_max_attempts: that budget (default 1) exists because the Chief's
+// one synthesis call has its own fallback, and compaction has none. A
+// transient reset on the only attempt failed 2330.TW live
+// (runs/2026-09-23T15-25-44), where the cheap path would have retried.
 func TestCompactionTargetFollowsTheResolvedChiefEngine(t *testing.T) {
 	cfg := Config{SynthesisMaxAttempts: 1}
+	cfg.Retry.MaxAttempts = 2
 	cfg.Timeouts.Synthesis = 90 * time.Second
 	r := &thesisRunner{cfg: cfg, chief: chiefEngine{CLI: model.CLIClaude, Model: "opus", Binary: "claude"}}
 	got := r.compactionTarget()
-	if got.CLI != model.CLIClaude || got.throttled || got.Stage != model.StageSynthesis || got.Timeout != 90*time.Second || got.Retry.MaxAttempts != 1 {
+	if got.CLI != model.CLIClaude || got.throttled || got.Stage != model.StageSynthesis || got.Timeout != 90*time.Second || got.Retry.MaxAttempts != 2 {
 		t.Fatalf("claude chief: %+v", got)
 	}
 }
@@ -706,10 +712,38 @@ func TestCompactionOutputLimitIsNotRetried(t *testing.T) {
 	runner, _, done := thesisFixture(t, func(string, int) string { return fenced(d) })
 	defer done()
 	runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: chief.URL, Model: "chief-model", APIKey: "k2"}}
-	runner.cfg.SynthesisMaxAttempts = 3
+	runner.cfg.Retry.MaxAttempts = 3
 	var out model.CandidateDossier
 	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "trunc", "data", &out, dossierSchema)
 	if err == nil || calls != 1 || reports[1].FailureKind != "output_limit" {
+		t.Fatalf("calls=%d err=%v recovery=%+v", calls, err, reports[1])
+	}
+}
+
+func TestCompactionRetriesATransientChiefFailure(t *testing.T) {
+	calls := 0
+	chief := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			http.Error(w, "upstream reset", http.StatusBadGateway)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"message": map[string]string{"content": fenced(map[string]any{"long_case": "short"})}}}})
+	}))
+	defer chief.Close()
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	d.LongCase = strings.Repeat("long narrative ", 2000)
+	runner, _, done := thesisFixture(t, func(string, int) string { return fenced(d) })
+	defer done()
+	runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: chief.URL, Model: "chief-model", APIKey: "k2"}}
+	runner.cfg.SynthesisMaxAttempts = 1
+	runner.cfg.Retry.MaxAttempts = 2
+	runner.cfg.Retry.BaseDelay = time.Millisecond
+	var out model.CandidateDossier
+	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "transient", "data", &out, dossierSchema)
+	if err != nil || calls != 2 || reports[1].Contract != "compacted" || reports[1].Attempts != 2 {
 		t.Fatalf("calls=%d err=%v recovery=%+v", calls, err, reports[1])
 	}
 }
