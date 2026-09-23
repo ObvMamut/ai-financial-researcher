@@ -547,3 +547,51 @@ func TestLocalNormalizationConsumesNoModelCall(t *testing.T) {
 		t.Fatalf("transport=%s parsing=%s, want ok/ok", transport, parsing)
 	}
 }
+
+// Live, deepseek-chat sometimes returns a complete dossier as bare JSON with
+// no ```json fence (6758.T and ON, runs/2026-09-23T16-22-19). Oversized, such
+// a reply got neither compaction nor schema repair: it failed as "missing
+// fenced research JSON". A reply that is exactly one JSON object is the payload.
+func TestUnfencedWholeReplyIsThePayload(t *testing.T) {
+	bare := "  \n" + `{"ticker":"AAA","status":"watchlist"}` + "\n"
+	var v map[string]any
+	if err := decodeResearch(bare, &v); err != nil || v["ticker"] != "AAA" {
+		t.Fatalf("bare JSON reply not decoded: %v %v", err, v)
+	}
+	if m := measureResponse(bare); !m.Normalized || m.PayloadBytes != len(`{"ticker":"AAA","status":"watchlist"}`) {
+		t.Fatalf("bare JSON reply not measured as a payload: %+v", m)
+	}
+	for name, s := range map[string]string{
+		"prose around json": `Here it is: {"ticker":"AAA"}`,
+		"two objects":       `{"a":1} {"b":2}`,
+		"not json":          `{not json}`,
+	} {
+		if err := decodeResearch(s, &v); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	fencedWins := `{"ticker":"BARE"}` + "\n```json\n" + `{"ticker":"FENCED"}` + "\n```"
+	if err := decodeResearch(fencedWins, &v); err != nil || v["ticker"] != "FENCED" {
+		t.Fatalf("a fenced block must win: %v %v", err, v)
+	}
+}
+
+func TestOversizedUnfencedDossierStillGetsCompaction(t *testing.T) {
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	d.LongCase = strings.Repeat("long narrative ", 2000)
+	calls := 0
+	runner, _, done := thesisFixture(t, func(prompt string, _ int) string {
+		calls++
+		if strings.Contains(prompt, "Compact this complete dossier") {
+			return fenced(map[string]any{"long_case": "short"})
+		}
+		return jsonText(d) // no fence
+	})
+	defer done()
+	var out model.CandidateDossier
+	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "bare", "data", &out, dossierSchema)
+	if err != nil || calls != 2 || len(reports) != 2 || reports[1].Contract != "compacted" || out.LongCase != "short" {
+		t.Fatalf("calls=%d err=%v reports=%+v", calls, err, reports)
+	}
+}

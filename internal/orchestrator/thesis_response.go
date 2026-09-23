@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
 )
@@ -35,6 +36,24 @@ import (
 // fabricated claim that the payload equals the raw response. RawSHA256 is
 // always set — the complete response is always known, whether or not a
 // payload could be extracted from it.
+// thesisPayload returns a thesis reply's JSON payload: the last fenced ```json
+// object when there is one, otherwise the whole reply when it is exactly one
+// JSON object. deepseek-chat sometimes omits the fence on a complete dossier
+// (6758.T and ON, runs/2026-09-23T16-22-19); an oversized reply of that shape
+// used to get neither compaction nor repair. Prose around a bare object is
+// still not a payload. Scoped to the thesis path: the legacy pipeline pairs
+// parse.LastJSONBlock with ReplaceLastJSONBlock, which has no unfenced form.
+func thesisPayload(s string) (payload string, fenced, ok bool) {
+	if raw, ok := extractLastJSON(s); ok {
+		return raw, true, true
+	}
+	trimmed := strings.TrimSpace(s)
+	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") && json.Valid([]byte(trimmed)) {
+		return trimmed, false, true
+	}
+	return "", false, false
+}
+
 func measureResponse(stdout string) model.ResponseMeasure {
 	m := model.ResponseMeasure{
 		RawBytes:     len(stdout),
@@ -42,7 +61,7 @@ func measureResponse(stdout string) model.ResponseMeasure {
 		RawSHA256:    fmt.Sprintf("%x", sha256.Sum256([]byte(stdout))),
 	}
 
-	payload, ok := extractLastJSON(stdout)
+	payload, isFenced, ok := thesisPayload(stdout)
 	if !ok {
 		return m
 	}
@@ -52,6 +71,9 @@ func measureResponse(stdout string) model.ResponseMeasure {
 	}
 	m.Normalized = true
 	m.Method = "json.Compact of the fenced payload"
+	if !isFenced {
+		m.Method = "json.Compact of the unfenced whole-reply payload"
+	}
 	m.PayloadBytes = buf.Len()
 	m.PayloadSHA256 = fmt.Sprintf("%x", sha256.Sum256(buf.Bytes()))
 	return m

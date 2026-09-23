@@ -57,7 +57,7 @@ type thesisRunner struct {
 
 func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
 func decodeResearch[T any](s string, v *T) error {
-	raw, ok := extractLastJSON(s)
+	raw, _, ok := thesisPayload(s)
 	if !ok {
 		return fmt.Errorf("missing fenced research JSON")
 	}
