@@ -1,0 +1,275 @@
+package backtest
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/universe"
+)
+
+// Loader is the price seam: marketdata.YahooClient satisfies it. The lab reads
+// long ranges through the shared cache and never through a model.
+type Loader interface {
+	HistoryRange(ctx context.Context, symbol, rng string, maxAge time.Duration) (*quant.Series, error)
+}
+
+// Config is one replay's settings.
+type Config struct {
+	Years       int           // rebalance span; default 4
+	Indices     []string      // default: all four
+	CacheMaxAge time.Duration // how old a cached long series may be; default 7 days
+	Now         time.Time     // the replay ends on the last Friday on or before it
+	Log         func(string)  // progress lines; may be nil
+}
+
+// Survivorship is printed on every report: the universe files are today's
+// constituents, so names that fell out of the indices over the replay — the
+// losers, disproportionately — are missing from every past cross-section.
+const Survivorship = "SURVIVORSHIP: the universe is today's constituents only. Names that left the indices during the replay are absent from every past date, which flatters momentum and long-side returns. Treat every positive number here as an upper bound."
+
+// Departures lists where the lab's pre-screen knowingly differs from a live run.
+var Departures = []string{
+	"no liquidity floor: a USD turnover needs the FX rate at each past date, and converting at today's rate would be a look-ahead",
+	"no drift archetype: no point-in-time 10-Q/10-K dates are cached, as in a live run without an SEC contact address; the composite does not use drift",
+	"a name is scored only with the full 253 bars the 12-1 term needs (live: 60), and only in a week it printed a bar",
+	"prices are Yahoo's adjusted daily bars for every symbol (live runs route US equities through Alpaca when keyed)",
+}
+
+// Result is the lab's report, written as JSON under .data/backtest/.
+type Result struct {
+	GeneratedAt   string         `json:"generated_at"`
+	Range         string         `json:"yahoo_range"`
+	Years         int            `json:"years"`
+	Start         string         `json:"first_date"`
+	End           string         `json:"last_date"`
+	Mid           string         `json:"second_half_starts"`
+	Dates         int            `json:"dates"`
+	Rows          int            `json:"rows"`
+	NamesPerIndex map[string]int `json:"names_per_index"`
+	Unavailable   []string       `json:"unavailable,omitempty"`
+	Survivorship  string         `json:"survivorship"`
+	Departures    []string       `json:"departures"`
+	CostNote      string         `json:"cost_note"`
+	// Signals maps a slice label (all, US, EU, Asia, H1, H2) to every signal's
+	// stats against benchmark-excess returns; BetaAdjusted is the same against
+	// r − β·r_bench (C4).
+	Signals       map[string][]SignalStats `json:"signals"`
+	BetaAdjusted  map[string][]SignalStats `json:"beta_adjusted"`
+	Barrier       BarrierReport            `json:"barrier"`
+	Preregistered []TestResult             `json:"preregistered"`
+	TestsRun      int                      `json:"tests_run"`
+}
+
+const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
+
+// yahooRange is the shortest Yahoo range covering the replay plus the year of
+// history the first rebalance needs.
+func yahooRange(years int) string {
+	switch {
+	case years+1 <= 5:
+		return "5y"
+	case years+1 <= 10:
+		return "10y"
+	}
+	return "max"
+}
+
+// Run fetches (cache-first) every constituent and benchmark, builds the panel
+// and analyses it.
+func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config) (*Result, error) {
+	if cfg.Years <= 0 {
+		cfg.Years = 4
+	}
+	if len(cfg.Indices) == 0 {
+		cfg.Indices = universe.AllIndices()
+	}
+	if cfg.CacheMaxAge <= 0 {
+		cfg.CacheMaxAge = 7 * 24 * time.Hour
+	}
+	if cfg.Now.IsZero() {
+		cfg.Now = time.Now()
+	}
+	logf := func(format string, args ...any) {
+		if cfg.Log != nil {
+			cfg.Log(fmt.Sprintf(format, args...))
+		}
+	}
+	rng := yahooRange(cfg.Years)
+
+	var members []Member
+	for _, idx := range cfg.Indices {
+		cs := uni.Constituents(idx)
+		if len(cs) == 0 {
+			return nil, fmt.Errorf("unknown or empty index %q", idx)
+		}
+		for _, c := range cs {
+			members = append(members, Member{Constituent: c, Bench: universe.BenchmarkFor(idx, c.Ticker)})
+		}
+	}
+
+	data := Data{Series: map[string]*quant.Series{}, Bench: map[string]*quant.Series{}}
+	var unavailable []string
+	fetch := func(sym string) *quant.Series {
+		s, err := loader.HistoryRange(ctx, sym, rng, cfg.CacheMaxAge)
+		if err != nil {
+			unavailable = append(unavailable, fmt.Sprintf("%s: %v", sym, err))
+			return nil
+		}
+		return s
+	}
+	for _, m := range members {
+		if _, ok := data.Bench[m.Bench]; !ok {
+			data.Bench[m.Bench] = fetch(m.Bench)
+		}
+	}
+	for i, m := range members {
+		t := strings.ToUpper(m.Constituent.Ticker)
+		if _, ok := data.Series[t]; ok {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data.Series[t] = fetch(m.Constituent.Ticker)
+		if (i+1)%50 == 0 {
+			logf("prices: %d of %d members", i+1, len(members))
+		}
+	}
+	logf("prices: %d symbols, %d unavailable", len(data.Series)+len(data.Bench), len(unavailable))
+
+	end := lastFriday(cfg.Now)
+	dates := WeeklyDates(end.AddDate(-cfg.Years, 0, 0), end)
+	recs := DropWarmupDates(BuildPanel(members, data, dates))
+	if len(recs) == 0 {
+		return nil, fmt.Errorf("the panel is empty: no member had %d bars at any rebalance date", minHistory)
+	}
+	logf("panel: %d rows", len(recs))
+	res := Analyze(recs, data.Series)
+	res.GeneratedAt = cfg.Now.UTC().Format(time.RFC3339)
+	res.Range, res.Years, res.Unavailable = rng, cfg.Years, unavailable
+	return res, nil
+}
+
+// Analyze turns a filtered panel into the report. Exposed for tests, which
+// build panels from synthetic series.
+func Analyze(recs []Record, series map[string]*quant.Series) *Result {
+	cells := crossSections(recs)
+	mid := midDate(cells)
+	res := &Result{
+		Mid: mid, Rows: len(recs), NamesPerIndex: map[string]int{},
+		Survivorship: Survivorship, Departures: Departures, CostNote: costNote,
+		Signals: map[string][]SignalStats{}, BetaAdjusted: map[string][]SignalStats{},
+	}
+	dates := map[string]bool{}
+	names := map[string]map[string]bool{}
+	for _, r := range recs {
+		dates[r.Date] = true
+		if names[r.Index] == nil {
+			names[r.Index] = map[string]bool{}
+		}
+		names[r.Index][r.Ticker] = true
+		if res.Start == "" || r.Date < res.Start {
+			res.Start = r.Date
+		}
+		if r.Date > res.End {
+			res.End = r.Date
+		}
+	}
+	res.Dates = len(dates)
+	for idx, ns := range names {
+		res.NamesPerIndex[idx] = len(ns)
+	}
+	for _, sl := range slices(mid) {
+		res.Signals[sl.Label] = summarize(cells, sl.Keep, false)
+		res.BetaAdjusted[sl.Label] = summarize(cells, sl.Keep, true)
+	}
+	res.Barrier = barrierStudy(recs, series, mid)
+	res.Preregistered = preregistered(cells, mid)
+	for _, t := range res.Preregistered {
+		if t.Status == "run" {
+			res.TestsRun++
+		}
+	}
+	return res
+}
+
+// Save writes the report as <dir>/<timestamp>.json and returns the path.
+func (r *Result) Save(dir string, now time.Time) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, now.UTC().Format("2006-01-02T15-04-05")+".json")
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, b, 0o644)
+}
+
+// Text renders the human summary.
+func (r *Result) Text() string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Backtest lab — %d weekly rebalances, %s .. %s (second half from %s); %d rows\n",
+		r.Dates, r.Start, r.End, r.Mid, r.Rows)
+	idx := make([]string, 0, len(r.NamesPerIndex))
+	for k := range r.NamesPerIndex {
+		idx = append(idx, k)
+	}
+	sort.Strings(idx)
+	sb.WriteString("names per index:")
+	for _, k := range idx {
+		fmt.Fprintf(&sb, " %s %d", k, r.NamesPerIndex[k])
+	}
+	sb.WriteString("\n\n" + r.Survivorship + "\n\n")
+
+	table := func(title string, rows []SignalStats) {
+		fmt.Fprintf(&sb, "=== %s ===\n", title)
+		fmt.Fprintf(&sb, "%-16s %7s %7s %7s %7s %7s %7s %7s %7s %8s %8s %7s\n",
+			"signal", "IC5", "tNW5", "IC10", "IR10", "tNW10", "IC15", "tNW15", "QS10%", "QS10net", "TopQnet", "tQS10")
+		for _, s := range rows {
+			fmt.Fprintf(&sb, "%-16s %7.3f %7.2f %7.3f %7.3f %7.2f %7.3f %7.2f %7.3f %8.3f %8.3f %7.2f\n",
+				s.Signal, s.IC[0], s.TNW[0], s.IC[1], s.IR[1], s.TNW[1], s.IC[2], s.TNW[2],
+				s.QS10Pct, s.QS10NetPct, s.Top10NetPct, s.TQS10)
+		}
+		sb.WriteString("\n")
+	}
+	for _, l := range []string{"all", "US", "EU", "Asia", "H1", "H2"} {
+		table("benchmark-excess, "+l, r.Signals[l])
+	}
+	table("beta-adjusted excess (C4), all", r.BetaAdjusted["all"])
+	sb.WriteString(r.CostNote + "\n\n")
+
+	b := r.Barrier
+	fmt.Fprintf(&sb, "=== Barrier study: top-%d |composite| per index per week, next-open entry, H=%d, 30bp ===\n", picksPerIndex, barrierHorizon)
+	fmt.Fprintf(&sb, "trades %d (longs %d)\n", b.Trades, b.Longs)
+	fmt.Fprintf(&sb, "%-32s %8s %8s %8s %8s %8s %6s %6s %6s %6s\n", "exit rule", "all%", "H1%", "H2%", "long%", "short%", "hit", "stop", "tgt", "time")
+	for _, a := range b.Arms {
+		fmt.Fprintf(&sb, "%-32s %8.3f %8.3f %8.3f %8.3f %8.3f %6.3f %6.3f %6.3f %6.3f\n", a.Rule.Label,
+			a.All.MeanPct, a.H1.MeanPct, a.H2.MeanPct, a.Long.MeanPct, a.Short.MeanPct,
+			a.All.Hit, a.All.StopShare, a.All.TgtShare, a.All.TimeShare)
+	}
+	fmt.Fprintf(&sb, "same picks, 15-session directional benchmark excess (gross): %.3f%% (long %.3f%%, short %.3f%%)\n\n",
+		b.XS15GrossPct, b.XS15LongGrossPct, b.XS15ShortGrossPct)
+
+	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run; bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
+	for _, t := range r.Preregistered {
+		if t.Status != "run" {
+			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)
+			continue
+		}
+		fmt.Fprintf(&sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
+			t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
+			t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
+	}
+	if len(r.Unavailable) > 0 {
+		fmt.Fprintf(&sb, "\n%d symbol(s) unavailable: %s\n", len(r.Unavailable), strings.Join(r.Unavailable, "; "))
+	}
+	return sb.String()
+}
