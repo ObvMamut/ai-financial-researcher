@@ -60,6 +60,46 @@ func TestAcceptanceManifestUsesResolvedSettingsWithoutDispatch(t *testing.T) {
 	}
 }
 
+func TestAcceptanceManifestTakesTheSameEngineFlagsAsRun(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "custom.md"), []byte("custom persona"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := config.Settings{AgentsDir: dir, ResearchMode: "legacy", ChiefEngine: "claude", Binaries: map[model.CLI]string{model.CLIClaude: "/must-not-run"}}
+
+	s := base
+	var b bytes.Buffer
+	if err := writeAcceptanceManifest(&s, []string{"--research-mode", "thesis"}, &b, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var m acceptanceManifest
+	if err := json.Unmarshal(b.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Configuration["research_mode"] != "thesis" {
+		t.Fatalf("manifest records %v, not the flag's thesis", m.Configuration["research_mode"])
+	}
+
+	key := "m3v8r2t6-fallback-fixture-key"
+	redact.Register(key)
+	s = base
+	s.ChiefFallback = model.APIConfig{BaseURL: "https://fallback.example.test", Model: "fixture-fallback", APIKey: key}
+	err := writeAcceptanceManifest(&s, []string{"--chief-engine", "api"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "chief_api") {
+		t.Fatalf("--chief-engine api without [chief_api] must name chief_api: %v", err)
+	}
+	if strings.Contains(err.Error(), key) {
+		t.Fatal("credential leaked into the error")
+	}
+
+	for _, args := range [][]string{{"--research-mode", "hybrid"}, {"--chief-engine", "gpt"}} {
+		s = base
+		if err := writeAcceptanceManifest(&s, args, io.Discard, io.Discard); err == nil {
+			t.Fatalf("%v accepted", args)
+		}
+	}
+}
+
 func TestManifestGateFindsEscapedCredentialsAndPrefixes(t *testing.T) {
 	secret := "j9x3q5v7-escaped-\"credential\\value"
 	redact.Register(secret)

@@ -61,12 +61,30 @@ func writeAcceptanceManifest(s *config.Settings, args []string, out, diagnostics
 	fs.SetOutput(diagnostics)
 	indices := fs.String("indices", "", "intended index selection, comma separated")
 	ticker := fs.String("ticker", "", "intended single-stock case")
+	defaultMode := s.ResearchMode
+	if defaultMode == "" {
+		defaultMode = "legacy" // config.Load's own default for an omitted key
+	}
+	researchMode := fs.String("research-mode", defaultMode, "research mode: legacy or thesis")
+	chiefEngine := fs.String("chief-engine", s.ChiefEngine, "chief analyst engine: claude or api")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments")
 	}
+	// Same flags and checks as `cfr run`, so a manifest describes the run it
+	// precedes rather than the file-level defaults that run overrides.
+	if *researchMode != "legacy" && *researchMode != "thesis" {
+		return fmt.Errorf("research-mode must be legacy or thesis")
+	}
+	settingsCopy := *s
+	settingsCopy.ResearchMode = *researchMode
+	settingsCopy.ChiefEngine = *chiefEngine
+	if err := settingsCopy.ValidateChiefEngine(); err != nil {
+		return fmt.Errorf("%s", redact.String(err.Error()))
+	}
+	s = &settingsCopy
 	req := model.RunRequest{Mode: model.ModeIndependent}
 	if *ticker != "" {
 		req.Mode, req.Ticker = model.ModeSingle, strings.ToUpper(*ticker)
