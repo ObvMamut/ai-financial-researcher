@@ -94,7 +94,7 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
 
 ```
 cmd/cfr/        entry point + subcommands: bare = TUI, `run` (headless), `scoreboard`,
-                `postmortem`
+                `postmortem`, `backtest`
 internal/
   tui/          Bubble Tea screens: app (router), home, run (status), results,
                 history, reports, scoreboard
@@ -143,6 +143,10 @@ internal/
                 attribution.go counts the record by setup/coverage/consensus/sector/
                 fill and postmortem.go enforces the lessons an agent draws from it
                 against those counts
+  backtest/     the lab (`cfr backtest`): point-in-time weekly replay of the
+                pre-screen over every constituent with the shipping quant/scoring
+                code, no models; rank ICs, barrier grid and the pre-registered
+                signal tests; spec and results in docs/workflow/backtest.md
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -321,6 +325,7 @@ go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
 go run ./cmd/cfr scoreboard --control              # shipped vs the composite alone vs the shortlist
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
+go run ./cmd/cfr backtest                          # point-in-time pre-screen replay (keyless Yahoo, no models)
 go run ./cmd/cfr acceptance-manifest               # resolved configuration and hashes; no model or data requests
 ```
 
