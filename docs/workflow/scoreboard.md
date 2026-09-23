@@ -187,13 +187,20 @@ interval. The seed is fixed, so unchanged history prints an unchanged interval. 
 single-digit week counts this history has, a percentile bootstrap is optimistic — read a
 bound that barely clears zero as a reason to keep measuring, not as a result.
 
-### The success criterion (pre-registered 2026-09-23)
+### The success criterion (pre-registered 2026-09-23, corrected the same day)
 
-The model stages earn their cost when **the 10-session `shipped − composite` excess
-difference has a 95% interval that excludes zero, above it, with at least 60 independent
-shipped calls**. Until the composite arm is that deep, `shipped − shortlist` is the working
-proxy. This was written down before the comparison could be read, so that it cannot be
-chosen after seeing which window or arm looks best.
+A two-week edge of 50bp against ~6% idiosyncratic two-week volatility needs roughly **550
+independent calls** to show at t = 2 — years of five-idea runs. The live report is therefore
+a *monitoring* instrument, not a decision rule:
+
+- Mechanics and signals are adopted or dropped in the backtest lab (`cfr backtest`), which
+  has thousands of point-in-time observations.
+- Model stages are judged by shadow arms scored over the **whole shortlist and every thesis
+  lean**, not by the five shipped ideas, and only once their difference interval excludes
+  zero. `n ≥ 60` independent calls is the floor below which no arm difference is read at all.
+
+The standing comparison is still `shipped − composite` at 10 sessions, with
+`shipped − shortlist` as the proxy while the composite arm is thin.
 
 At registration (48 runs, 2026-06-01 → 2026-09-23) neither difference cleared it:
 `shipped − shortlist` was −0.86% [−1.98%, +0.28%] at 10 sessions and −0.73% [−1.66%, +0.24%]

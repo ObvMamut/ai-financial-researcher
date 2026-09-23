@@ -1,0 +1,335 @@
+THESIS-MODE FORENSICS — full details (2026-09-23)
+Scripts: load.py chal.py cat.py sim.py cost.py dos.py in this dir. Data: chal_recs.json (119 challenges w/ matched dossier), final_dossiers.json (92), leans.csv, sim_final.json, cost_rows.json, mi.txt/cr.txt (raw issues), *.cats.json (issues grouped by category).
+
+== 1. Category counts (regex, first-match primary; 'any' = multi-label). Precision spot-check ~70-80%.
+
+== mi.txt 781
+   7 primary    7 any  TA/chart levels used
+  22 primary   22 any  Pipeline artifact (tool strings, compaction, schema, hash)
+  33 primary   34 any  Execution plan / target_claim_ids / entry-condition form
+  60 primary   62 any  Earnings/event date or release time unverified (3rd-party calendar)
+  53 primary   59 any  Analyst target / annual horizon vs 10-15 sessions
+  42 primary   49 any  Future / post-event prices unavailable
+ 142 primary  170 any  Quote/passage/attribution grounding
+  78 primary  151 any  Source stale / secondary / inaccessible
+  86 primary  137 any  Positioning/insider/flow misread
+  61 primary  148 any  Priced-in / expectations unprovable
+  82 primary  234 any  Mechanism / catalyst / transmission in window unevidenced
+  25 primary  199 any  Direction / opposite case / no-trade reasoning
+   8 primary   85 any  Unanswered/unrequested retrieval
+  82 primary    0 any  Other
+== cr.txt 195
+   2 primary    2 any  TA/chart levels used
+   3 primary    3 any  Pipeline artifact (tool strings, compaction, schema, hash)
+   0 primary    1 any  Execution plan / target_claim_ids / entry-condition form
+  21 primary   22 any  Earnings/event date or release time unverified (3rd-party calendar)
+  18 primary   19 any  Analyst target / annual horizon vs 10-15 sessions
+   4 primary    4 any  Future / post-event prices unavailable
+ 114 primary  143 any  Quote/passage/attribution grounding
+  12 primary   62 any  Source stale / secondary / inaccessible
+   9 primary   44 any  Positioning/insider/flow misread
+   6 primary   40 any  Priced-in / expectations unprovable
+   1 primary   42 any  Mechanism / catalyst / transmission in window unevidenced
+   0 primary   37 any  Direction / opposite case / no-trade reasoning
+   2 primary   34 any  Unanswered/unrequested retrieval
+   3 primary    0 any  Other
+
+
+-- examples from mi.txt.cats.json
+
+[Earnings/event date or release time unverified (3rd-party calendar)] n=60
+  - No dated near-term catalyst exists in the evidence for the next 10–15 sessions: no earnings date, no delivery/order announcement, no analyst day, no scheduled event; the two cited positives (Viking 13F, Luce auction) are 3 weeks stale.
+  - No dated near-term catalyst exists in the evidence for the 10–15 session window from 2026-09-07: no earnings date, no delivery or order announcement, no analyst day, and no scheduled company event; both cited positives (Viking 13F from 2026-08-20, Luce auction
+  - The 'next earnings' date (2026-09-30) is a scheduled event, but no scenario-specific estimate (revenue, EPS, or guidance expectations) is tied to it, so no catalyst hypothesis can be formed.
+  - The next earnings date (2026-09-30) is 23 days out, beyond the 10–15 session challenge window, and no pre-announcement date, guidance figure, or scenario-specific estimate (revenue, EPS, or margin) is connected to that date anywhere in the evidence.
+
+[Analyst target / annual horizon vs 10-15 sessions] n=53
+  - Negative momentum facts contradict the bounce setup: 5-day return -2.6%, 12-month -14%, skew -1.46, and a -16.7% worst day in the trailing year suggest distribution, not accumulation, despite the single $817M 13F buyer.
+  - The one bearish specific target — Seeking Alpha's $204 price target with 'impossible expectations' — conflicts directly with the Motley Fool headline promising the stock 'will skyrocket after Sept. 30'; no mechanism, methodology, or basis is provided for eithe
+  - The favorable evidence (beat-and-raise, target raises to $200-225) all concerns events on/around 2026-09-04; with run timestamp 2026-09-07, those catalysts are public and likely priced in; no evidence of market inefficiency remaining (price 169.80 vs $200+ tar
+  - The balance of valuation evidence is weak/adverse: P/S 8.3x on FY26 revenue ($3.35B), P/E not meaningful (diluted EPS -0.39); technical statistics include skew -3.08, worst-day -37.9%, maxDD126 -32.9%, and 21d momentum 0.25 — no evidence supports short-dated h
+
+[Other] n=82
+  - The Luce auction at $40M for 'Chassis 0' is a non-repeatable, charity-premium data point; the evidence does not show order data or demand for the standard ~$640k model, which is what would drive earnings.
+  - The previous dossier's invalidation condition — a decisive break below ~€353 — was approximately met at the 2026-09-04 close of €353.20, and with a 5-day decline of -2.6%, the stock is testing rather than rebounding from that level.
+  - The $40M Luce auction result is a non-repeatable, charity-premium data point for a single unique 'Chassis 0' unit; the evidence provides no order backlog, delivery timing, or production data for the standard ~$640,000 Luce model that would impact earnings.
+  - No candidate hypothesis is present; the dossier is empty, so there is no material claim to support or refute.
+
+[Positioning/insider/flow misread] n=86
+  - Options data shows no directional signal (325 contracts traded, neutral put/call OI 0.76); elevated IV of 36% implies uncertainty, not a specific expected catalyst; no support for a defined bounce target within 10–15 sessions.
+  - Options data gives no directional signal: only 325 contracts traded (far below the 2,000 significance threshold), put/call open interest of 0.76 falls in the neutral 0.45–2.00 band, and the 36% implied volatility reflects uncertainty without indicating a speci
+  - The previous dossier's unresolved issues — absence of a dateable catalyst, unknown cause of the 5-day decline (sector vs. idiosyncratic), and insufficient evidence quality — remain entirely unresolved by the new evidence, which adds only a low-volume options s
+  - The 'planned insider sales' and 'insider activity' are both deemed 'compensation calendar, not a view' by the provider's own computed signal, so they carry no informational value.
+
+[Source stale / secondary / inaccessible] n=78
+  - P/E and market cap are not computable from the stale share count (2020-12-31); valuation-based support arguments cannot be made from this evidence.
+  - P/E and market cap are not computable from the stale share count (184,747,890 as of 2020-12-31, 5.7 years stale), so valuation-based arguments cannot be made from this evidence.
+  - The SEC facts are stale (FY2025 as of 2025-08-28, retrieved Sep 2026); they cannot establish a current P/E or P/S basis for a Sept-2026 trade.
+  - SEC facts (revenue $37.38B, EPS $7.59, FY ending 2025-08-28) are 13 months stale relative to the run timestamp; they cannot serve as the basis for a current valuation analysis when the stock has moved dramatically (one headline says up 40% from July low, anoth
+
+[Unanswered/unrequested retrieval] n=8
+  - The full text of both Benzinga articles (ev-93cd6d9dace491182bdc, ev-792d7f543533fd023802) was not retrievable — 'document exceeds 2 MiB' — so the evidence base for those claims is partial and potentially incomplete.
+  - Full text of both key Benzinga articles (ev-93cd6d9dace491182bdc and ev-792d7f543533fd023802) could not be retrieved due to 'document exceeds 2 MiB' errors, leaving the evidence base for those claims partial — although the content summaries in ev-3ed4f99346987
+  - Prior unresolved issues (issuer mismatch, incomplete thesis, unavailable evidence ev-cdc3bbd9252b60bd330a, unanswered research requests) remain unresolved; retrieval diagnostics show four instances of 'unknown research request' and one JSON parsing error, conf
+  - Retrieval diagnostics indicate a JSON unmarshal error and unavailable news feed — data quality limitation, not a substantive finding.
+
+[TA/chart levels used] n=7
+  - Negative momentum facts contradict any bounce or mean-reversion thesis: 5-day return of -2.6%, 12-month momentum of -14%, price at 0.83 of 52-week high, negative skew of -1.46, and a -16.7% worst day in the trailing year collectively suggest distribution rathe
+  - The article's 'bottoming signs' claim is asserted but unsupported in the available text — no support/resistance levels, volume profile, or technical pattern specifics are provided to justify the inference.
+  - The dossier adopts chart-pattern language from Benzinga's non-TSM coverage (MACD, histogram, resistance/support) as a failure condition ('close materially below the short-term momentum regime'), which is not permitted selection logic.
+  - Chart-derived levels (resistance ~$444.50, support ~$405.50 in c7) cannot be used to select direction or construct the thesis and should be excluded from the analytical core.
+
+[Direction / opposite case / no-trade reasoning] n=25
+  - The prior dossier unresolved issues are still unresolved: dossier issuer mismatch, incomplete thesis, no grounded claims, and no cited source document. None of these were remedied by the new evidence block.
+  - The prior dossier's counterargument (section 'counterargument') notes the stock is down 53.3% over 12 months while trading at a P/E of 23.2x — this undermines the 'no trade' conclusion because it indicates the market is pricing a potential long-term impairment
+  - The market-cap figure of $66.75B (ev-c6e3d9ed61bf2640f899) versus annual revenue of $20.07B implies a P/S of 3.3x (ev-f87dc651e53ae79a13d6), which is not 'distressed' and leaves room for significant downside if the earnings miss is large or if the recall creat
+  - The class-action lawsuit claim (ev-cfbf3b97fe85da40d7bd) names Alibaba as defendant but provides no exposure amount, timeline, or materiality, so it cannot support a directional thesis.
+
+[Mechanism / catalyst / transmission in window unevidenced] n=82
+  - Mechanism for 10-15 sessions not evidenced: no source shows sales traction or ARR acceleration that would push price to $200-225; guidance is strong but provided on 2026-09-03; no evidence of a further positive catalyst occurring inside the window.
+  - No evidence describes the Sept 8 Canada retaliation actually occurring or its market/company impact — the key catalyst the prior dossier cited is unverified; the dossier projects an escalation that the evidence does not confirm.
+  - Event is outside the investment horizon: the summit is Sept 24, which is beyond the 10-15 session (ending ~Sept 25) window and could easily be after any trade decision made.
+  - Negative catalysts are contemporaneous and unquantified: the class-action lawsuit (ev-4b29e3ed076df15400b0) has negative sentiment (-0.44) with zero financial exposure estimate; margin pressure from AI investments is cited as a concern (ev-47daf9fc7b5fc0a8f142
+
+[Priced-in / expectations unprovable] n=61
+  - The counter-narrative (slower FY27 growth, AI-focused restructuring) is supported by headline evidence but details are incomplete. The potential for negative surprises from the restructuring, especially in a high-volatility environment (σ_daily 3.86%, IV 58.6%
+  - The record P/S (8.3x) and negative GAAP EPS (-$0.39) do not support a valuation thesis. The market cap of $27.69B implies high expectations for future growth, leaving little margin for error on the 'slower 2027 outlook' narrative.
+  - The thesis treats a 'binary' tariff risk as underappreciated, but the tariff is publicly known since Aug 24, the market already repriced Stellantis -3 to -4% on announcement day, and the effective date (Jan 1, 2027) is outside the 10-15 session window; there i
+  - No data confirms the 'still underappreciated' claim — the stock has already moved to 0.46x 52-week high, implying the market has already priced substantial bad news, not that it is underpricing a known risk.
+
+[Quote/passage/attribution grounding] n=142
+  - No company-specific financial quantification: no EPS, no tariff margin-exposure estimate, no Ram 1500 cost sheet, no management guidance — the thesis rests on an analyst quote about 'math getting worse' rather than any filed data.
+  - A previous passage request for FY27 outlook or copper guidance in the earnings article returned no results, confirming the evidence does not contain the outlook needed to validate the hypothesis.
+  - Previous requests for passages containing copper price outlook within the earnings and Wheaton articles were not resolved, leaving the near-term copper price direction unverified.
+  - Previous unresolved passage/issuer-role gaps for claims c2, c3, c9, and c10 cited to ev-e49fe8b250a1b5010643, ev-2e73d110ebfb7c7502b6, ev-72d373f472012a63bccd, ev-5967bd85163cb02d5475, and ev-5ca83c54c9d6fd518ecb have not been resolved by new evidence.
+
+[Future / post-event prices unavailable] n=42
+  - The 10-15 session window requires the catalyst (crash) to be priced into a stock with no post-crash price data; the expected move is speculative, not supported.
+  - No post-crash price data: The evidence base ends on 2026-09-04, but the crash occurred on 2026-09-06; there is no observation of the market's reaction, so any claim about mispricing is unfalsifiable.
+  - The $10.2B equity placement's dilutive impact on share count and EPS is not quantified; the shares-outstanding figure (1,858,037,427) is dated 2026-03-31, before the placement, so no post-placement share count is available.
+  - No post-event price data exists for any of the cited news items (all publication times are before or on 2026-09-09, with no subsequent trading session), so the market's reaction to the insider buys, equity-raise concerns, or security scrutiny cannot be measure
+
+[Pipeline artifact (tool strings, compaction, schema, hash)] n=22
+  - The dossier's preferred_direction is NONE and status is watchlist, but the required output schema admits only supported / revise / reject and has no watchlist status, no preferred-direction field and no missing array; the dossier as written cannot be mapped on
+  - The compaction preserved the counterarguments (short is circumstantial, long lacks an in-window catalyst, price is mid-de-rating), so the loss is not of qualifications but of evidential grounding for c4 and c11.
+  - Neutral option positioning (c8) is used as a reason neither side works; the schema warns that neutral positioning is an abstention, not adverse evidence — the no-trade conclusion needs the transmission gap, not positioning neutrality, and it has that gap.
+  - Neutral option positioning (c8) is used as a reason neither side works; the schema warns neutral positioning is an abstention, not adverse evidence — the no-trade conclusion needs the transmission gap (it has that) rather than positioning neutrality.
+
+[Execution plan / target_claim_ids / entry-condition form] n=33
+  - No post-Sept-15-2026 price data exists, so the entry conditions requiring 'above-average volume' or 'on volume' cannot be evaluated and should be replaced with an awaiting-prices watchlist condition.
+  - Entry condition 2 ('A Form 4 showing an open-market purchase...') is a future contingency, not present evidence; it does not resolve any missing source, attribution, expectation or numerical comparison, but it also means the stated long mechanism cannot fire f
+  - Entry conditions 1 and 2 are future contingencies (issuer confirmation, new open-market insider purchase) that resolve nothing in the current evidence; they remain conditions, not resolutions.
+  - No quantified forward EPS, target price or cash-flow estimate from any named source appears in the evidence set, so 'NONE' is a defensible stance but the dossier should say plainly that no directional numeric target can be validated and therefore no target_cla
+
+-- examples from cr.txt.cats.json
+
+[Quote/passage/attribution grounding] n=114
+  - disputed/disputed :: The 'most new EUV orders are for 2028 delivery' line is JPMorgan after meeting ASML's CFO, reported via Reuters then press — a broker inference, not an ASML order-book disclosure, and it collapses the distinction between order and slot int
+  - disputed/confirmed :: P/E not computable is stated by ev-a7c1a5e458174c3b4448. But shares outstanding 385,417,665 is dated 2025-12-31 (ev-cf10f6a1a3cfcbbda9fe), so the $613.57B market cap mixes a stale share count with the 2026-09-15 close and an FX rate; the 
+  - disputed/disputed :: The 'most new EUV orders are for 2028 delivery' line is JPMorgan after meeting ASML's CFO, reported via Reuters then press — broker inference, not an ASML order-book disclosure. The requested passage ev-60d4e2a0b43fbb7e49b1 returned no boo
+  - unresolved/confirmed :: Fitch A+ Stable is ev-6b0a439e6aeec9d927b4 (rating agency); the Eindhoven campus item is on the issuer index ev-ccac0a56e3b99b7f74dd. The Japan 500-to-700 by 2030 item (ev-c0de15eefdac9ecccd55) lacks a quoted passage in the dossier's un
+
+[Analyst target / annual horizon vs 10-15 sessions] n=18
+  - disputed/confirmed :: Targets and ratings are correctly attributed to Bernstein (EUR 2500), UBS (EUR 2350) and Berenberg (EUR 2100). But they are 12-month objects and cannot anchor a 10-15 session thesis; and the UBS citation ev-30b60ab3f57966fdfb57 has no quo
+  - disputed/disputed :: ev-bf242a254a083cda334c is a US-line (NASDAQ ASML) annualized IV at the 1590 strike with spot 1593.97; ev-b2e2933d7ece0aadbdcf is the Amsterdam-listed daily sigma. Comparing a US-line annualized IV to a EUR-listed sigma and to EUR targets 
+  - disputed/confirmed :: Targets correctly attributed to Bernstein (EUR 2500), UBS (EUR 2350), Berenberg (EUR 2100). All Buy but 12-month objects, not forecasts for a 10-15 session window; the UBS citation ev-30b60ab3f57966fdfb57 has no quoted passage or issuer r
+  - disputed/disputed :: ev-bf242a254a083cda334c is a US-line (NASDAQ ASML) annualized IV at the 1590 strike with spot 1593.97; ev-b2e2933d7ece0aadbdcf is the Amsterdam-listed daily sigma. Comparing US-line annualized IV to EUR-listed sigma and EUR targets is a ve
+
+[Source stale / secondary / inaccessible] n=12
+  - disputed/disputed :: ev-7fadeed58d7a7d6b4389 confirms the Amodei essay (third-party opinion). The -5.2% Monday move and the Polymarket 13% vs 11% number sit in ev-538865e486247fdd8b71/ev-60d4e2a0b43fbb7e49b1, which are press narratives. Causation from an opini
+  - disputed/disputed :: ev-7fadeed58d7a7d6b4389 confirms the Amodei essay (third-party opinion). The -5.2% Monday move and Polymarket 13% vs 11% sit in ev-538865e486247fdd8b71/ev-60d4e2a0b43fbb7e49b1, press narratives. Causation from an opinion essay to ASML's or
+  - unresolved/unresolved :: The inference requires the $3.7B buyback to be authorized and executed at a smooth pace. Neither is established by supplied evidence; the dossier correctly flags this but does not request the missing primary source.
+  - disputed/unresolved :: RPO growth (30%) versus product revenue growth (37%) is not numerically comparable: RPO is a bookings/backlog concept that includes duration and mix effects, not a like-for-like forward growth rate against current-period recognized reven
+
+[Pipeline artifact (tool strings, compaction, schema, hash)] n=3
+  - disputed/confirmed :: The positioning statistics (put/call OI 1.30, $715.21M calls vs $541.33M puts) are correctly attributed as computed option statistics. The inference that neutral positioning 'cannot support either' case is an abstention, not adverse evide
+  - unsupported/confirmed :: Wait — the schema allows only supported/disputed/unresolved. ev-b48b43fb2231d2f24bca gives 2026-10-14 from an earnings calendar with no release time, so no earnings-reaction window can be dated. Reviewing it as unresolved: the date is 
+  - disputed/confirmed :: Put/call OI 1.30 and $715.21M calls vs $541.33M puts are correctly attributed as computed option statistics. The inference 'neutral cannot support either case' is an abstention, not adverse evidence against a direction — the schema warns 
+
+[Earnings/event date or release time unverified (3rd-party calendar)] n=21
+  - unresolved/confirmed :: ev-b48b43fb2231d2f24bca gives 2026-10-14 from an earnings calendar with no release time, so no earnings-reaction window can be dated; the date is confirmed, the time is not.
+  - disputed/confirmed :: ev-4b285f7a3c07e53d2b4d lists 2026/09/10 August Revenue Report and 2026/09/08 ASML/TSMC High NA EUV initiative, and the claim's head is correct. But the claim also asserts 'no scheduled investor event listed before the next earnings relea
+  - disputed/confirmed :: The claim's head — that ev-4b285f7a3c07e53d2b4d lists 2026/09/10 August Revenue Report and 2026/09/08 ASML/TSMC High NA EUV as its newest dated items — is supported by the passage (quote: '2026/09/10 TSMC August 2026 Revenue Report 2026/0
+  - unresolved/unresolved :: The inference relies on the issuer's news index ending after the August 20, 2026 results entry (ev-950e87369a51f9c0047f). But the index is truncated at 600/1,163 characters of a longer page, and the supplied text explicitly lists an 'i
+
+[Unanswered/unrequested retrieval] n=2
+  - supported/unresolved :: The $3.7B buyback and AI guidance hike appear only as a headline (ev-2744a43ff532850809e8) dated 2026-09-15; no issuer release in the supplied evidence confirms size, authorization date, or execution. The dossier acknowledges this but d
+  - disputed/disputed :: The supplied spans for ev-b2dfc881c137755442cf and ev-47e18488c4eb705e64dc confirm only: BNP maintained a $265 forecast, expects revenue reacceleration beginning in Q3, Salesforce kept its fiscal 2030 revenue outlook at $63 billion, and th
+
+[Positioning/insider/flow misread] n=9
+  - disputed/unresolved :: ev-7de5b69255efc5722982 supports the 0-buy vs 9-sale ($61.99M) tally. ev-457c2d44ad520736231e describes a Form 144 proposal ($12.36M, no 10b5-1, 'to be sold from 2026-08-05') and ev-ad2aabe3277d2d6c2966 lists 5 proposed sales ($49.47M sc
+  - disputed/unresolved :: ev-f65a9fd1009ee3a95d6c shows only 'Schmid Timothy (EVP, WW Chair, MedTech) sold 22527 sh @ 274.74 = $6.19M' — the '~47% of holding' is a computed characterization visible only in ev-02f0ca58d1a273aeb9d9/ev-d1c093f3fd9bda326697, and neit
+  - disputed/unresolved :: ev-c6062128259f94774f4a says '13 open-market buys ($54k) vs 0 sales ($0) across 12 filing(s) in 45 days' — the claim says '13 open-market buys... across 12 filings', matching one reading, but the pattern is also consistent with 12 filing
+  - disputed/unresolved :: ev-2e469b31c2f635bf2988 says 26.7% annualized at 450.00 strike, spot 450.27, US line TSM. That is a US-listed option figure on a different price scale (USD ~450) than the TW close (TWD 2500). The claim compares 26.7% IV to the TW line's 
+
+[Future / post-event prices unavailable] n=4
+  - disputed/confirmed :: The inference that refinancing skepticism is 'at least partly reflected' rests on the 4.1% move attributed to that cluster by a secondary summary. No pre/post-event price series, volume, or abnormal return over a matching window is provid
+  - disputed/confirmed :: The consensus and target figures are quoted. The dated framing is inadequate: Freedom (Sept. 14, cut to $205), Argus (Sept. 14, $225), Stifel (Sept. 11, cut to $200) predate the Q1 FY27 print (Sept. 23), and the Buy/$249.64 aggregate is n
+  - disputed/unresolved :: The inference 'a durable directional move requires an estimate-revision flow that is not yet evidenced' converts the absence of dated sell-side model content in a bounded pull into positive evidence of absence. The supplied evidence cont
+  - unresolved/unresolved :: ev-b3ba49467dbf75eeb61c (republication timestamp) and ev-e4a4671db5159f106d66 (no post-release session, AI beta 2.06) are both quoted, so the two connective premises are fine. The conclusion 'no abnormal return should be asserted from 
+
+[Priced-in / expectations unprovable] n=6
+  - unresolved/unresolved :: ev-2a714396d20043e0342e documents the gap from $10.94 to $10.56 and the positive consensus in the same piece, which supports the negative half of the claim (that Nokia-specific fundamental deterioration is not evidenced). But no suppli
+  - unresolved/unresolved :: ev-2a714396d20043e0342e documents the gap from $10.94 to $10.56 and the positive consensus in the same piece, supporting the negative half (Nokia-specific fundamental deterioration is not evidenced). No supplied source names a cause, a
+  - disputed/confirmed :: The 9.8% decline and $394.56 close are supported. However, the 'worst single-day loss since October 2000' phrasing in the body conflicts with the URL slug referencing 2016; the claim restates the body without flagging the conflict. Also, 
+  - disputed/disputed :: The claim moves from 'the China order is described as nearing finalization' to 'the anticipation is already reflected in price' without any evidence of consensus backlog or order-credit assumptions for the 200-jet item, and likewise assert
+
+[TA/chart levels used] n=2
+  - disputed/confirmed :: The consensus/target figures are quoted, but attribution to 'as of 2026-09-23' conflates a stale pre-print consensus with a post-print reaction. The cuts at Freedom ($205), Argus ($225) and Stifel ($200) predate or coincide with the print
+  - disputed/disputed :: Two problems. First, quotes exist for 'ORCL trades about 8.4% below its 100-day SMA of $161.97 and 10.5% below its 200-day SMA of $165.70. Meanwhile, the relative strength index stands at 51.49' and 'Buy consensus rating and an average pri
+
+[Mechanism / catalyst / transmission in window unevidenced] n=1
+  - disputed/disputed :: The inference that neither long nor short has an evidenced in-window trigger does not follow from the cited evidence as a whole. The long case has a dated, issuer-sourced print and non-decelerating guidance (c1-c4, x1) plus 0.46 price/52-w
+
+[Other] n=3
+  - disputed/confirmed :: ev-d55f46fabef28b124899 supports the JPY1tn/$6.4bn/yr from 2028 cost estimate and the ~400,000 robots including humanoid and non-humanoid units across Toyota, group companies and major suppliers. ev-e5de879d14e4b4044b17 instead says up to
+  - disputed/confirmed :: The product launch is confirmed by ev-3b5981d47b3aa6dad48f and ev-0b27ed3a0a8741e42215 (24% area, 18% power, Honda R&D evaluation). Disputed only in wording: the claim does not distinguish 'announced' from 'shipped/ordered', and there is 
+  - disputed/disputed :: ev-f4bcdfa1c55b2214f658 supports the $2.6bn quarterly gain and Benioff's stated intent to repay ASR debt from a future Anthropic sale; ev-a322fb728c6ea0480a5b supports the ~103mn share retirement. The 'no calendar was given' qualification 
+
+== 3. Gate simulation
+all challenges assessment-only 119 {'has': 79, 'nodisp': 21, 'A_union': 16, 'A_union3': 18, 'A_first3': 19} A_union3 dirs {'NONE': 18}
+all challenges attr-strict 119 {'has': 79, 'nodisp': 20, 'A_union': 15, 'A_union3': 17, 'A_first3': 18} A_union3 dirs {'NONE': 17}
+final per run-ticker assessment-only 68 {'has': 46, 'nodisp': 14, 'A_union': 11, 'A_union3': 12, 'A_first3': 13} A_union3 dirs {'NONE': 12}
+final per run-ticker attr-strict 68 {'has': 46, 'nodisp': 14, 'A_union': 11, 'A_union3': 12, 'A_first3': 13} A_union3 dirs {'NONE': 12}
+union size Counter({0: 21, 5: 14, 3: 9, 4: 8, 6: 7, 2: 4, 8: 3, 7: 2})
+final challenges w/ issues 67 all-unsatisfiable 1 any-unsat 65
+44 Quote/passage/attribution grounding
+35 Mechanism / catalyst / transmission in window unevidenced
+33 Positioning/insider/flow misread
+32 Source stale / secondary / inaccessible
+31 Earnings/event date or release time unverified (3rd-party calendar)
+29 Other
+29 Analyst target / annual horizon vs 10-15 sessions
+28 Priced-in / expectations unprovable
+24 Future / post-event prices unavailable
+16 Execution plan / target_claim_ids / entry-condition form
+15 Direction / opposite case / no-trade reasoning
+11 Pipeline artifact (tool strings, compaction, schema, hash)
+6 Unanswered/unrequested retrieval
+5 TA/chart levels used
+
+
+== 4. Cost
+nometa /home/mamut/all/programming/claude-financial-researcher/runs/2026-09-09T19-34-00
+nometa /home/mamut/all/programming/claude-financial-researcher/runs/2026-09-23T15-31-25
+nometa /home/mamut/all/programming/claude-financial-researcher/runs/2026-09-23T16-41-31
+{'run': '2026-09-07T05-53-00', 'tokens': 0, 'dur_s': 648, 'calls': 65, 'domain_not_done': 0, 'researched': 0, 'shortlist': 0, 'compacted': 0, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': None, 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('event-discovery', 0), ('thesis-triage', 0), ('macro', 0)]}
+{'run': '2026-09-10T06-49-03', 'tokens': 2187294, 'dur_s': 727, 'calls': 65, 'domain_not_done': 11, 'researched': 10, 'shortlist': 12, 'compacted': 0, 'contract_other': 0, 'transport_or_parse_bad': 9, 'chief': None, 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-2', 481879), ('challenger', 366530), ('research-1', 354933)]}
+{'run': '2026-09-13T11-30-16', 'tokens': 341715, 'dur_s': 239, 'calls': 20, 'domain_not_done': 2, 'researched': 12, 'shortlist': 12, 'compacted': 0, 'contract_other': 0, 'transport_or_parse_bad': 12, 'chief': None, 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-1', 255552), ('event-discovery', 47252), ('thesis-triage', 23587)]}
+{'run': '2026-09-15T17-00-30', 'tokens': 1197542, 'dur_s': 428, 'calls': 59, 'domain_not_done': 10, 'researched': 12, 'shortlist': 12, 'compacted': 11, 'contract_other': 6, 'transport_or_parse_bad': 4, 'chief': None, 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-1', 268077), ('challenger', 231469), ('research-2', 201227)]}
+{'run': '2026-09-23T14-22-22', 'tokens': 164049, 'dur_s': 154, 'calls': 8, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 0, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 49048), ('revision', 29603), ('research-3', 25848)]}
+{'run': '2026-09-23T14-25-54', 'tokens': 38211, 'dur_s': 65, 'calls': 3, 'domain_not_done': 1, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 1, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-1', 17939), ('compaction', 16594), ('macro', 3678)]}
+{'run': '2026-09-23T14-42-49', 'tokens': 120845, 'dur_s': 128, 'calls': 7, 'domain_not_done': 1, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 1, 'transport_or_parse_bad': 1, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('revision', 26232), ('research-2', 23091), ('challenger', 18484)]}
+{'run': '2026-09-23T15-15-23', 'tokens': 132254, 'dur_s': 378, 'calls': 7, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 42170), ('compaction', 31670), ('revision', 26172)]}
+{'run': '2026-09-23T15-22-09', 'tokens': 170921, 'dur_s': 203, 'calls': 8, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 55111), ('revision', 32615), ('research-2', 29583)]}
+{'run': '2026-09-23T15-25-44', 'tokens': 81809, 'dur_s': 237, 'calls': 5, 'domain_not_done': 1, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 1, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-3', 29363), ('research-2', 27616), ('research-1', 21155)]}
+{'run': '2026-09-23T15-50-35', 'tokens': 88791, 'dur_s': 89, 'calls': 5, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 0, 'contract_other': 1, 'transport_or_parse_bad': 1, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-2', 25815), ('challenger', 23668), ('research-1', 21213)]}
+{'run': '2026-09-23T15-54-10', 'tokens': 41384, 'dur_s': 99, 'calls': 3, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 1, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-1', 22663), ('compaction', 15086), ('macro', 3635)]}
+{'run': '2026-09-23T15-58-13', 'tokens': 163173, 'dur_s': 256, 'calls': 8, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'complete', 'ideas': None, 'top': [('challenger', 57694), ('revision', 34668), ('compaction', 30595)]}
+{'run': '2026-09-23T16-02-48', 'tokens': 28513, 'dur_s': 65, 'calls': 2, 'domain_not_done': 1, 'researched': 1, 'shortlist': 1, 'compacted': 0, 'contract_other': 0, 'transport_or_parse_bad': 1, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('research-1', 24734), ('macro', 3779)]}
+{'run': '2026-09-23T16-06-06', 'tokens': 171170, 'dur_s': 205, 'calls': 8, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 1, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 56287), ('revision', 32479), ('research-2', 26002)]}
+{'run': '2026-09-23T16-09-49', 'tokens': 86497, 'dur_s': 83, 'calls': 6, 'domain_not_done': 0, 'researched': 1, 'shortlist': 1, 'compacted': 0, 'contract_other': 0, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 35666), ('revision', 22231), ('research-1', 14566)]}
+{'run': '2026-09-23T16-11-33', 'tokens': 1281163, 'dur_s': 609, 'calls': 56, 'domain_not_done': 0, 'researched': 10, 'shortlist': 12, 'compacted': 6, 'contract_other': 4, 'transport_or_parse_bad': 0, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 393805), ('revision', 248666), ('research-1', 220038)]}
+{'run': '2026-09-23T16-22-19', 'tokens': 1274019, 'dur_s': 903, 'calls': 54, 'domain_not_done': 1, 'researched': 10, 'shortlist': 12, 'compacted': 7, 'contract_other': 6, 'transport_or_parse_bad': 2, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('challenger', 280330), ('compaction', 240638), ('research-1', 211729)]}
+{'run': '2026-09-23T17-02-22', 'tokens': 1885717, 'dur_s': 1138, 'calls': 71, 'domain_not_done': 4, 'researched': 10, 'shortlist': 12, 'compacted': 9, 'contract_other': 4, 'transport_or_parse_bad': 1, 'chief': 'deepseek-v4-pro', 'cheap': 'deepseek-chat', 'outcome': 'degraded', 'ideas': None, 'top': [('compaction', 456397), ('challenger', 390920), ('revision', 262918)]}
+STAGE TOTALS [('challenger', 2001182), ('research-1', 1770006), ('revision', 1395822), ('research-2', 1351291), ('compaction', 1130081), ('research-3', 540155), ('event-discovery', 402841), ('chief-analyst-fallback', 323858), ('chief-analyst', 234936), ('thesis-triage', 140383), ('schema-repair', 95829), ('macro', 68683)]
+outcomes Counter({('ok', 'ok'): 45, ('failed', 'failed'): 14, ('ok', 'failed'): 13, ('not_run', 'not_run'): 8, ('ok', 'repaired'): 4})
+contract Counter({None: 31, 'failed': 25, 'compacted': 20, 'ok': 8})
+decision Counter({'watchlist': 78, 'rejected': 6})
+review Counter({'unavailable': 47, 'revise': 23, 'not_run': 8, 'reject': 6})
+
+
+== 2. Leans: see leans.csv (lean read from long_case/short_case/no_trade_case/hypothesis of the final dossier per run×ticker; clear = one case explicitly says the other side is unsupported/thin and the hypothesis leans; weak = asymmetric evidence but dossier calls it balanced).
+run,ticker,run_date,lean,dossier_file_key,status
+2026-09-09T19-34-00,STLAM.MI,2026-09-09,SELL (weak),revision,watchlist
+2026-09-09T19-34-00,BSX,2026-09-09,none evident,round-3,watchlist
+2026-09-09T19-34-00,9988.HK,2026-09-09,none evident,revision,watchlist
+2026-09-09T19-34-00,QCOM,2026-09-09,BUY (clear),round-3,watchlist
+2026-09-09T19-34-00,BKNG,2026-09-09,BUY (weak),round-1,watchlist
+2026-09-09T19-34-00,2330.TW,2026-09-09,BUY (weak),revision,rejected
+2026-09-10T06-49-03,ASML.AS,2026-09-10,BUY (clear),round-1,watchlist
+2026-09-10T06-49-03,NOKIA.HE,2026-09-10,none evident,round-2,watchlist
+2026-09-10T06-49-03,TTE.PA,2026-09-10,BUY (weak),round-1,watchlist
+2026-09-10T06-49-03,GE,2026-09-10,none evident,round-3,watchlist
+2026-09-10T06-49-03,BSX,2026-09-10,none evident,round-1,watchlist
+2026-09-10T06-49-03,QCOM,2026-09-10,none evident,round-3,watchlist
+2026-09-10T06-49-03,BHP.AX,2026-09-10,none evident,revision,rejected
+2026-09-10T06-49-03,NET,2026-09-10,none evident,round-1,watchlist
+2026-09-10T06-49-03,9988.HK,2026-09-10,BUY (weak),round-1,watchlist
+2026-09-10T06-49-03,2330.TW,2026-09-10,BUY (weak),round-2,watchlist
+2026-09-13T11-30-16,TTE.PA,2026-09-13,BUY (weak),round-1,watchlist
+2026-09-13T11-30-16,SNOW,2026-09-13,SELL (weak),round-1,watchlist
+2026-09-13T11-30-16,MU,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,TTD,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,SAN.PA,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,ORCL,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,BAC,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,2330.TW,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,9988.HK,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,REGN,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,TSLA,2026-09-13,none evident,round-1,watchlist
+2026-09-13T11-30-16,ABBV,2026-09-13,none evident,round-1,watchlist
+2026-09-15T17-00-30,ASML.AS,2026-09-15,none evident,revision,rejected
+2026-09-15T17-00-30,OKTA,2026-09-15,SELL (weak),round-3,watchlist
+2026-09-15T17-00-30,NOKIA.HE,2026-09-15,none evident,round-2,watchlist
+2026-09-15T17-00-30,BAC,2026-09-15,none evident,round-2,watchlist
+2026-09-15T17-00-30,TTE.PA,2026-09-15,BUY (weak),revision,watchlist
+2026-09-15T17-00-30,SNOW,2026-09-15,SELL (weak),round-1,watchlist
+2026-09-15T17-00-30,LLY,2026-09-15,BUY (weak),round-2,watchlist
+2026-09-15T17-00-30,REGN,2026-09-15,BUY (weak),round-1,watchlist
+2026-09-15T17-00-30,TTD,2026-09-15,none evident,round-1,watchlist
+2026-09-15T17-00-30,ORCL,2026-09-15,none evident,revision,watchlist
+2026-09-15T17-00-30,JNJ,2026-09-15,none evident,revision,watchlist
+2026-09-15T17-00-30,9988.HK,2026-09-15,none evident,round-1,watchlist
+2026-09-23T14-22-22,ASML.AS,2026-09-23,BUY (weak),revision,watchlist
+2026-09-23T14-25-54,STLAM.MI,2026-09-23,SELL (clear),round-1,watchlist
+2026-09-23T14-42-49,STLAM.MI,2026-09-23,SELL (weak),revision,watchlist
+2026-09-23T15-15-23,STLAM.MI,2026-09-23,SELL (clear),revision-compacted,watchlist
+2026-09-23T15-22-09,NOKIA.HE,2026-09-23,BUY (weak),revision,watchlist
+2026-09-23T15-25-44,2330.TW,2026-09-23,BUY (weak),round-3,watchlist
+2026-09-23T15-31-25,2330.TW,2026-09-23,none evident,revision,watchlist
+2026-09-23T15-50-35,2330.TW,2026-09-23,none evident,round-2-schema-repair,watchlist
+2026-09-23T15-54-10,2330.TW,2026-09-23,BUY (clear),round-1-compacted,watchlist
+2026-09-23T15-58-13,2330.TW,2026-09-23,BUY (weak),revision-compacted,watchlist
+2026-09-23T16-06-06,9988.HK,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-09-49,BHP.AX,2026-09-23,none evident,revision,rejected
+2026-09-23T16-11-33,MRVL,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-11-33,CRM,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-11-33,AMGN,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-11-33,6758.T,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-11-33,ENI.MI,2026-09-23,BUY (weak),revision-compacted,watchlist
+2026-09-23T16-11-33,TTE.PA,2026-09-23,BUY (weak),round-1-compacted,watchlist
+2026-09-23T16-11-33,ORCL,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-11-33,BA,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-11-33,VRTX,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-11-33,OKTA,2026-09-23,SELL (weak),round-1-compacted,watchlist
+2026-09-23T16-22-19,CDNS,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-22-19,7203.T,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-22-19,ENI.MI,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-22-19,DBK.DE,2026-09-23,none evident,revision-compacted,rejected
+2026-09-23T16-22-19,ORCL,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-22-19,BA,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-22-19,VRTX,2026-09-23,none evident,revision,rejected
+2026-09-23T16-22-19,OKTA,2026-09-23,BUY (weak),round-1-compacted,watchlist
+2026-09-23T16-22-19,ON,2026-09-23,none evident,round-1,watchlist
+2026-09-23T16-22-19,6758.T,2026-09-23,none evident,round-1,watchlist
+2026-09-23T16-41-31,CDNS,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-41-31,7203.T,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-41-31,STLAM.MI,2026-09-23,SELL (clear),round-2,watchlist
+2026-09-23T16-41-31,BA,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-41-31,2412.TW,2026-09-23,BUY (weak),revision,watchlist
+2026-09-23T16-41-31,ENI.MI,2026-09-23,BUY (weak),revision-compacted,watchlist
+2026-09-23T16-41-31,ORCL,2026-09-23,none evident,revision,watchlist
+2026-09-23T16-41-31,NET,2026-09-23,SELL (weak),revision,watchlist
+2026-09-23T16-41-31,VRTX,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T16-41-31,ON,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T17-02-22,CRM,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T17-02-22,NET,2026-09-23,SELL (weak),revision-compacted,watchlist
+2026-09-23T17-02-22,STLAM.MI,2026-09-23,SELL (weak),revision,watchlist
+2026-09-23T17-02-22,OKTA,2026-09-23,none evident,revision,watchlist
+2026-09-23T17-02-22,ENI.MI,2026-09-23,BUY (clear),revision-compacted,watchlist
+2026-09-23T17-02-22,DBK.DE,2026-09-23,none evident,revision,watchlist
+2026-09-23T17-02-22,ON,2026-09-23,none evident,round-1,watchlist
+2026-09-23T17-02-22,ORCL,2026-09-23,none evident,revision,watchlist
+2026-09-23T17-02-22,BA,2026-09-23,none evident,revision-compacted,watchlist
+2026-09-23T17-02-22,VRTX,2026-09-23,none evident,round-2,watchlist
