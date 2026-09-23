@@ -491,12 +491,12 @@ is ignored. The spliced payload is then measured against the limit in Go and
 still passes the protected-field comparison. The call keeps the ordinary
 transient-retry budget (`retry`), not `synthesis_max_attempts`, because it has
 no fallback. `[chief_api] compaction_reasoning_effort` optionally sets the
-request's `reasoning_effort`: `adaptive` sends `high` when the narratives must
-shrink below half their size and `low` otherwise (measured on deepseek-v4-pro:
-`low` met a 0.58 cut in 64s but overshot a 0.35 cut by about 11%; `high` met
-both, taking up to 271s); a fixed `low`/`high`/`max` is sent as written, and the
-default sends none. The effort used is recorded on the compaction's
-`allowance.reasoning_effort`.
+request's `reasoning_effort` (`low`, `high` or `max`; the default sends none).
+Measured on deepseek-v4-pro, `high` delivered −19% to +2% of the per-field
+budgets in 81–271s, and `low` delivered +1% to +12% in about 60s whatever the
+cut depth, so a `low` call is told 85% of each field's allowance; the real
+allowance still decides feasibility and the final size check. The effort used
+is recorded on the compaction's `allowance.reasoning_effort`.
 Feasibility is a measured, per-company verdict, not a guarantee — some
 oversized dossiers remain infeasible after this change, and that is a correct
 answer, not a regression. Protected wire fields (including unknown extensions),

@@ -270,8 +270,8 @@ type fileFormat struct {
 		APIKey    string `toml:"api_key"`
 		MaxTokens int    `toml:"max_tokens"`
 		// CompactionReasoningEffort sets reasoning_effort on dossier
-		// compaction calls: "adaptive" (low for shallow cuts, high for deep
-		// ones), a fixed "low" / "high" / "max", or "" to send none.
+		// compaction calls: "low" (told 85% budgets to absorb its measured
+		// overshoot), "high", "max", or "" to send none.
 		CompactionReasoningEffort string `toml:"compaction_reasoning_effort"`
 	} `toml:"chief_api"`
 
@@ -358,9 +358,9 @@ func (s *Settings) ValidateChiefEngine() error {
 		s.ChiefEngine = "claude"
 	}
 	switch s.ChiefAPI.CompactionEffort {
-	case "", "adaptive", "low", "high", "max":
+	case "", "low", "high", "max":
 	default:
-		return fmt.Errorf(`chief_api.compaction_reasoning_effort must be "", "adaptive", "low", "high" or "max"`)
+		return fmt.Errorf(`chief_api.compaction_reasoning_effort must be "", "low", "high" or "max"`)
 	}
 	switch s.ChiefEngine {
 	case "claude":

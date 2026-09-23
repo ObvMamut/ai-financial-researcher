@@ -454,9 +454,9 @@ type APIConfig struct {
 	// ReasoningEffort is sent as the request's reasoning_effort when set, and
 	// omitted otherwise: not every OpenAI-compatible provider accepts it.
 	ReasoningEffort string
-	// CompactionEffort is the [chief_api] compaction_reasoning_effort policy:
-	// "" (provider default), "adaptive", or a fixed "low" / "high" / "max".
-	// Only dossier compaction reads it; see compactionEffort.
+	// CompactionEffort is the [chief_api] compaction_reasoning_effort value:
+	// "" (provider default), "low", "high" or "max". Only dossier compaction
+	// reads it; see compactionLowEffortTarget.
 	CompactionEffort string
 }
 

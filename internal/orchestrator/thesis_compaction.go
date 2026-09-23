@@ -126,23 +126,13 @@ const compactionHeadroom = 256
 // instruction — a few words is not a shortened case, it is noise.
 const compactionPerFieldFloor = 40
 
-// compactionDeepCut is the narrative ratio below which "adaptive" compaction
-// asks for high reasoning effort. Measured on deepseek-v4-pro, 2026-09-23:
-// effort=low met a cut to 0.58 in 64s but overshot a cut to 0.35 by ~11%;
-// the default high effort met both, at up to 271s.
-const compactionDeepCut = 0.5
-
-// compactionEffort resolves the [chief_api] compaction_reasoning_effort
-// policy for one call, given the narrative ratio the allowance requires.
-func compactionEffort(policy string, needed float64) string {
-	if policy != "adaptive" {
-		return policy
-	}
-	if needed < compactionDeepCut {
-		return "high"
-	}
-	return "low"
-}
+// compactionLowEffortTarget scales the per-field budgets a reasoning_effort
+// "low" compaction is told. Measured on deepseek-v4-pro, 2026-09-23: low
+// effort delivered +1%..+12% over the budgets it was given, in ~60s, whatever
+// the cut depth; high effort delivered -19%..+2%, in 81-271s. Telling low 85%
+// of the allowance absorbs that overshoot. Feasibility and the final size
+// check still use the real allowance, so a miss is still a recorded failure.
+const compactionLowEffortTarget = 0.85
 
 // measureCompaction computes how much room a compaction call actually has,
 // instead of assuming a fixed per-field character count. On the six real
@@ -355,6 +345,18 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 		current[f] = len(originalNarratives[f])
 	}
 
+	target := t.compactionTarget()
+	stated := allowance.PerField
+	if target.CLI == model.CLIApi && target.API.CompactionEffort != "" {
+		target.API.ReasoningEffort = target.API.CompactionEffort
+		allowance.ReasoningEffort = target.API.CompactionEffort
+		if target.API.CompactionEffort == "low" {
+			stated = make(map[string]int, len(allowance.PerField))
+			for f, n := range allowance.PerField {
+				stated[f] = int(float64(n) * compactionLowEffortTarget)
+			}
+		}
+	}
 	prompt := fmt.Sprintf(
 		"Compact this complete dossier to fit a %d-byte response budget. "+
 			"This consumes the one repair allowance; there is no further repair. "+
@@ -366,19 +368,8 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 			"containing only these narrative fields, as strings. Do not repeat "+
 			"claims, quotations, evidence IDs or any other field: Go keeps every "+
 			"other field exactly as written in the original.\nOriginal response:\n%s",
-		allowance.Limit, perFieldLines(allowance.PerField, current), raw)
+		allowance.Limit, perFieldLines(stated, current), raw)
 
-	target := t.compactionTarget()
-	if target.CLI == model.CLIApi {
-		narrative := 0
-		for _, n := range current {
-			narrative += n
-		}
-		if narrative > 0 {
-			target.API.ReasoningEffort = compactionEffort(target.API.CompactionEffort, float64(allowance.NarrativeBudget)/float64(narrative))
-			allowance.ReasoningEffort = target.API.ReasoningEffort
-		}
-	}
 	r, err := t.call(ctx, role, name+"-compaction", prompt, target)
 	s := reportStatus(r)
 	s.Recovery, s.Contract, s.Payload = "compaction", model.OutcomeFailed, "invalid"

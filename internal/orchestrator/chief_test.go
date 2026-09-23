@@ -748,33 +748,42 @@ func TestCompactionRetriesATransientChiefFailure(t *testing.T) {
 	}
 }
 
-// Measured live on deepseek-v4-pro (2026-09-23): reasoning_effort=low met a
-// cut to 0.58 of the narrative in 64s but overshot a cut to 0.35 by ~11%,
-// which the default high effort met in 271s. "adaptive" spends the slow
-// effort only where the cut is deep.
-func TestCompactionReasoningEffortFollowsCutDepth(t *testing.T) {
+// Measured on deepseek-v4-pro (2026-09-23), delivered narrative bytes against
+// the per-field budgets it was given: effort=high landed at -19%..+2% across
+// four live compactions; effort=low at +1%..+12% across three, independent of
+// how deep the cut was. So a low-effort call is told budgets scaled by
+// compactionLowEffortTarget, while measurement and feasibility still use the
+// real allowance; high/max are told the real budgets.
+func TestCompactionReasoningEffortPolicy(t *testing.T) {
 	for _, c := range []struct {
-		name, policy, want string
-		narrative          int
+		policy, want string
+		scaled       bool
 	}{
-		{"deep cut, adaptive", "adaptive", "high", 60000},
-		{"shallow cut, adaptive", "adaptive", "low", 21000},
-		{"fixed policy", "max", "max", 21000},
-		{"no policy", "", "", 60000},
+		{"low", "low", true},
+		{"high", "high", false},
+		{"max", "max", false},
+		{"", "", false},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		t.Run("policy="+c.policy, func(t *testing.T) {
 			var efforts []any
+			var prompts []string
 			chief := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var b map[string]any
+				var b struct {
+					Effort   any `json:"reasoning_effort"`
+					Messages []struct {
+						Content string `json:"content"`
+					} `json:"messages"`
+				}
 				json.NewDecoder(r.Body).Decode(&b)
-				efforts = append(efforts, b["reasoning_effort"])
+				efforts = append(efforts, b.Effort)
+				prompts = append(prompts, b.Messages[0].Content)
 				json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
 					"message": map[string]string{"content": fenced(map[string]any{"long_case": "short"})}}}})
 			}))
 			defer chief.Close()
 			d := supportedResearch().Dossier
 			d.ContractVersion = 2
-			d.LongCase = strings.Repeat("n", c.narrative)
+			d.LongCase = strings.Repeat("n", 21000)
 			runner, _, done := thesisFixture(t, func(string, int) string { return fenced(d) })
 			defer done()
 			runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: chief.URL, Model: "chief-model", APIKey: "k2", CompactionEffort: c.policy}}
@@ -790,8 +799,17 @@ func TestCompactionReasoningEffortFollowsCutDepth(t *testing.T) {
 			if len(efforts) != 1 || got != c.want {
 				t.Fatalf("sent reasoning_effort %v, want %q", efforts, c.want)
 			}
-			if a := reports[1].Allowance; a == nil || a.ReasoningEffort != c.want {
+			a := reports[1].Allowance
+			if a == nil || a.ReasoningEffort != c.want {
 				t.Fatalf("effort not recorded on the allowance: %+v", a)
+			}
+			real := fmt.Sprintf("long_case: %d bytes (currently", a.PerField["long_case"])
+			stated := fmt.Sprintf("long_case: %d bytes (currently", int(float64(a.PerField["long_case"])*compactionLowEffortTarget))
+			if c.scaled && (!strings.Contains(prompts[0], stated) || strings.Contains(prompts[0], real)) {
+				t.Fatalf("low effort must be told the scaled budget %q", stated)
+			}
+			if !c.scaled && !strings.Contains(prompts[0], real) {
+				t.Fatalf("effort %q must be told the real budget %q", c.policy, real)
 			}
 		})
 	}

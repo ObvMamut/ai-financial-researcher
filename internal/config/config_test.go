@@ -831,7 +831,7 @@ func TestManifestConfigHonorsChiefEndpointEnvironmentOverrides(t *testing.T) {
 
 func TestCompactionReasoningEffortIsReadAndValidated(t *testing.T) {
 	for _, c := range []struct{ value, wantErr string }{
-		{"adaptive", ""}, {"low", ""}, {"high", ""}, {"max", ""}, {"", ""}, {"medium", "compaction_reasoning_effort"},
+		{"low", ""}, {"high", ""}, {"max", ""}, {"", ""}, {"adaptive", "compaction_reasoning_effort"}, {"medium", "compaction_reasoning_effort"},
 	} {
 		s := &Settings{ChiefEngine: "api", ChiefAPI: model.APIConfig{BaseURL: "https://x/v1", Model: "m", APIKey: "k", CompactionEffort: c.value}}
 		err := s.ValidateChiefEngine()
@@ -844,14 +844,14 @@ func TestCompactionReasoningEffortIsReadAndValidated(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfr.toml")
-	if err := os.WriteFile(path, []byte("[chief_api]\ncompaction_reasoning_effort = \"adaptive\"\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("[chief_api]\ncompaction_reasoning_effort = \"low\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	s := &Settings{}
 	if err := s.applyFile(path); err != nil {
 		t.Fatal(err)
 	}
-	if s.ChiefAPI.CompactionEffort != "adaptive" {
+	if s.ChiefAPI.CompactionEffort != "low" {
 		t.Fatalf("file value not read: %q", s.ChiefAPI.CompactionEffort)
 	}
 }
