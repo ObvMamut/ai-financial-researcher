@@ -1,6 +1,7 @@
 package scoreboard
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -115,5 +116,39 @@ func TestVerdictRefusesToConcludeFromThinArms(t *testing.T) {
 	}
 	if !strings.Contains(got, "Whole model stack adds:") || !strings.Contains(got, "Specialists and Chief add:") {
 		t.Errorf("verdict is missing one of its two comparisons:\n%s", got)
+	}
+}
+
+func TestArmDiffsPairShippedAgainstBothControls(t *testing.T) {
+	// Shipped beats the shortlist by two points in every one of eight weeks, and
+	// matches the composite exactly; both markets swing hard week to week. The
+	// shortlist difference must exclude zero and the composite one must not.
+	var shipped, shortlist, composite []Entry
+	for w := 0; w < 8; w++ {
+		date := fmt.Sprintf("2026-%02d-%02d", 3+w/4, 2+7*(w%4))
+		swing := float64((w*37)%17) - 8
+		shipped = append(shipped, closedCall(date, swing+2))
+		shortlist = append(shortlist, closedCall(date, swing))
+		composite = append(composite, closedCall(date, swing+2))
+	}
+	arm := func(name string, es []Entry) ControlArm {
+		acc := &horizonAcc{}
+		for _, e := range es {
+			acc.add(e.CallExcessPct, e.CallExcessPct)
+		}
+		return ControlArm{Name: name, Record: acc.record(), independent: es}
+	}
+	rep := &ControlReport{Arms: []ControlArm{
+		arm("composite", composite), arm("shortlist", shortlist), arm("shipped", shipped)}}
+	rep.Diffs = armDiffs(rep.Arms)
+	if len(rep.Diffs) != 2 {
+		t.Fatalf("want two differences, got %+v", rep.Diffs)
+	}
+	got := rep.verdict()
+	if !strings.Contains(got, "shipped − shortlist:") || !strings.Contains(got, "excludes zero") {
+		t.Errorf("a two-point edge every week was not reported as excluding zero:\n%s", got)
+	}
+	if !strings.Contains(got, "shipped − composite:") || !strings.Contains(got, "indistinguishable from zero") {
+		t.Errorf("an identical arm was not reported as indistinguishable:\n%s", got)
 	}
 }

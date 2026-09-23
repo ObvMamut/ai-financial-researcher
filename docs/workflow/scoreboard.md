@@ -177,6 +177,28 @@ comparison in which one arm picks its own window is not a comparison.
 says in as many words that they are noise. That refusal is the important half — three arms
 of five calls will differ by twenty points on chance alone.
 
+Each arm's average excess carries a **95% bootstrap interval** (`excess_ci`), and the two
+differences carry one each (`diffs`). The resampling unit is the ISO week the call was
+generated in, not the call: calls from one week ride one market, and resampling them as
+independent draws would report precision the sample does not have. A difference resamples
+the weeks of both arms together, so a market move both arms shared is not counted as
+disagreement between them. An arm whose closed calls span fewer than two weeks gets no
+interval. The seed is fixed, so unchanged history prints an unchanged interval. With the
+single-digit week counts this history has, a percentile bootstrap is optimistic — read a
+bound that barely clears zero as a reason to keep measuring, not as a result.
+
+### The success criterion (pre-registered 2026-09-23)
+
+The model stages earn their cost when **the 10-session `shipped − composite` excess
+difference has a 95% interval that excludes zero, above it, with at least 60 independent
+shipped calls**. Until the composite arm is that deep, `shipped − shortlist` is the working
+proxy. This was written down before the comparison could be read, so that it cannot be
+chosen after seeing which window or arm looks best.
+
+At registration (48 runs, 2026-06-01 → 2026-09-23) neither difference cleared it:
+`shipped − shortlist` was −0.86% [−1.98%, +0.28%] at 10 sessions and −0.73% [−1.66%, +0.24%]
+at 15. The scouts' shortlist alone was +1.42% [+0.29%, +2.21%] at 15 sessions over 8 weeks.
+
 Runs generated before Stage 0.5 existed carry no `prescreen.json`, so the composite arm
 skips them and says how many. The shortlist arm does not need one: when a row is missing it
 takes its anchor from the name's own bars, at the last close on or before the run.

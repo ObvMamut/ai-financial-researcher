@@ -90,6 +90,21 @@ type ControlArm struct {
 	// Overlapping counts remaining same-ticker windows that overlap even after
 	// weekly deduplication. These observations are not independent samples.
 	Overlapping int `json:"overlapping_calls,omitempty"`
+	// ExcessCI is the week-clustered 95% bootstrap interval on Record.AvgExcess,
+	// absent while the closed calls span fewer than two weeks.
+	ExcessCI *ExcessCI `json:"excess_ci,omitempty"`
+	// independent is the deduplicated entries the record was scored over, kept
+	// so two arms can be differenced on the same bets their records describe.
+	independent []Entry
+}
+
+// ArmDiff is the difference in average excess between two arms, with the
+// interval from resampling both arms' weeks together.
+type ArmDiff struct {
+	Over   string    `json:"over"`
+	Under  string    `json:"under"`
+	Excess float64   `json:"excess_pct"`
+	CI     *ExcessCI `json:"ci,omitempty"`
 }
 
 // ControlReport is the three arms plus the runs they were drawn from.
@@ -97,6 +112,9 @@ type ControlReport struct {
 	HorizonDays int          `json:"horizon_days"`
 	RunCount    int          `json:"run_count"`
 	Arms        []ControlArm `json:"arms"`
+	// Diffs are the two comparisons the arms exist to make: shipped over
+	// composite, and shipped over shortlist.
+	Diffs []ArmDiff `json:"diffs,omitempty"`
 	// Skipped names runs that carry no prescreen.json, so the composite arm
 	// could not be reconstructed for them. Every run predating Stage 0.5 is one.
 	Skipped []string `json:"skipped,omitempty"`
@@ -181,8 +199,39 @@ func Control(ctx context.Context, runsDir string, yc marketdata.PriceSource, hor
 			}
 		}
 		rep.Arms[i].Record, rep.Arms[i].Pending = acc.record(), pending
+		rep.Arms[i].independent = indep
+		if ci, ok := excessCI(indep); ok {
+			rep.Arms[i].ExcessCI = &ci
+		}
 	}
+	rep.Diffs = armDiffs(rep.Arms)
 	return rep, nil
+}
+
+// armDiffs differences shipped against each control arm that has closed calls.
+func armDiffs(arms []ControlArm) []ArmDiff {
+	by := map[string]ControlArm{}
+	for _, a := range arms {
+		by[a.Name] = a
+	}
+	shipped, ok := by["shipped"]
+	if !ok || shipped.Record.N == 0 {
+		return nil
+	}
+	var out []ArmDiff
+	for _, under := range []string{"composite", "shortlist"} {
+		u := by[under]
+		if u.Record.N == 0 {
+			continue
+		}
+		d := ArmDiff{Over: "shipped", Under: under,
+			Excess: round2(shipped.Record.AvgExcess - u.Record.AvgExcess)}
+		if ci, ok := excessDiffCI(shipped.independent, u.independent); ok {
+			d.CI = &ci
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // compositeCalls takes the n strongest rows of a run's ranking, whichever
@@ -360,8 +409,8 @@ func (r *ControlReport) FormatText() string {
 		fmt.Fprintf(&sb, "%d run(s) carry no prescreen.json, so the composite arm skips them.\n", len(r.Skipped))
 	}
 	sb.WriteString("\n")
-	fmt.Fprintf(&sb, "  %-12s %-34s %5s  %7s  %9s  %9s  %9s\n",
-		"arm", "what it is", "n", "right", "beat bench", "avg", "avg excess")
+	fmt.Fprintf(&sb, "  %-12s %-34s %5s  %7s  %9s  %9s  %9s  %s\n",
+		"arm", "what it is", "n", "right", "beat bench", "avg", "avg excess", "95% CI (weeks)")
 	for _, a := range r.Arms {
 		rec := a.Record
 		if rec.N == 0 {
@@ -369,8 +418,9 @@ func (r *ControlReport) FormatText() string {
 				a.Name, a.Label, "—", "—", "—", "—", "—", a.Pending)
 			continue
 		}
-		fmt.Fprintf(&sb, "  %-12s %-34s %5d  %6.0f%%  %8.0f%%  %+8.2f%%  %+8.2f%%\n",
-			a.Name, a.Label, rec.N, rec.HitRate*100, rec.ExcessHitRate*100, rec.AvgPnL, rec.AvgExcess)
+		fmt.Fprintf(&sb, "  %-12s %-34s %5d  %6.0f%%  %8.0f%%  %+8.2f%%  %+8.2f%%  %s\n",
+			a.Name, a.Label, rec.N, rec.HitRate*100, rec.ExcessHitRate*100, rec.AvgPnL, rec.AvgExcess,
+			formatCI(a.ExcessCI))
 	}
 	sb.WriteString("\n")
 	for _, a := range r.Arms {
@@ -408,6 +458,17 @@ func (r *ControlReport) verdict() string {
 	}
 	gap("Whole model stack adds:", shipped, composite, "shipped vs composite")
 	gap("Specialists and Chief add:", shipped, shortlist, "shipped vs shortlist")
+	for _, d := range r.Diffs {
+		if d.CI == nil {
+			continue
+		}
+		verdict := "indistinguishable from zero"
+		if !d.CI.Contains(0) {
+			verdict = "excludes zero"
+		}
+		fmt.Fprintf(&sb, "  excess, shipped − %-10s %+6.2f%%, 95%% CI %s — %s\n",
+			d.Under+":", d.Excess, formatCI(d.CI), verdict)
+	}
 
 	if n := minN(composite, shortlist, shipped); n > 0 && n < MinArmN {
 		fmt.Fprintf(&sb, "\n  Both figures are noise at these counts (smallest arm n=%d, want %d+). "+
@@ -432,4 +493,12 @@ func minN(recs ...HorizonRecord) int {
 		}
 	}
 	return n
+}
+
+// formatCI renders an interval, or a dash when there are too few weeks for one.
+func formatCI(c *ExcessCI) string {
+	if c == nil {
+		return "—"
+	}
+	return fmt.Sprintf("[%+.2f%%, %+.2f%%] (%d)", c.Low, c.High, c.Weeks)
 }
