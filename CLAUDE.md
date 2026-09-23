@@ -79,6 +79,13 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   carries it: an API Chief is still one heavy synthesis call on a strong model,
   addressed through its own credentials and its own cap, never the cheap
   research model.
+  The second reviewed exception is dossier compaction: the one repair of an
+  oversized thesis dossier runs on the selected Chief engine, because the cheap
+  model measurably cannot make the cut (15 recorded compactions at 0.61–0.99 of
+  narrative size whatever was asked; the Chief model met 12/12 per-field
+  budgets). It fires at most once per dossier and only when one is over budget,
+  and the model returns only the twelve narrative fields — Go splices them into
+  the original payload.
 - Agent personas live in `agents/*.md` and are loaded at runtime — they are *data*, not
   Go source. Editing a persona must not require recompiling.
 

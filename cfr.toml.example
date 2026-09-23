@@ -524,6 +524,8 @@
 #[research.budgets.triage]
 #input_bytes = 98304
 #response_bytes = 12288
+# An oversized researcher dossier gets one compaction, run on the Chief engine
+# ([chief_api] or the claude CLI), never the cheap engine.
 #[research.budgets.researcher]
 #input_bytes = 98304
 #response_bytes = 20480

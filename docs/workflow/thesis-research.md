@@ -483,12 +483,18 @@ little narrative to cut is asked to cut little, and a company whose protected
 content alone already exceeds the response limit is refused before dispatch
 rather than sent a doomed call: `Feasible: false` on the recorded
 `CompactionAllowance`, zero model calls, `FailureKind: "input_capacity"`.
+The compaction call runs on the configured Chief engine, not the cheap engine,
+and returns only the twelve narrative fields. Go splices them into the original
+payload's own bytes, so protected fields are identical by construction; fields
+the reply omits keep their original text, and anything else the reply contains
+is ignored. The spliced payload is then measured against the limit in Go and
+still passes the protected-field comparison.
 Feasibility is a measured, per-company verdict, not a guarantee — some
 oversized dossiers remain infeasible after this change, and that is a correct
 answer, not a regression. Protected wire fields (including unknown extensions),
 claims, exact quotations, numerical values, events, requests, uncertainties,
-conditions and status must remain unchanged. Go compares them before accepting
-the compacted response. Original narratives are persisted in the compaction
+conditions and status must remain unchanged. Go compares them on the spliced
+payload before accepting it. Original narratives are persisted in the compaction
 call's diagnostics and supplied to subsequent research/challenge as an
 explicitly budgeted, mandatory `compaction_originals` section. Optional retrieval
 diagnostics/history are omitted first. If original narratives and other required
