@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"os/exec"
@@ -131,6 +132,7 @@ func callAgent(ctx context.Context, cli model.CLI, role, stage string, prompt st
 		if usage.CompletionTokens != nil && *usage.CompletionTokens >= 0 {
 			report.Tokens += *usage.CompletionTokens
 		}
+		timedOut := errors.Is(tctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		cancel()
 		if cli == model.CLIClaude && runErr != nil && strings.Contains(stderrStr+runErr.Error(), "disabled Claude subscription access") {
 			report.Status, report.FailureKind = model.StatusFailed, "authentication"
@@ -164,6 +166,16 @@ func callAgent(ctx context.Context, cli model.CLI, role, stage string, prompt st
 			}
 			report.Status = model.StatusFailed
 			report.Err = runErr.Error()
+			report.Duration = time.Since(start).Milliseconds()
+			return report
+		}
+
+		if timedOut && retry.NoRetryOnTimeout {
+			report.Status, report.FailureKind = model.StatusFailed, "timeout"
+			report.Err = fmt.Sprintf("timed out after %s; not retried", timeout)
+			if runErr != nil {
+				report.Err += ": " + runErr.Error()
+			}
 			report.Duration = time.Since(start).Milliseconds()
 			return report
 		}

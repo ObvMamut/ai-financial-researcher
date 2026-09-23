@@ -178,5 +178,8 @@ func chiefTarget(e chiefEngine, cfg Config, purpose chiefPurpose) callTarget {
 func (t *thesisRunner) compactionTarget() callTarget {
 	target := chiefTarget(t.chief, t.cfg, chiefCompaction)
 	target.Retry = t.cfg.Retry
+	// A reset is retried; a timeout is not — at up to the synthesis timeout per
+	// attempt, a second one would outlast the run's own deadline.
+	target.Retry.NoRetryOnTimeout = true
 	return target
 }

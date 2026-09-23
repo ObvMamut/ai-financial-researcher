@@ -391,6 +391,10 @@ type RetryPolicy struct {
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
 	Jitter      bool
+	// NoRetryOnTimeout makes an attempt that ran out its per-call timeout
+	// final (FailureKind "timeout") while other transient failures still
+	// retry — for calls where slow means "too slow", not "flaky".
+	NoRetryOnTimeout bool
 }
 
 // DomainWeights defines the relative importance of each analysis domain.

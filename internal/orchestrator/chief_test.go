@@ -693,7 +693,7 @@ func TestCompactionTargetFollowsTheResolvedChiefEngine(t *testing.T) {
 	cfg.Timeouts.Synthesis = 90 * time.Second
 	r := &thesisRunner{cfg: cfg, chief: chiefEngine{CLI: model.CLIClaude, Model: "opus", Binary: "claude"}}
 	got := r.compactionTarget()
-	if got.CLI != model.CLIClaude || got.throttled || got.Stage != model.StageSynthesis || got.Timeout != 90*time.Second || got.Retry.MaxAttempts != 2 {
+	if got.CLI != model.CLIClaude || got.throttled || got.Stage != model.StageSynthesis || got.Timeout != 90*time.Second || got.Retry.MaxAttempts != 2 || !got.Retry.NoRetryOnTimeout {
 		t.Fatalf("claude chief: %+v", got)
 	}
 }

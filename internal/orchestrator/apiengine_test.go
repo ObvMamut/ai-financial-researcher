@@ -243,3 +243,31 @@ func TestReasoningEffortIsSentOnlyWhenSet(t *testing.T) {
 		t.Fatalf("empty effort must be omitted, not sent: %v", bodies[1])
 	}
 }
+
+// A compaction that times out is "too slow", not "flaky": retrying it doubled
+// the worst case past the run's own deadline. NoRetryOnTimeout makes a
+// timed-out attempt final while other transient failures still retry.
+func TestNoRetryOnTimeoutStopsAfterATimedOutAttempt(t *testing.T) {
+	for _, c := range []struct {
+		noRetry bool
+		want    int
+	}{{true, 1}, {false, 2}} {
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			select {
+			case <-r.Context().Done():
+			case <-time.After(300 * time.Millisecond):
+			}
+		}))
+		retry := model.RetryPolicy{MaxAttempts: 2, BaseDelay: time.Millisecond, NoRetryOnTimeout: c.noRetry}
+		r := runAgent(context.Background(), model.CLIApi, "slow", "analysis", "p", 50*time.Millisecond, retry, "", "", model.APIConfig{BaseURL: srv.URL, Model: "m"})
+		srv.Close()
+		if r.Status != model.StatusFailed || r.Attempts != c.want || calls != c.want {
+			t.Errorf("noRetry=%v: status=%s attempts=%d calls=%d, want %d", c.noRetry, r.Status, r.Attempts, calls, c.want)
+		}
+		if c.noRetry && r.FailureKind != "timeout" {
+			t.Errorf("a final timed-out attempt must be labelled timeout, got %q", r.FailureKind)
+		}
+	}
+}
