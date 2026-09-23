@@ -635,3 +635,81 @@ func TestOutputLimitGetsNoUnchangedRetryOrSchemaRepair(t *testing.T) {
 		t.Errorf("usage not preserved on a truncated failure: %+v", r.Usage)
 	}
 }
+
+func TestCompactionRunsOnTheChiefEngineNotTheCheapPool(t *testing.T) {
+	var chiefModels []string
+	var chiefMaxTokens []int
+	chief := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model     string `json:"model"`
+			MaxTokens int    `json:"max_tokens"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		chiefModels = append(chiefModels, req.Model)
+		chiefMaxTokens = append(chiefMaxTokens, req.MaxTokens)
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"message": map[string]string{"content": fenced(map[string]any{"long_case": "short"})}}}})
+	}))
+	defer chief.Close()
+
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	d.LongCase = strings.Repeat("long narrative ", 2000)
+	cheapSawCompaction := 0
+	// The fixture server is the cheap engine: it answers research with the
+	// oversized dossier and must never be asked to compact it.
+	runner, _, done := thesisFixture(t, func(prompt string, _ int) string {
+		if strings.Contains(prompt, "Compact this complete dossier") {
+			cheapSawCompaction++
+		}
+		return fenced(d)
+	})
+	defer done()
+	runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: chief.URL, Model: "chief-model", APIKey: "k2", MaxTokens: 32768}}
+
+	var out model.CandidateDossier
+	if _, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "routed", "data", &out, dossierSchema); err != nil {
+		t.Fatal(err)
+	}
+	if cheapSawCompaction != 0 {
+		t.Fatalf("the cheap engine received %d compaction prompts", cheapSawCompaction)
+	}
+	if len(chiefModels) != 1 || chiefModels[0] != "chief-model" || chiefMaxTokens[0] != 32768 {
+		t.Fatalf("compaction did not reach the Chief engine with its own model and cap: models=%v max_tokens=%v", chiefModels, chiefMaxTokens)
+	}
+	if out.LongCase != "short" {
+		t.Fatalf("the Chief's narrative was not spliced in: %q", out.LongCase)
+	}
+}
+
+func TestCompactionTargetFollowsTheResolvedChiefEngine(t *testing.T) {
+	cfg := Config{SynthesisMaxAttempts: 1}
+	cfg.Timeouts.Synthesis = 90 * time.Second
+	r := &thesisRunner{cfg: cfg, chief: chiefEngine{CLI: model.CLIClaude, Model: "opus", Binary: "claude"}}
+	got := r.compactionTarget()
+	if got.CLI != model.CLIClaude || got.throttled || got.Stage != model.StageSynthesis || got.Timeout != 90*time.Second || got.Retry.MaxAttempts != 1 {
+		t.Fatalf("claude chief: %+v", got)
+	}
+}
+
+func TestCompactionOutputLimitIsNotRetried(t *testing.T) {
+	calls := 0
+	chief := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"message": map[string]string{"content": "```json\n{\"long_case\":\"trunc"}, "finish_reason": "length"}}})
+	}))
+	defer chief.Close()
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	d.LongCase = strings.Repeat("long narrative ", 2000)
+	runner, _, done := thesisFixture(t, func(string, int) string { return fenced(d) })
+	defer done()
+	runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: chief.URL, Model: "chief-model", APIKey: "k2"}}
+	runner.cfg.SynthesisMaxAttempts = 3
+	var out model.CandidateDossier
+	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "trunc", "data", &out, dossierSchema)
+	if err == nil || calls != 1 || reports[1].FailureKind != "output_limit" {
+		t.Fatalf("calls=%d err=%v recovery=%+v", calls, err, reports[1])
+	}
+}

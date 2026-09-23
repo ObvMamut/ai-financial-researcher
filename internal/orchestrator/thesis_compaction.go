@@ -350,7 +350,7 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 			"other field exactly as written in the original.\nOriginal response:\n%s",
 		allowance.Limit, perFieldLines(allowance.PerField, current), raw)
 
-	r, err := t.call(ctx, role, name+"-compaction", prompt, t.cheapTarget())
+	r, err := t.call(ctx, role, name+"-compaction", prompt, t.compactionTarget())
 	s := reportStatus(r)
 	s.Recovery, s.Contract, s.Payload = "compaction", model.OutcomeFailed, "invalid"
 	s.Allowance = &allowance

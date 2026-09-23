@@ -402,7 +402,7 @@ func TestTruncatedCompletionGetsNoNormalizationBenefit(t *testing.T) {
 	pool.start(ctx)
 	defer func() { cancel(); pool.stop() }()
 	runner := &thesisRunner{cfg: cfg, ch: make(chan Event, 200), run: run, reg: reg, pool: pool,
-		cheap: model.CLIApi, svc: marketdata.NewService(nil, researchFixtureProvider{}), sources: map[string][]string{}}
+		cheap: model.CLIApi, chief: chiefEngine{CLI: model.CLIApi, Model: "fixture-chief", API: model.APIConfig{BaseURL: srv.URL, Model: "fixture-chief", APIKey: "fixture"}}, svc: marketdata.NewService(nil, researchFixtureProvider{}), sources: map[string][]string{}}
 
 	var out model.CandidateDossier
 	reports, transport, _, callErr := researchCall(context.Background(), runner, "thesis-researcher", "truncated", "data", &out, dossierSchema)

@@ -53,7 +53,7 @@ func thesisFixture(t *testing.T, reply func(prompt string, call int) string) (*t
 	p := quant.NewPack()
 	p.ByTicker["AAA"] = quant.Metrics{LastClose: 100, SigmaDaily: .02}
 	runner := &thesisRunner{cfg: cfg, ch: make(chan Event, 200), run: run, reg: reg, pool: pool,
-		cheap: model.CLIApi, svc: marketdata.NewService(nil, researchFixtureProvider{}), sources: map[string][]string{}}
+		cheap: model.CLIApi, chief: chiefEngine{CLI: model.CLIApi, Model: "fixture-chief", API: model.APIConfig{BaseURL: srv.URL, Model: "fixture-chief", APIKey: "fixture"}}, svc: marketdata.NewService(nil, researchFixtureProvider{}), sources: map[string][]string{}}
 	return runner, p, func() { cancel(); pool.stop(); srv.Close() }
 }
 

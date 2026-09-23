@@ -49,6 +49,7 @@ type thesisRunner struct {
 	reg                  *agents.Registry
 	pool                 *pool
 	cheap                model.CLI
+	chief                chiefEngine
 	svc                  *marketdata.Service
 	sources              map[string][]string
 	calendar             marketdata.ResearchCalendar
@@ -175,7 +176,7 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	if e != nil {
 		return e
 	}
-	t := &thesisRunner{cfg: cfg, ch: ch, run: run, reg: reg, pool: p, cheap: cheap, svc: svc, sources: sources, calendar: calendar, fx: fx}
+	t := &thesisRunner{cfg: cfg, ch: ch, run: run, reg: reg, pool: p, cheap: cheap, chief: chiefE, svc: svc, sources: sources, calendar: calendar, fx: fx}
 	var statuses []model.DomainStatus
 	var errs []string
 	phase := time.Now()

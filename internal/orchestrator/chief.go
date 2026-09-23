@@ -18,6 +18,13 @@ const (
 	chiefInitial    chiefPurpose = "synthesis"
 	chiefCorrective chiefPurpose = "corrective"
 	chiefFallback   chiefPurpose = "fallback"
+	// chiefCompaction is the one repair of an oversized research dossier. It
+	// runs on the Chief engine because the cheap model measurably cannot make
+	// the cut: 15 recorded deepseek-chat compactions landed at 0.61-0.99 of
+	// their narrative size regardless of the requested budget, while the same
+	// prompt on the Chief model met 12/12 per-field budgets (2026-09-23,
+	// docs/plans/2026-09-23-compaction-on-chief-engine.md).
+	chiefCompaction chiefPurpose = "compaction"
 )
 
 // chiefEngine is the Chief Analyst's dispatch target, resolved once per run
@@ -160,4 +167,11 @@ func chiefTarget(e chiefEngine, cfg Config, purpose chiefPurpose) callTarget {
 		Timeout: cfg.Timeouts.Synthesis,
 		Retry:   retry,
 	}
+}
+
+// compactionTarget is the dossier-compaction call's target: the run's own
+// resolved Chief engine, with the Chief's stage, timeout and retry budget —
+// never the cheap pool, whose model cannot perform the cut.
+func (t *thesisRunner) compactionTarget() callTarget {
+	return chiefTarget(t.chief, t.cfg, chiefCompaction)
 }

@@ -154,7 +154,7 @@ func TestCompanyResearchLoopAndIndependentChallenge(t *testing.T) {
 	defer cancel()
 	pool.start(ctx)
 	defer pool.stop()
-	runner := thesisRunner{cfg: cfg, ch: make(chan Event, 100), run: run, reg: reg, pool: pool, cheap: model.CLIApi, svc: marketdata.NewService(nil, researchFixtureProvider{}), sources: map[string][]string{}}
+	runner := thesisRunner{cfg: cfg, ch: make(chan Event, 100), run: run, reg: reg, pool: pool, cheap: model.CLIApi, chief: chiefEngine{CLI: model.CLIApi, Model: "fixture-chief", API: model.APIConfig{BaseURL: srv.URL, Model: "fixture-chief", APIKey: "fixture"}}, svc: marketdata.NewService(nil, researchFixtureProvider{}), sources: map[string][]string{}}
 	p := quant.NewPack()
 	p.ByTicker["AAA"] = quant.Metrics{LastClose: 100, SigmaDaily: .02}
 	got := runner.investigate(ctx, model.Candidate{Ticker: "AAA", Name: "Company"}, nil, p, nil)
