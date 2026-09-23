@@ -523,7 +523,7 @@ Default complete-input / response-payload limits (UTF-8 bytes):
 | --- | ---: | ---: |
 | Discovery/triage | 98,304 | 12,288 |
 | Researcher/revision | 98,304 | 20,480 |
-| Challenger/plan review | 98,304 | 12,288 |
+| Challenger/plan review | 98,304 | 16,384 |
 | Chief/corrective/fallback | 196,608 | 24,576 |
 
 The Input column measures the whole assembled prompt, complete, as before. The

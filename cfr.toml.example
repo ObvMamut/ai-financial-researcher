@@ -534,7 +534,7 @@
 #response_bytes = 20480
 #[research.budgets.challenger]
 #input_bytes = 98304
-#response_bytes = 12288
+#response_bytes = 16384
 #[research.budgets.chief]
 #input_bytes = 196608
 #response_bytes = 24576
