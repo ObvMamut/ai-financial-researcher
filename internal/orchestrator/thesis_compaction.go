@@ -340,16 +340,14 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 	prompt := fmt.Sprintf(
 		"Compact this complete dossier to fit a %d-byte response budget. "+
 			"This consumes the one repair allowance; there is no further repair. "+
-			"Shorten only these narrative fields, to at most the UTF-8 byte budget "+
-			"given for each — everything else in the payload is already accounted "+
-			"for and must not change:\n%s\n"+
+			"Rewrite only these narrative fields, each to at most the UTF-8 byte "+
+			"budget given for it:\n%s\n"+
 			"Preserve every material qualification and counterargument; a shorter "+
 			"field that drops a caveat is a failure, not a success. Do not add "+
-			"findings or upgrade the verdict. Every other field, including unknown "+
-			"fields, claims, exact quotations, evidence IDs, numerical values, "+
-			"requests, unresolved questions, conditions, events and status must "+
-			"remain byte-identical. Return one complete fenced JSON object with no "+
-			"surrounding prose.\nOriginal response:\n%s",
+			"findings or upgrade the verdict. Return one fenced JSON object "+
+			"containing only these narrative fields, as strings. Do not repeat "+
+			"claims, quotations, evidence IDs or any other field: Go keeps every "+
+			"other field exactly as written in the original.\nOriginal response:\n%s",
 		allowance.Limit, perFieldLines(allowance.PerField, current), raw)
 
 	r, err := t.call(ctx, role, name+"-compaction", prompt, t.cheapTarget())
@@ -362,9 +360,22 @@ func compactDossier(ctx context.Context, t *thesisRunner, role, name, raw string
 		}
 		return s, err
 	}
+	spliced, err := spliceNarratives(raw, r.Stdout)
+	if err == nil {
+		err = compactionPreservesEvidence(raw, spliced)
+	}
+	if err == nil {
+		if m := measureResponse(spliced); m.PayloadBytes > allowance.Limit {
+			s.FailureKind = "response_capacity"
+			err = fmt.Errorf("response capacity exceeded after compaction: payload %d > %d bytes; complete response retained for audit", m.PayloadBytes, allowance.Limit)
+		}
+	}
 	var next model.CandidateDossier
-	if err = decodeThesis(r.Stdout, &next, currentResearchSchema(dossierSchema)); err == nil {
-		err = compactionPreservesEvidence(raw, r.Stdout)
+	if err == nil {
+		err = decodeThesis(spliced, &next, currentResearchSchema(dossierSchema))
+	}
+	if werr := t.run.WriteReport(name+"-compacted", spliced); werr != nil && err == nil {
+		err = werr
 	}
 	if err != nil {
 		s.Err = err.Error()

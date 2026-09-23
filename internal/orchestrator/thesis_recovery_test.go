@@ -122,7 +122,7 @@ func TestCompactionProtectsAllNonNarrativeFields(t *testing.T) {
 }
 
 func TestCompactionFailureDoesNotBuyAnotherRepair(t *testing.T) {
-	for _, failure := range []string{"oversize", "malformed", "changed_status"} {
+	for _, failure := range []string{"oversize", "malformed"} {
 		t.Run(failure, func(t *testing.T) {
 			d := supportedResearch().Dossier
 			d.ContractVersion = 2
@@ -133,13 +133,7 @@ func TestCompactionFailureDoesNotBuyAnotherRepair(t *testing.T) {
 				if !strings.Contains(prompt, "Compact this complete dossier") || failure == "oversize" {
 					return fenced(d)
 				}
-				if failure == "malformed" {
-					return "incomplete response"
-				}
-				next := d
-				next.LongCase = "short"
-				next.Status = "rejected"
-				return fenced(next)
+				return "incomplete response"
 			})
 			defer done()
 			var out model.CandidateDossier
@@ -153,6 +147,65 @@ func TestCompactionFailureDoesNotBuyAnotherRepair(t *testing.T) {
 				t.Fatalf("failure provenance lost: %+v", r.Outcome)
 			}
 		})
+	}
+}
+
+// TestCompactionIgnoresProtectedChangesInTheReply pins the splice contract:
+// a reply that re-emits the dossier with a changed protected field is not
+// trusted and not rejected — only its narrative strings are read.
+func TestCompactionIgnoresProtectedChangesInTheReply(t *testing.T) {
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	d.LongCase = strings.Repeat("long narrative ", 2000)
+	calls := 0
+	runner, _, done := thesisFixture(t, func(prompt string, _ int) string {
+		calls++
+		if !strings.Contains(prompt, "Compact this complete dossier") {
+			return fenced(d)
+		}
+		next := d
+		next.LongCase = "short"
+		next.Status = "rejected"
+		return fenced(next)
+	})
+	defer done()
+	var out model.CandidateDossier
+	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "ignored", "data", &out, dossierSchema)
+	if err != nil || calls != 2 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+	if out.Status != d.Status || out.LongCase != "short" {
+		t.Fatalf("status=%q long_case=%q: protected change leaked or narrative lost", out.Status, out.LongCase)
+	}
+	if reports[1].Contract != "compacted" {
+		t.Fatalf("recovery = %+v", reports[1])
+	}
+}
+
+// TestCompactionStillOverBudgetAfterSpliceFails pins the Go-side size check:
+// a narrative-only reply small enough to pass its own response check can
+// still splice into a dossier over the limit, and that is a response_capacity
+// failure with no further repair — not an accepted compaction.
+func TestCompactionStillOverBudgetAfterSpliceFails(t *testing.T) {
+	d := supportedResearch().Dossier
+	d.ContractVersion = 2
+	d.LongCase = strings.Repeat("long narrative ", 2000)
+	calls := 0
+	runner, _, done := thesisFixture(t, func(prompt string, _ int) string {
+		calls++
+		if !strings.Contains(prompt, "Compact this complete dossier") {
+			return fenced(d)
+		}
+		return fenced(map[string]any{"long_case": strings.Repeat("still long ", 1800)})
+	})
+	defer done()
+	var out model.CandidateDossier
+	reports, _, _, err := researchCall(context.Background(), runner, "thesis-researcher", "overbudget", "data", &out, dossierSchema)
+	if err == nil || calls != 2 || len(reports) != 2 {
+		t.Fatalf("calls=%d reports=%d err=%v", calls, len(reports), err)
+	}
+	if reports[1].FailureKind != "response_capacity" || !strings.Contains(reports[1].Err, "after compaction") {
+		t.Fatalf("recovery = %+v", reports[1])
 	}
 }
 
@@ -695,6 +748,8 @@ func TestCompactionPromptCarriesTheMeasuredAllowance(t *testing.T) {
 	for _, warn := range []string{
 		"This consumes the one repair allowance; there is no further repair.",
 		"a shorter field that drops a caveat is a failure, not a success.",
+		"containing only these narrative fields",
+		"Go keeps every other field exactly as written",
 	} {
 		if !strings.Contains(captured, warn) {
 			t.Fatalf("prompt missing required warning %q", warn)
