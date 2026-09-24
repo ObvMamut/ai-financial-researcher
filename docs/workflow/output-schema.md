@@ -125,6 +125,57 @@ Human-readable analysis, then a structured tail:
 `0–10` per each persona's anchored rubric. `missing`: tickers the specialist could not
 assess.
 
+### Labels (`labels`, news / fundamentals / quant / sentiment)
+
+Alongside `scores`, one entry per name the domain has evidence for:
+
+```json
+"labels": [
+  { "ticker": "AAPL", "move_driver": "earnings",
+    "pending_binary_event": { "present": true, "date": "2026-10-29" },
+    "corporate_action": false,
+    "veto": true, "veto_reason": "binary_event_inside_window", "note": "prints inside the window" }
+]
+```
+
+| Field | Values | Unknown when |
+|---|---|---|
+| `move_driver` | `news` \| `earnings` \| `none` \| `unknown` | absent or any other string |
+| `pending_binary_event` | `{present: bool, date: YYYY-MM-DD}` (a bare boolean is accepted) | absent or malformed; a malformed date is dropped |
+| `corporate_action` | boolean (`"true"`/`"false"` strings accepted) | absent or not a boolean |
+| `veto` + `veto_reason` | `binary_event_inside_window` \| `corporate_action_pending` \| `halted_or_illiquid` \| `data_error` \| `fraud_or_litigation_shock` | a veto with any other reason is **not** a veto |
+| `note` | free text, cut at 200 characters | — |
+
+A label for a ticker off the shortlist, or for one the domain had no verified data for
+(`ungrounded`, abstentions excepted), is dropped. Parsed labels are `model.NameLabels`.
+
+### Selection record (`runs/<ts>/data/selection.json`)
+
+`model.SelectionRecord`, written by every legacy independent run:
+
+```json
+{
+  "policy": "merit_veto",
+  "top_n": 5,
+  "chief": "accepted",
+  "shadow_rank": ["NKE", "JPM", "TSLA"],
+  "regime": ["^GSPC: 63-session return +4.1% (up) · 21-session realized vol 11.8% vs 1y median 13.2% (calm) · as of 2026-09-23"],
+  "rows": [
+    { "ticker": "JPM", "index": "sp500", "sector": "Financials", "setup": "continuation",
+      "direction": "BUY", "close": 301.2, "merit": 0.84, "merit_rank": 1,
+      "labels": { "news": { "move_driver": "earnings" } },
+      "vetoes": [], "vetoed": false, "selected": true, "shipped_rank": 1,
+      "chief_shadow_rank": 2, "domain_scores": { "quant": 6, "news": 5 }, "base_confidence": 41 }
+  ]
+}
+```
+
+`chief` is `accepted` | `failed` | `unparseable` | `skipped` under `merit_veto` and absent
+under `chief`; `shadow_rank` and `chief_shadow_rank` exist only under `merit_veto`. A
+row's `excluded` says why an unshipped name did not ship: `no_direction`, `vetoed`,
+`risk_gate` (with the finding in `risk_gate`), `sector_cap` or `below_cut`. `vetoes[].source`
+is the specialist domain or `chief`. Rows are in merit order.
+
 The legacy `technicals` domain is gone: the quant stage computes everything its
 AlphaVantage `GLOBAL_QUOTE` call carried, from a full 2-year series rather than a single
 snapshot and for every listing rather than US ones. Old artifacts still render — the TUI
@@ -303,6 +354,26 @@ re-prompt, with the reason appended to `notes`. Fewer than 5 ideas is the intend
 `scoring.md` for the limits.
 
 All mechanics fields are optional (`omitempty`) so ideas.json from older runs still loads.
+
+Two top-level fields record how the book was chosen (both `omitempty`): `selection`
+(`merit_veto` | `chief`, legacy independent runs; `metadata.json` carries the same field)
+and `shadow_rank`, the Chief's own ranking of the whole shortlist under `merit_veto` —
+recorded for the scoreboard, never acted on.
+
+Under `merit_veto` the Chief answers a different shape (`agents/chief-writer.md`), which Go
+merges into ideas it built itself:
+
+```json
+{
+  "ideas":  [ { "ticker": "JPM", "direction": "BUY", "why": "…", "position_note": "…" } ],
+  "vetoes": [ { "ticker": "NKE", "veto_reason": "fraud_or_litigation_shock", "note": "…" } ],
+  "shadow_rank": ["NKE", "JPM", "TSLA"],
+  "notes": "…"
+}
+```
+
+Only `why` and `position_note` are taken from `ideas`, and only for names in Go's book or
+reserves; a `direction` that differs from the scout's is ignored and warned about.
 
 ## Run metadata (`runs/<ts>/metadata.json`)
 

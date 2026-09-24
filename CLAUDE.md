@@ -241,10 +241,19 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    nomination is, and telling them the answer is what made quant agree with it on 11-12 of
    12 names in every run since the pre-screen existed, against 3/3, 1/2, 5/9 and 0/5 before
    it. **Macro carries zero weight** — a regime is one fact per market, and scoring it per
-   name turned three facts into twelve confirmations; it still runs and the Chief reads it
-   as context.
-   Each writes **one** report covering the whole shortlist (5 calls total — not
-   per-ticker). The quant specialist interprets the computed pack; no chart TA anywhere.
+   name turned three facts into twelve confirmations. Under the default
+   `selection = "merit_veto"` the macro call is **not made**: `regime.go`'s
+   `computedRegimeLines` gives the Chief one line per benchmark (63-session return sign,
+   21-session realized vol against its 1y median) from bars already fetched; under
+   `selection = "chief"` macro still runs and the Chief reads it as context.
+   Each writes **one** report covering the whole shortlist (4 or 5 calls total — not
+   per-ticker). News, fundamentals, quant and sentiment keep their scores and also emit
+   closed-schema **labels** per name (`move_driver`, `pending_binary_event` + date,
+   `corporate_action`, and a `veto` whose `veto_reason` must be one of
+   `binary_event_inside_window|corporate_action_pending|halted_or_illiquid|data_error|
+   fraud_or_litigation_shock`); `labels.go` parses them defensively — malformed is
+   unknown, unknown is never a veto, an out-of-enum reason is refused, and a label for a
+   name the domain had no verified data for is dropped. The quant specialist interprets the computed pack; no chart TA anywhere.
    Fundamentals additionally reads the verified earnings-reaction table (`driftBlock`, the
    same one the Chief gets): its other evidence is one reporting period plus a YoY growth
    rate, which is a description of a company rather than of the next fifteen sessions, and
@@ -288,7 +297,27 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    lessons. Every lesson must name a cell that exists with ≥5 closed trades or it is
    deleted, exactly as a specialist's ungrounded score is. Weight suggestions are advisory
    and never applied. Never blocks a run; surfaced by `cfr postmortem`.
-4. **Chief Analyst (Claude):** reads the 5 reports + the computed base-score table +
+4. **Selection (`selection`, legacy independent mode only).** The 2026-09-23 attribution
+   found no measurable value above the funnel (domain ICs −0.08…+0.07; Chief picks +0.55%
+   vs +0.58% for the names it left out), so the default **`merit_veto`**
+   (`selection.go`) takes ranking away from the models: Go orders the shortlist by the
+   funnel's own `meritScore`, drops names with no scout direction, names any specialist
+   vetoed and names the per-idea risk gate (incl. the evidence floor) refuses, holds each
+   sector to `max_per_sector`, and ships the top 5 **in the scout's direction** as
+   `market_on_open` ideas (reference close, catastrophe stop, no target, 15-session time
+   exit; confidence = the base score, informational). The Chief is called once with
+   `agents/chief-writer.md`: it writes `why`/`position_note` for the book and five
+   reserves, may veto from the same closed enum (the slot refills from the reserves in
+   merit order), may not add, flip or reorder names, and returns `shadow_rank` — its own
+   ranking of the whole shortlist, persisted in `ideas.json` and `data/selection.json`,
+   never acted on. A failed or unparseable Chief ships the selection without prose
+   (`degraded`); no corrective re-prompt or DeepSeek fallback runs under this policy.
+   Both policies write `data/selection.json` (every shortlisted name: merit rank, labels,
+   vetoes, exclusion reason, domain scores, shipped rank, shadow rank), which feeds the
+   scoreboard's `chief-shadow` and `vetoed` arms. `selection = "chief"` (A/B control) is
+   the Chief Analyst path below; single-stock mode always uses it.
+
+   **Chief Analyst (Claude, `selection = "chief"`):** reads the 5 reports + the computed base-score table +
    compact verified quant lines + — once ≥10 past ideas have closed — the pipeline's own
    replayed track record and the lessons drawn from it, adjusts each base by at most
    `chief_adjust_band` points with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived from
@@ -308,7 +337,10 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    expectancy is recorded, not gated), plus book-level correlation, sector and beta-adjusted exposure measured
    against the account rather than averaged over the idea count. It also enforces an
    **evidence floor** (independent mode only): an idea scored by quant alone, or by no
-   domain at all, is a screen output rather than a research conclusion and is dropped. Violations buy one corrective
+   domain at all, is a screen output rather than a research conclusion and is dropped.
+   Under `merit_veto` the per-idea checks run on each merit candidate before selection
+   (a refusal makes it ineligible, recorded as `risk_gate`) and the final book is gated
+   once more for sizing and book-level findings; there is no re-prompt. Under `chief`, violations buy one corrective
    re-prompt, which offers both available answers — delete the idea, or replace it from the
    scored board the re-prompt lists, never to keep the count and never with a name a single
    domain carries; per-idea violations that survive it drop the idea. Shipping fewer than 5
@@ -328,7 +360,7 @@ go test ./...         # unit tests
 go run ./cmd/cfr      # launch the TUI
 go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3 degraded)
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
-go run ./cmd/cfr scoreboard --control              # shipped vs the composite alone vs the shortlist
+go run ./cmd/cfr scoreboard --control              # shipped vs composite, shortlist, Chief shadow, vetoed
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
 go run ./cmd/cfr backtest                          # point-in-time pre-screen replay (keyless Yahoo, no models)
 go run ./cmd/cfr acceptance-manifest               # resolved configuration and hashes; no model or data requests

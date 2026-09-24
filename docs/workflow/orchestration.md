@@ -121,6 +121,38 @@ This runs after citation scrubbing and before `WriteReport`. It replaced an advi
 warning (`overclaimedCoverage`) that logged the discrepancy and shipped the invented
 scores anyway.
 
+Once a tail is enforced, `parseSpecialistLabels` (`labels.go`) reads its `labels` array
+(news, fundamentals, quant, sentiment). Keys the enforcement does not model survive the
+rewrite untouched, so the labels on disk are the ones the agent wrote; the parse is what
+narrows them — unknown for anything malformed, no veto without a closed-enum reason, and
+nothing for a name the domain had no verified data for.
+
+## Selection (`selection`)
+
+Legacy independent runs choose their book one of two ways (`independent-research.md`,
+Stage 3):
+
+```
+selection = "merit_veto" (default)                selection = "chief"
+  macro call skipped; regime computed in Go         macro runs as before
+  merit order − vetoes − per-idea gate refusals     Chief Analyst ranks and prices
+  → top 5 (sector cap), scout direction,            → validate → risk gate
+    market_on_open, catastrophe stop, time exit       → corrective re-prompt → drop
+  → Chief Writer (one call, chiefTarget)            → DeepSeek fallback / degraded
+      ├─ parses → prose, closed-enum vetoes
+      │           (refill from reserves),
+      │           shadow_rank recorded
+      └─ fails / unparseable → ship the
+                  selection without prose, degraded
+  → final risk gate (sizing, book findings)
+```
+
+The Chief Writer runs on the selected Chief engine through the same `chiefTarget` as the
+Chief Analyst, and its row in `metadata.json`'s `domains` is still `chief-analyst`. No
+corrective re-prompt and no DeepSeek fallback run under `merit_veto`: the Chief's answer
+no longer decides what ships, so a failure costs prose, not ideas. Both policies write
+`data/selection.json`.
+
 ## The risk gate
 
 After validation, `applyRiskGate` (`internal/orchestrator/riskgate.go`) sizes every idea
@@ -161,8 +193,11 @@ runs/2026-06-01T14-30-05/
                           # No data/quant.json: no provider serves that domain, so
                           # the file was a relabelled copy of macro.json with an
                           # empty ByTicker — it misrepresented what quant saw.
-  news.md  fundamentals.md  quant.md  sentiment.md  macro.md
-  chief-analyst.md        # full synthesis (human-readable)
+  data/selection.json     # legacy independent runs: every shortlisted name in merit
+                          # order with its labels, vetoes, exclusion reason, domain
+                          # scores, shipped rank and the Chief's shadow rank
+  news.md  fundamentals.md  quant.md  sentiment.md  macro.md   # macro.md: chief policy only
+  chief-analyst.md        # full synthesis, or the merit_veto write-up (human-readable)
   ideas.json              # parsed []TradeIdea incl. entry/stop/target (machine-readable)
   metadata.json           # run outcome, domain statuses, warnings, weights, provenance
 ```
