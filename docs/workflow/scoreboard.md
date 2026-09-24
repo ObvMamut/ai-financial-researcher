@@ -29,6 +29,15 @@ scorable after a ticker is delisted or renamed.
 
 ### 1. Does the entry fill?
 
+**Market-on-open ideas** (`entry_type: "market_on_open"`, every idea generated since
+2026-09-23) have no limit and no fill window: they fill at the **open of the first
+session after generation**, whatever that open is — a gap in either direction included —
+and `entry_filled` is that open. Such an idea is never `unfilled`; with no session yet it
+is `open`. It then exits at its catastrophe stop or on time (step 2); a target is a barrier
+only when the idea stated one.
+
+**Limit ideas** — any idea with no `entry_type`, i.e. every `ideas.json` written before the
+field existed, and runs with `risk.entry_type = "limit"` — replay exactly as before.
 The idea's `entry` is treated as a limit that stays live for
 `fill_window_days` sessions (default **3**). Past that, the setup the idea
 described is not the setup in front of you.

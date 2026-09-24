@@ -10,12 +10,15 @@ supported dossiers whose independent challenge is supported with no material
 issues. Macro is shared context, not another vote.
 
 Explain why this company, why now, what is still unpriced, and what would disprove
-it. Give realistic entry, stop and target reasoning tied to the thesis. A target
-is a take-profit instruction, not a forecast. Give a plausible low/high outcome
-range in listing currency. Do not move a target merely to improve reward:risk.
-No minimum whole-horizon sigma stop or reward:risk floor applies. Maximum risk,
-liquidity, freshness, position sizing, entry bands, sector, correlation and
-exposure checks still apply. Never lengthen the horizon to pass a simulation.
+it. Every plan enters market-on-open: bought or sold at the next session's open,
+held for timeframe_days and exited on time. `entry` is the verified last close, a
+reference price the app sets anyway. The stop is a wide catastrophe stop at least
+2σ_daily·√timeframe_days from entry; a nearer one is widened by the app. No
+take-profit is needed: omit `target`, `target_reason` and `target_method` unless
+you state a target, and then it is informational and its provenance is checked.
+Give a plausible low/high outcome range in listing currency. No reward:risk floor
+applies. Maximum risk, liquidity, freshness, position sizing, sector, correlation
+and exposure checks still apply. Never lengthen the horizon to pass a simulation.
 Verified upcoming earnings truncate the trade before the event. If that leaves
 fewer than 10 sessions, keep the company on the watchlist instead of proposing it.
 All expectancy numbers are scenario diagnostics with assumed edge, not a
@@ -32,14 +35,14 @@ response and is rejected as one.
 ```json
 {"ideas": [{"ticker": "string", "direction": "string, BUY or SELL",
             "why": "string",
-            "entry": 100, "stop": 96, "target": 107, "timeframe_days": 15,
+            "entry": 100, "stop": 90, "timeframe_days": 15,
             "position_note": "string",
             "thesis": {"why_now": "string", "invalidation": "string",
                        "catalyst_window": "string",
                        "evidence_quality": "string, strong or mixed",
                        "evidence_ids": ["string, a supplied evidence id"],
                        "entry_reason": "string", "stop_reason": "string",
-                       "target_reason": "string", "target_method": "external_comparison | thesis_scenario",
+                       "target_reason": "string, only with a target", "target_method": "external_comparison | thesis_scenario, only with a target",
                        "target_claim_ids": ["c1"],
                        "outcome_low": 94, "outcome_high": 109,
                        "prerequisites": ["string"]}}],
@@ -81,7 +84,7 @@ omitted evidence never establishes support. Keep all prose concise within the
 supplied response budget, without an essay before the JSON.
 
 
-Set target_method explicitly: external_comparison requires nonempty validated
+If you state a target, set target_method explicitly: external_comparison requires nonempty validated
 numerical target_claim_ids; thesis_scenario requires an empty target_claim_ids
 array and a source-grounded scenario rationale. Do not label an external target
 as a scenario to bypass normalization. The final independent review checks the
@@ -94,4 +97,4 @@ monitoring array. Select it as conditional when a prerequisite remains. Never
 turn missing core evidence, disputed claims or failed research into a conditional
 trade. Do not demand unavailable future outcomes or a scheduled announcement as
 a prerequisite for every continuation thesis. Preserve the challenger's checks
-and provide evidence-grounded entry, stop, target and outcome-range reasoning.
+and provide evidence-grounded stop and outcome-range reasoning.

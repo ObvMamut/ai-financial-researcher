@@ -241,9 +241,15 @@ The deliverable: direction, confidence, trade mechanics, quick why.
 Field rules:
 - `direction`: `BUY` | `SELL`.
 - `confidence`: integer `0–100` (see `scoring.md`).
+- `entry_type` (set by Go, never by the model): `market_on_open` for every idea generated
+  since 2026-09-23 unless `risk.entry_type = "limit"`. Absent means a limit — every older
+  `ideas.json` — and the scoreboard replays it as one.
 - `entry`/`stop`/`target`: prices in the ticker's local currency, consistent with the
-  verified last close. Ordering — BUY: stop < entry < target; SELL: target < entry < stop.
-  Stops should sit 1–2 × σ_daily·√h from entry (h = `timeframe_days`), per the quant pack.
+  verified last close. For `market_on_open`, `entry` is replaced by the verified last close
+  (a reference price; the fill is the next open), `stop` is a catastrophe stop widened in Go
+  to at least `catastrophe_stop_sigma`·σ_daily·√h, and `target` is optional and
+  informational. For a limit: BUY stop < entry < target; SELL target < entry < stop; stops
+  1–2 × σ_daily·√h from entry (h = `timeframe_days`).
 - `risk_reward`: |target−entry| / |entry−stop| — Go recomputes it and corrects claims off
   by more than 20%.
 - `timeframe_days`: expected holding period in trading days (5–20).
@@ -378,6 +384,7 @@ type TradeIdea struct {
     Confidence int    `json:"confidence"` // 0-100
     Why        string `json:"why"`
 
+    EntryType     string  `json:"entry_type,omitempty"` // market_on_open | "" (limit)
     Entry         float64 `json:"entry,omitempty"`
     Stop          float64 `json:"stop,omitempty"`
     Target        float64 `json:"target,omitempty"`

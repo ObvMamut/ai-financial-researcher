@@ -289,14 +289,19 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    replayed track record and the lessons drawn from it, adjusts each base by at most
    `chief_adjust_band` points with a named reason, ranks, and emits the final 5 ideas (with entry/stop/target derived from
    vol-scaled distances) as a fenced ```json block that Go parses into
-   `[]model.TradeIdea`. Confidence outside the band is clamped in Go. The entry band is
-   **asymmetric**: a limit on the patient side (a long below the last close, a short above
-   it) may reach `entry_patience_sigma·σ_daily·√5` (default 1.5), one on the chasing side
-   only `entry_chase_sigma` (default 0.5) — waiting risks an `unfilled`, chasing risks a
-   fill at the top of the move.
+   `[]model.TradeIdea`. Confidence outside the band is clamped in Go. New ideas (both
+   research modes) are `entry_type: "market_on_open"`: entry is re-based on the verified
+   last close, the fill is the next open, the stop is a catastrophe stop floored in Go at
+   `catastrophe_stop_sigma·σ_daily·√h` (default 2.0), the target is optional, and the
+   position exits on time — the 2026-09-23 backtest found every target and every nearer
+   stop cost return, and live patient limits were adversely selected. `risk.entry_type =
+   "limit"` restores the asymmetric `entry_patience_sigma`/`entry_chase_sigma` limit band,
+   which binds only on limit ideas (and on every pre-field `ideas.json` the scoreboard
+   replays).
 5. **Risk gate (in-process, no model):** `riskgate.go` sizes each idea from the account's
    risk budget and checks stop/target bands, reward:risk, liquidity and simulated
-   expectancy, plus book-level correlation, sector and beta-adjusted exposure measured
+   expectancy (for market-on-open ideas only the catastrophe-stop band and liquidity;
+   expectancy is recorded, not gated), plus book-level correlation, sector and beta-adjusted exposure measured
    against the account rather than averaged over the idea count. It also enforces an
    **evidence floor** (independent mode only): an idea scored by quant alone, or by no
    domain at all, is a screen output rather than a research conclusion and is dropped. Violations buy one corrective
