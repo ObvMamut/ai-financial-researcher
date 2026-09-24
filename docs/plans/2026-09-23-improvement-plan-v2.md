@@ -189,3 +189,26 @@ Waves 1, 2 and 5.2 are independent and can run in parallel on separate branches.
 - Fakebin hermetic runs for any pipeline change.
 - Acceptance numbers per wave, taken from the actual run artifacts, never asserted.
 - `cfr scoreboard --control` (with intervals) is the standing report after each live run.
+
+## Status (2026-09-24)
+
+Implemented on branch `scoreboard-excess-ci`; `go vet` and `go test ./...` pass on the integrated tree.
+
+| Wave | State | Notes |
+|---|---|---|
+| 0 | done | Evidence, plan, corrected success criterion, CLAUDE.md drift |
+| 1 (thesis) | done in code, **acceptance unverified** | Required lean, categorised issues with disclosed risk, core-claim gate, 6-claim dossier and 32 KiB researcher budget, event labels. The two live acceptance runs need the operator: live `cfr run` is blocked by this session's permission policy because it spends on a paid API. |
+| 2 (mechanics) | done | `entry_type = market_on_open` by default (`limit` restores the old behaviour), 2σ√H catastrophe stop, no target required, replay for both entry types. Also fixed: a zero target used to book −100% on long simulation paths. |
+| 5.2 + 3.5 + 4.3 (scoreboard) | done | Universe IC, `thesis` / `thesis-lean` / `thesis-lean-backfill` arms, beta-hedged excess. |
+| 3 (lab) | done | `cfr backtest` matches the Python spec to the printed digit. Pre-registered tests: C1, C3 and C4 fail the bar; C2 and C5 cannot be tested with free data. C4 is the key finding: the composite's IC10 falls to 0.004 against beta-adjusted returns. No `prescreen_version = 2` exists. |
+| 4 (labels/veto) | done | `selection = merit_veto` by default (`chief` kept for A/B), specialist labels and vetoes, the Chief writes prose and a shadow rank, macro replaced by a computed regime line, `chief-shadow` and `vetoed` arms. |
+
+Integration fixes made while merging:
+- The Chief board's source context was lumpy: a fixed ±180-character window was taken whole or not at all. It is now divisible, so the board spends its budget.
+- One test assertion charged a 45-byte prefix twice.
+- Two waves each defined `BinaryEvent`; Wave 4's is now `LabelBinaryEvent`.
+
+Open follow-ups (each waits on live data or is deliberately deferred):
+- The `shipped` arm pools `chief` and `merit_veto` runs. Split it by `ideas.json.selection` once merit_veto runs exist.
+- Per-label-value shadow arms. The data is already persisted in `data/selection.json`.
+- No merit floor in merit_veto. Kept on purpose: the scouts' direction, not the composite's sign, is what carries the only positive interval so far (the shortlist arm).
