@@ -82,11 +82,23 @@ type Entry struct {
 	// The Done flags say the window has actually elapsed. A recent idea has
 	// neither, and reading a zero there as a flat result is the mistake this
 	// pair of booleans exists to prevent.
-	CallDone       bool    `json:"call_done,omitempty"`
-	CallPnLPct     float64 `json:"call_pnl_pct,omitempty"`
-	CallBenchPct   float64 `json:"call_bench_pct,omitempty"`
-	CallExcessPct  float64 `json:"call_excess_pct,omitempty"`
-	CallEndDate    string  `json:"call_end_date,omitempty"`
+	CallDone      bool    `json:"call_done,omitempty"`
+	CallPnLPct    float64 `json:"call_pnl_pct,omitempty"`
+	CallBenchPct  float64 `json:"call_bench_pct,omitempty"`
+	CallExcessPct float64 `json:"call_excess_pct,omitempty"`
+	CallEndDate   string  `json:"call_end_date,omitempty"`
+	// CallBeta and CallHedgedPct restate the call net of beta units of its
+	// benchmark rather than one (hedge.go), so a book's market exposure can be
+	// told apart from its selection. CallHedged says a beta existed; set only
+	// by the control arms.
+	CallHedged    bool    `json:"call_hedged,omitempty"`
+	CallBeta      float64 `json:"call_beta,omitempty"`
+	CallHedgedPct float64 `json:"call_hedged_excess_pct,omitempty"`
+	// Conviction is the 1–5 strength a thesis dossier gave its lean, and
+	// LeanStrength the judged qualifier ("weak", "clear") of a backfilled one.
+	// Both are recorded for the thesis-lean arms only and weight nothing.
+	Conviction     int     `json:"conviction,omitempty"`
+	LeanStrength   string  `json:"lean_strength,omitempty"`
 	TradeDone      bool    `json:"trade_done,omitempty"`
 	TradePnLPct    float64 `json:"trade_pnl_pct,omitempty"`
 	TradeExcessPct float64 `json:"trade_excess_pct,omitempty"`
