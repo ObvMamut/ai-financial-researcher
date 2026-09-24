@@ -212,3 +212,31 @@ Open follow-ups (each waits on live data or is deliberately deferred):
 - The `shipped` arm pools `chief` and `merit_veto` runs. Split it by `ideas.json.selection` once merit_veto runs exist.
 - Per-label-value shadow arms. The data is already persisted in `data/selection.json`.
 - No merit floor in merit_veto. Kept on purpose: the scouts' direction, not the composite's sign, is what carries the only positive interval so far (the shortlist arm).
+
+## Live acceptance (2026-09-24, six thesis runs on deepseek-chat research + deepseek-v4-pro Chief)
+
+| Run | Researched | Chief called | Directional dossiers | Shipped | Tokens | Fix that followed |
+|---|---|---|---|---|---|---|
+| 1 | 11/12 | no (input_capacity) | — | 0 | 1.27M | unselectable dossiers leave the Chief board (`7bc6cfe`) |
+| 2 | 11/12 | yes | 1 | 0 | 1.40M | stale source → disclosed risk (`8b14f40`) |
+| 3 | 12/12 | yes | 3 | 0 | 1.28M | Go decides final status; final-review requests disclosed (`1900549`) |
+| 4 | 12/12 | yes | 3 | 0 | 1.32M | final dossier requests disclosed (`72258be`) |
+| 5 | 12/12 | yes | 2 | 0 | 1.49M | one quotation per *cited source*; contrary computed signals must be answered (`762f09c`) |
+| 6 | 12/12 | yes | 3 | 0 | 1.37M | — stopped here |
+
+Before these runs, 58% of researched names never produced a readable dossier; now 100% do. Compaction is no longer needed (0 calls). Go's "needs a quoted passage" blocks fell from most names to 2.
+
+**What still blocks a trade is the research itself.** Across the three run-6 BUY dossiers:
+- TTE.PA cites a P/E its own source calls "not computable" and ignores a bearish options signal;
+- ON uses a chart-pattern invalidation, which the rules forbid;
+- 2330.TW leans on an insider-count claim it could not reconcile.
+
+An audit of these objections found them correct. More gate changes would only let weaker research through.
+
+Acceptance bar status:
+- lean on every researched name: **met**;
+- fewer than 10% of names failing on size: **met**;
+- an approved dossier with a direction: **not met**;
+- under 1M tokens per run: **not met** (1.3–1.5M).
+
+The remaining lever is research quality. That means either a stronger research model, or the lean arm proving an edge. A stronger model, such as running the researcher on the Chief's model, would breach CLAUDE.md's cost split, so it is an owner decision. Meanwhile about 60 thesis leans from these runs will mature in the `thesis-lean` scoreboard arm. The plan's rule stands: leans trade only if that arm's interval clears zero.
