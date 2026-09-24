@@ -146,18 +146,58 @@ output; none can reach a name the funnel did not pass. That makes one question d
 whether the model stages earn their cost, and nothing else in this repository can answer it:
 **would taking the top of the ranking, with no model called at all, have done as well?**
 
-Three sets of calls are scored through one identical procedure — same anchor, same horizon,
+Every set of calls is scored through one identical procedure — same anchor, same horizon,
 same benchmark arithmetic:
 
 | arm | what it is |
 | --- | --- |
 | `composite` | the pre-screen's own strongest rows, direction = the sign of its score. No model involved at any point. |
 | `shortlist` | the twelve names the funnel passed, at the bias the scouts gave them. Scouts and merge included; specialists and Chief not. |
-| `shipped` | what `ideas.json` actually contains. |
+| `shipped` | what `ideas.json` actually contains, for **legacy-mode** runs only. |
+| `thesis` | what `ideas.json` contains for thesis-mode runs (mode from `ideas.json`, else `metadata.json`). |
+| `thesis-lean` | every researched name in a thesis run at its dossier `lean` (`BUY`/`SELL`), read by key from `runs/<run>/data/research-<hexticker>.json` → `dossier.lean`, with `dossier.conviction` (1–5) recorded per call. Absent or `NONE` leans are counted as `non_directional`, not scored. Anchored at the pre-screen close, as the shortlist is. Scored even when the run shipped nothing. |
+| `thesis-lean-backfill` | the hand-judged leans in `docs/research/2026-09-23-evidence/thesis/leans.csv` (runs that predate the lean field). `BUY (weak)` → BUY with `lean_strength: weak`; `none evident` is non-directional. Anchored at the run's generation close (`closeOnOrBefore`), measured against the benchmark of the index the run screened the name under. A missing file leaves the arm empty. |
 
 Read it as a chain: **shipped over composite** is what the whole model stack adds, and
 **shipped over shortlist** is what the specialists and the Chief add on top of the screening
-they were handed.
+they were handed. **thesis-lean over shortlist** is what per-company source research adds
+over the names it was handed — the difference the thesis switch-off rule is written against
+(improvement plan §3.5): thesis stays on while that interval overlaps or beats zero, and is
+switched off (code kept) only if, after at least 8 market weeks, its whole 95% interval sits
+below zero. The backfill arm is differenced against the shortlist too, but it is a reader's
+judgement of old dossiers, not the researcher's own lean, and is never pooled with
+`thesis-lean`.
+
+### Beta-hedged excess
+
+Every scored call also carries `call_beta` and `call_hedged_excess_pct`: the direction-signed
+return less *beta* units of its benchmark rather than one. Beta is point in time — the last
+120 aligned daily log returns up to the anchor date on the same series the call is scored on,
+60 at minimum, else no hedged figure. Each arm reports the average as `beta_hedged`
+(`n`, `avg_beta`, `avg_hedged_excess_pct`) and the text table prints it as the `β-hedged`
+column. The gap between `avg excess` and `β-hedged` is the arm's market exposure, not its
+selection: the backtest's longs earned +1.32% excess against the shorts' +0.11%, which is
+the shape carrying more beta than the benchmark produces in a rising market.
+
+### Whole-universe IC
+
+`universe_ic` (always at **10 and 15** sessions, whatever `--horizon` says): for each run with
+a `prescreen.json`, the Spearman rank correlation between every non-excluded row's signed
+composite score and that name's realised benchmark-excess return. It is computed **within
+each index** and the indices averaged, because the pre-screen standardises within the index;
+an index needs 10 completed rows. One run yields one IC over ~268 names instead of five calls,
+which makes it the fastest honest read on whether the screen works out of sample.
+
+A ranking is counted once per (index, anchor session), the anchor session being the last bar
+on or before the generation date in the index's own benchmark: when an earlier run already
+ranked an index for that session, the later run's ranking of it is dropped
+(`repeat_rankings_dropped`). A Saturday and a Sunday run rank the same Friday closes, and a
+run on a US holiday repeats the US ranking while its European rows have moved on. The
+closes themselves are not the key: a run during market hours sees a live partial bar, so
+five runs one afternoon carry five slightly different closes and are still one ranking. `mean_ic` is the plain average over runs; `ci` is the week-clustered
+bootstrap interval on it with runs as the units, grouped by ISO week. `per_run` lists each
+run's IC and per-index figures. Prices come through the same series cache as the arms, so
+each symbol is fetched once however many runs rank it.
 
 The composite arm takes rows from **both ends** of the ranking. The composite is a signed
 long ranking, so its strongest calls sit at both extremes — `|score|` is the conviction and
@@ -380,8 +420,10 @@ Configure via `keep_runs` in `cfr.toml` or `CFR_KEEP_RUNS`.
   `by_domain`, `skipped`, `run_count`).
 - **`cfr scoreboard --legacy`**: the old mark-to-current-price numbers, for
   comparison against the replay on the same runs.
-- **`cfr scoreboard --control`**: the three arms above, with `--horizon` to set the
-  window they are all scored over. `--json` emits a `scoreboard.ControlReport`.
+- **`cfr scoreboard --control`**: the arms above, the beta-hedged column and the
+  universe IC, with `--horizon` to set the window the arms are scored over. The lean
+  backfill is read from `docs/research/2026-09-23-evidence/thesis/leans.csv` relative to
+  the working directory. `--json` emits a `scoreboard.ControlReport`.
   It is never folded into the stored track record: it answers a question about
   the pipeline's construction, not about its trades.
 - **`cfr postmortem`**: the attribution table computed fresh, plus whatever
