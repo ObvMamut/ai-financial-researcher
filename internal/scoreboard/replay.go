@@ -44,7 +44,9 @@ const defaultTimeframeDays = 10
 
 // Replay walks runsDir and simulates each idea forward through its own daily
 // bars: does the limit fill, which barrier is touched first, and where does the
-// position end.
+// position end. A market_on_open idea skips the first question: it fills at the
+// next session's open. An idea with no entry_type predates the field and
+// replays as the limit it was.
 //
 // The previous scoreboard compared price-at-generation to *today's* price, which
 // answers a question nobody asked. An idea that reached its target and retraced
@@ -115,6 +117,7 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 		Ticker:        idea.Ticker,
 		Index:         idea.Index,
 		Direction:     string(idea.Direction),
+		EntryType:     idea.EntryType,
 		Confidence:    idea.Confidence,
 		PriceAtGen:    idea.PriceAtGeneration,
 		Stop:          idea.Stop,
@@ -166,28 +169,42 @@ func replayIdea(ctx context.Context, r store.RunSummary, generatedAt string, ide
 	}
 	e.EntryPlanned = entry
 
-	fillBars := bars
-	entryExpired := false
-	if idea.Thesis != nil && idea.Thesis.EntryExpiresOn != "" {
-		n := 0
-		for n < len(bars) && bars[n].Date <= idea.Thesis.EntryExpiresOn {
-			n++
-		}
-		fillBars = bars[:n]
-		entryExpired = len(bars) > n || (len(bars) > 0 && bars[len(bars)-1].Date >= idea.Thesis.EntryExpiresOn)
-	}
-	fillIdx, fillPrice, ok := simulateFill(fillBars, entry, idea.Direction, fillWindow)
-	if !ok {
-		// An idea whose fill window has not run out yet has not failed to
-		// fill — it has not been given its chance. Calling that `unfilled`
-		// would write off every idea generated in the last two days.
-		if len(bars) < fillWindow && !entryExpired {
+	var fillIdx int
+	var fillPrice float64
+	if idea.MarketOnOpen() {
+		// A market-on-open idea has no limit and no fill window: it is bought
+		// or sold at the first session's open after generation, whatever that
+		// open is. It cannot be `unfilled`; with no session yet it is `open`.
+		if len(bars) == 0 || bars[0].Open <= 0 {
 			e.Outcome = OutcomeOpen
-			e.BarsHeld = len(bars)
 			return e
 		}
-		e.Outcome = OutcomeUnfilled
-		return e
+		fillIdx, fillPrice = 0, bars[0].Open
+	} else {
+		fillBars := bars
+		entryExpired := false
+		if idea.Thesis != nil && idea.Thesis.EntryExpiresOn != "" {
+			n := 0
+			for n < len(bars) && bars[n].Date <= idea.Thesis.EntryExpiresOn {
+				n++
+			}
+			fillBars = bars[:n]
+			entryExpired = len(bars) > n || (len(bars) > 0 && bars[len(bars)-1].Date >= idea.Thesis.EntryExpiresOn)
+		}
+		var ok bool
+		fillIdx, fillPrice, ok = simulateFill(fillBars, entry, idea.Direction, fillWindow)
+		if !ok {
+			// An idea whose fill window has not run out yet has not failed to
+			// fill — it has not been given its chance. Calling that `unfilled`
+			// would write off every idea generated in the last two days.
+			if len(bars) < fillWindow && !entryExpired {
+				e.Outcome = OutcomeOpen
+				e.BarsHeld = len(bars)
+				return e
+			}
+			e.Outcome = OutcomeUnfilled
+			return e
+		}
 	}
 	e.EntryFilled = round2(fillPrice)
 	e.EntryDate = bars[fillIdx].Date
@@ -298,7 +315,9 @@ type exitResult struct {
 }
 
 // walkToExit walks forward from the fill bar to whichever comes first: the
-// stop, the target, or the end of the holding period.
+// stop, the target, or the end of the holding period. A zero target — a
+// market_on_open idea that stated none — is never touched, so the position
+// ends at the stop or on time.
 func walkToExit(bars []quant.Bar, idea model.TradeIdea, timeframe int) exitResult {
 	buy := idea.Direction != model.DirectionSell
 	for i, b := range bars {
