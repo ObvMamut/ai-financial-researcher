@@ -71,6 +71,28 @@ func finalStatus(r thesisResearch, reviewFails bool) string {
 	}
 }
 
+// discloseFinalRequests runs once no retrieval round remains. The dossier's
+// own requests can no longer be served, so they stop blocking and are
+// disclosed as unanswered questions, exactly as a final review's are. On the
+// 2026-09-24 run four dossiers were held by this alone.
+func discloseFinalRequests(r *thesisResearch) {
+	if len(r.Dossier.Requests) == 0 {
+		return
+	}
+	kept := r.Blocking[:0:0]
+	for _, b := range r.Blocking {
+		if b != problemUnansweredRequests {
+			kept = append(kept, b)
+		}
+	}
+	r.Blocking = kept
+	for _, q := range r.Dossier.Requests {
+		if s := strings.TrimSpace(q.Question); s != "" {
+			r.Disclosed = appendUnique(r.Disclosed, "unanswered_request: "+s)
+		}
+	}
+}
+
 // hold records a Go finding that keeps the dossier on the watchlist, both in
 // the dossier's own unresolved list (what the reviewer and Chief read) and in
 // Holds (what decides the final status).
@@ -1273,6 +1295,7 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		out.Challenge.MaterialIssues = appendIssue(out.Challenge.MaterialIssues, problem)
 	}
 	out.Outcome.Review = out.Challenge.Verdict
+	discloseFinalRequests(&out)
 	// Go, not the researcher, decides supported. The researcher writes its
 	// status before any review and cannot know the review's verdict; on the
 	// 2026-09-24 run MRK's SELL dossier was supported by its final review,

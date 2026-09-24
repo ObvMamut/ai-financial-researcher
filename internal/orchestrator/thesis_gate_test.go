@@ -419,3 +419,23 @@ func TestAuthorsWatchlistShipsWhenTheFinalReviewSupportsIt(t *testing.T) {
 		t.Fatalf("the unanswered request was not disclosed: %v", out.Dossier.Risks)
 	}
 }
+
+// Once no retrieval round remains, the dossier's own requests are disclosed,
+// not held against it; four dossiers on the 2026-09-24 run were held by this
+// alone.
+func TestFinalDossierRequestsAreDisclosedNotBlocking(t *testing.T) {
+	r := thesisResearch{Dossier: model.CandidateDossier{Status: "watchlist", PreferredDirection: "BUY",
+		Requests: []model.ResearchRequest{{Kind: "filings", Question: "Is the Q3 date published?"}}},
+		Blocking: []string{problemUnansweredRequests, "claim c1 quote not found"}}
+	discloseFinalRequests(&r)
+	if len(r.Blocking) != 1 || r.Blocking[0] != "claim c1 quote not found" {
+		t.Fatalf("blocking = %v; want only the grounding problem kept", r.Blocking)
+	}
+	if len(r.Disclosed) != 1 || r.Disclosed[0] != "unanswered_request: Is the Q3 date published?" {
+		t.Fatalf("disclosed = %v", r.Disclosed)
+	}
+	r.Blocking = nil
+	if got := finalStatus(r, false); got != "supported" {
+		t.Fatalf("a directional dossier held only by its final requests stayed %q", got)
+	}
+}

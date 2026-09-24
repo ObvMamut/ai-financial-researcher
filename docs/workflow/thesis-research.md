@@ -186,7 +186,9 @@ final plan review, together with its plan-hash and target-assessment checks.
 A final review — the last research challenge, or the plan review — is followed
 by no retrieval round, so its requests cannot be served. `finalReviewBlockers`
 does not count them; they ship as `unanswered_request:` disclosed risks. A first
-review's requests still block and still buy the revision.
+review's requests still block and still buy the revision. The dossier's own
+requests are handled the same way: once no round remains, `discloseFinalRequests`
+drops the "research requests remain unanswered" block and discloses each question.
 
 **Final status is Go's.** The researcher's `status` is its own pre-review
 reading. After the final review, `finalStatus` decides:

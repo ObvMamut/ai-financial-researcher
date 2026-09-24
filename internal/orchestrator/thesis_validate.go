@@ -107,6 +107,11 @@ func materialIssueProblems(c *model.ThesisChallenge) []string {
 // r.Blocking and force the watchlist exactly as before. The one kind that does
 // not block is a quotation problem on a non-core claim: the thesis does not
 // stand on that claim, so it becomes a disclosed risk (r.Disclosed).
+// problemUnansweredRequests blocks a dossier that still has retrieval
+// questions while a round remains to answer them. After the final review none
+// does, and investigate discloses the questions instead (discloseFinalRequests).
+const problemUnansweredRequests = "research requests remain unanswered"
+
 func validateDossier(r *thesisResearch) {
 	d := &r.Dossier
 	core := model.CoreClaimIDs(*d)
@@ -139,7 +144,7 @@ func validateDossier(r *thesisResearch) {
 		problems = append(problems, "invalid dossier status")
 	}
 	if len(d.Requests) > 0 {
-		problems = append(problems, "research requests remain unanswered")
+		problems = append(problems, problemUnansweredRequests)
 	}
 	for _, s := range []string{d.Hypothesis, d.Changed, d.Expectations, d.Underappreciated, d.Mechanism, d.PricedIn, d.Counterargument, d.Invalidation, d.CatalystWindow} {
 		if strings.TrimSpace(s) == "" {
