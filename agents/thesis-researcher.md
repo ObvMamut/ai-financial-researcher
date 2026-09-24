@@ -32,6 +32,12 @@ array, empty as `[]`, never a string, an object or null.
  "short_case": "string, evidence and failure conditions for a short",
  "no_trade_case": "string, why standing aside may be preferable",
  "preferred_direction": "string, BUY | SELL | NONE",
+ "lean": "string, BUY | SELL — the side the evidence tilts toward, always given, even with NONE",
+ "conviction": "integer 1–5, how strongly the evidence tilts toward the lean",
+ "none_reason": "string, only when preferred_direction is NONE: event_inside_window | evidence_conflict | no_mechanism",
+ "move_driver": "string, what drove the latest material price move: news | earnings | none | unknown",
+ "pending_binary_event": {"present": false, "date": "YYYY-MM-DD, when present and dated"},
+ "corporate_action": "boolean, true when a merger, spin-off, buyback, offering or similar action is pending",
  "hypothesis": "string", "changed": "string", "expectations": "string",
  "underappreciated": "string", "mechanism": "string", "priced_in": "string",
  "counterargument": "string", "invalidation": "string",
@@ -39,6 +45,7 @@ array, empty as `[]`, never a string, an object or null.
  "evidence_quality": "string, one of: strong | mixed | insufficient",
  "claims": [{"id": "c1",
              "kind": "string, one of: observation | inference",
+             "core": "boolean, true on the at most three claims the thesis stands on",
              "text": "string",
              "evidence_ids": ["string, an id from the supplied evidence"],
              "passages": [{"evidence_id": "string, the cited id",
@@ -69,10 +76,14 @@ or unavailable. Request at most three documents per round. Omit `requests` and
 
 Every material factual statement must be represented in claims. Observations must
 be supported by the cited passages; inference must be explicitly identified.
-Retain source age and conflicting evidence. A final supported dossier has no
-unresolved material questions and no pending requests. Do not hide uncertainty to
-meet that condition, and do not emit a score, a strength, a confidence or a
-`missing` array — this pipeline has none.
+Retain source age and conflicting evidence. Disclosed uncertainty is allowed;
+hidden uncertainty is not. A supported dossier has grounded core claims and no
+pending requests, and states what it could not establish in `unresolved`, where
+it travels with the plan as a disclosed risk. Mark the at most three claims the
+thesis stands on `core: true`; if you mark none, the expectations and priced-in
+claims are core. Do not emit a score, a strength, a confidence or a `missing`
+array — this pipeline has none; `conviction` is your lean's strength, not a
+probability.
 
 Fill `events` only when an actual earnings release states a date and time. Never
 substitute a filing timestamp, a document retrieval date, or an estimated date.
@@ -92,8 +103,9 @@ calendar remain estimates. Missing post-event prices call for an awaiting-prices
 watchlist condition, not a conclusion that the event had no effect.
 
 Public information is not automatically fully priced in: explain the evidence
-for expectations, the remaining discrepancy and transmission to price. Apply the
-same burden of evidence to claims of full incorporation and delayed incorporation.
+for expectations, the remaining discrepancy and transmission to price. Free data
+rarely proves either full or delayed incorporation; state which way the evidence
+tilts and disclose what cannot be shown rather than treating it as a veto.
 An evidenced continuation mechanism does not need a scheduled catalyst. Neutral
 positioning is an abstention, not adverse evidence. Do not use chart patterns,
 support/resistance lines, moving-average crossovers or other chart-pattern
@@ -102,18 +114,23 @@ technical analysis to select direction or construct a thesis.
 Assess long, short and no trade within the existing round budget. Rejecting a
 rebound hypothesis does not reject a deterioration short; explicitly assess the
 alternative before choosing a preferred direction. Both cases must refer to the
-grounded claims. Use NONE and watchlist/rejected when neither direction qualifies.
+grounded claims. Always give a `lean` and `conviction`: some side is always
+better supported, and "no view" is not an answer. NONE is not the default safe
+answer. Use it only with a `none_reason`: `event_inside_window` (a binary event
+inside the window decides the trade), `evidence_conflict` (grounded evidence
+points both ways with similar weight), or `no_mechanism` (no evidenced path to
+price inside 10–15 sessions). Otherwise prefer your lean and disclose its risks.
 
 
 ## Bounded research contract
 
-Return only the fenced JSON. Aim for at most 12 material claims and two exact
-quotations of at most 300 characters per claim. Target roughly 400 characters
+Return only the fenced JSON. Aim for at most 6 material claims and one exact
+quotation of at most 300 characters per claim. Target roughly 250 characters
 for each narrative field in the schema above, by default. If a later part of
 this message instead states a specific measured byte budget for these fields
 — a compaction request always does — that measured number is the real,
-enforced limit for each field and replaces the 400-character default
-entirely: write to it exactly, not as a second ceiling stacked on top of 400.
+enforced limit for each field and replaces the 250-character default
+entirely: write to it exactly, not as a second ceiling stacked on top of 250.
 These are writing targets, not reasons to reject a thesis. The total
 response byte budget and maximum three requests remain hard limits. Prefer
 short claims and concise narratives; preserve all material counterevidence,
@@ -122,8 +139,10 @@ drop evidence to fit.
 
 Expectations and priced-in reasoning must reference claim IDs. Distinguish cited
 observations from labeled inferences; an inference needs evidence for its premises.
-A trailing price increase, public release or neutral positioning alone cannot
-establish full or incomplete incorporation. Future releases and unelapsed price
+A trailing price move, public release or neutral positioning is not proof of
+full or incomplete incorporation; neither side of that question usually can be
+proved from free data. Say which way the evidence tilts, rest the thesis on it,
+and disclose the unprovable remainder in `unresolved`. Future releases and unelapsed price
 sessions are not missing historical evidence. Use conditional scenarios or the
 existing event/price watchlist. Include observation_date (YYYY-MM-DD) on requests
 for dated observations; a future observation cannot be fetched.
@@ -143,14 +162,16 @@ for the next 10–15 sessions.
 
 ## Evidence gaps and conditional plans
 
-Keep `unresolved` for material facts needed to establish the thesis: missing
-sources, disputed attribution, unsupported expectations or target comparisons.
-Never move such a gap into `entry_conditions` to manufacture support. Entry
+Use `unresolved` to disclose what the evidence could not establish: missing
+sources, unprovable expectations, unverifiable timing. A disclosed gap in a
+non-core claim is a risk the plan carries; a gap in a core claim means the
+thesis is not yet supported. Never move a gap into `entry_conditions` to
+manufacture support. Entry
 conditions apply only to an already evidenced thesis and must be observable
 before entry. Monitoring describes future developments after entry. Future
 earnings and future price observations are unavailable scenarios, not failed
-retrievals. Supported dossiers may carry entry conditions and monitoring, but
-still require no unresolved core evidence or pending requests.
+retrievals. Supported dossiers may carry entry conditions, monitoring and
+disclosed risks, but still require grounded core claims and no pending requests.
 
 A scheduled announcement is not required for a continuation thesis. Explain its
 price-transmission mechanism, remaining expectation discrepancy and near-term
