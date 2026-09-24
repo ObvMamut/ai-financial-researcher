@@ -29,15 +29,18 @@ import (
 // legacy mode and the legacy fields are empty in replay mode; Summary.Replay
 // says which set to read.
 type Entry struct {
-	ResearchMode string  `json:"research_mode,omitempty"`
-	PlanStatus   string  `json:"plan_status,omitempty"`
-	RunName      string  `json:"run"`
-	GeneratedAt  string  `json:"generated_at"`
-	Ticker       string  `json:"ticker"`
-	Index        string  `json:"index,omitempty"`
-	Direction    string  `json:"direction"`
-	Confidence   int     `json:"confidence"`
-	PriceAtGen   float64 `json:"price_at_generation"`
+	ResearchMode string `json:"research_mode,omitempty"`
+	PlanStatus   string `json:"plan_status,omitempty"`
+	RunName      string `json:"run"`
+	GeneratedAt  string `json:"generated_at"`
+	Ticker       string `json:"ticker"`
+	Index        string `json:"index,omitempty"`
+	Direction    string `json:"direction"`
+	// EntryType is the idea's own entry_type: "market_on_open", or empty for
+	// a limit (every idea written before the field existed).
+	EntryType  string  `json:"entry_type,omitempty"`
+	Confidence int     `json:"confidence"`
+	PriceAtGen float64 `json:"price_at_generation"`
 
 	// Legacy fields: the idea marked to the latest close.
 	Current     float64 `json:"current_price,omitempty"`

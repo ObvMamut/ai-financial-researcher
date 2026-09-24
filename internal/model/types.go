@@ -194,9 +194,21 @@ type TradeIdea struct {
 	// count can fill the finer cells.
 	Setup string `json:"setup,omitempty"`
 
-	Entry         float64 `json:"entry,omitempty"`          // suggested entry price
-	Stop          float64 `json:"stop,omitempty"`           // protective stop
-	Target        float64 `json:"target,omitempty"`         // profit target
+	// EntryType says how the position is entered. EntryMarketOnOpen (every idea
+	// generated since 2026-09-23) buys or sells at the next session's open, so
+	// Entry is only the reference price the stop and sizing are measured from —
+	// the verified last close. Absent means EntryLimit: an ideas.json written
+	// before the field existed placed a resting limit at Entry, and the
+	// scoreboard must keep replaying it that way.
+	EntryType string  `json:"entry_type,omitempty"`
+	Entry     float64 `json:"entry,omitempty"` // limit price, or the reference close for market_on_open
+	// Stop is the protective stop. For a market_on_open idea it is a
+	// catastrophe stop, never nearer than risk.catastrophe_stop_sigma·σ√h.
+	Stop float64 `json:"stop,omitempty"`
+	// Target is a take-profit limit for a limit idea. For a market_on_open idea
+	// it is optional and informational: the position exits on time, because
+	// every take-profit tested lowered the return (docs/workflow/scoring.md).
+	Target        float64 `json:"target,omitempty"`
 	RiskReward    float64 `json:"risk_reward,omitempty"`    // |target−entry| / |entry−stop|
 	TimeframeDays int     `json:"timeframe_days,omitempty"` // expected holding period
 	PositionNote  string  `json:"position_note,omitempty"`  // sizing/hedging guidance
@@ -248,6 +260,17 @@ type TradeIdea struct {
 	BreakevenWinRate float64 `json:"breakeven_win_rate,omitempty"`
 }
 
+// Entry types. EntryLimit is also what an absent entry_type means.
+const (
+	EntryMarketOnOpen = "market_on_open"
+	EntryLimit        = "limit"
+)
+
+// MarketOnOpen reports whether the idea enters at the next session's open
+// rather than at a resting limit. An idea with no entry_type predates the
+// field and was a limit.
+func (t TradeIdea) MarketOnOpen() bool { return t.EntryType == EntryMarketOnOpen }
+
 // RiskConfig is the deterministic risk policy applied after synthesis. Every
 // number here was a sentence in a persona that the model could satisfy at its
 // own edge: "a sound stop is usually 1-2 sigma" produced a run of 1.02-sigma
@@ -279,7 +302,23 @@ type RiskConfig struct {
 	EntryPatienceSigma float64 `json:"entry_patience_sigma"`
 	// EntryChaseSigma bounds a limit entry placed on the side the position is
 	// already moving toward. Kept tight on purpose.
+	//
+	// Both entry bands bind only when EntryType is "limit". A market_on_open
+	// idea has no limit to place: its entry is the verified last close and
+	// its fill is the next open.
 	EntryChaseSigma float64 `json:"entry_chase_sigma"`
+	// EntryType is how new ideas enter: "market_on_open" (the default) or
+	// "limit", the pre-2026-09-23 behaviour, kept selectable. In the live
+	// record, limit ideas that never filled made +3.09% on the call while the
+	// ones that did fill lost 0.90%: a patient limit fills exactly when the
+	// move goes against it.
+	EntryType string `json:"entry_type,omitempty"`
+	// CatastropheStopSigma is the nearest a market_on_open idea's stop may sit,
+	// in units of sigma_daily x sqrt(h) x the reference close. A tighter stop is
+	// widened to it in Go. In a 4,080-trade backtest a stop at 2σ√h cost about
+	// 0.1% a trade against no stop at all, while 1σ√h cost 0.22% and the old
+	// ~9%/15% stop/target cost 0.41%.
+	CatastropheStopSigma float64 `json:"catastrophe_stop_sigma,omitempty"`
 	// ADVMinUSD is the 20-day average dollar volume below which a name is not
 	// tradeable in size. It gates both the pre-screen and the final ideas.
 	ADVMinUSD float64 `json:"adv_min_usd"`

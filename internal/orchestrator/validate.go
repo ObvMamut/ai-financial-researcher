@@ -106,6 +106,13 @@ func validateIdeas(res *model.IdeasResult, cfg Config, v verified) []warning {
 			continue
 		}
 
+		// How the idea enters, and for market-on-open its reference price and
+		// catastrophe-stop floor. Before the level checks, which judge the
+		// re-based levels.
+		for _, msg := range applyEntryPolicy(idea, v, cfg.Risk) {
+			warnings = append(warnings, warning{Ticker: idea.Ticker, Message: msg})
+		}
+
 		// 3. Schema defaults / enrichment. The shortlist wins over the universe
 		// files: it records which index this run screened the name out of, and
 		// a cross-listed name sits in more than one.
@@ -165,6 +172,34 @@ func validateLevels(idea *model.TradeIdea, qp *quant.Pack, patient, chase float6
 
 	if idea.Entry == 0 && idea.Stop == 0 && idea.Target == 0 {
 		warn("no trade levels provided (entry/stop/target)")
+		return ws
+	}
+	if idea.MarketOnOpen() {
+		// A market-on-open idea's entry is the verified close and its stop was
+		// floored by applyEntryPolicy; there is no limit band to check. The
+		// target is optional and only its side is checked when one is given.
+		if idea.Entry <= 0 || idea.Stop <= 0 {
+			warn("level ordering: incomplete levels (entry %.2f stop %.2f)", idea.Entry, idea.Stop)
+			return ws
+		}
+		buy := idea.Direction != model.DirectionSell
+		if (buy && idea.Stop >= idea.Entry) || (!buy && idea.Stop <= idea.Entry) {
+			warn("level ordering: %s requires the stop on the losing side of entry (got stop %.2f / entry %.2f)", idea.Direction, idea.Stop, idea.Entry)
+		}
+		if idea.Target > 0 {
+			// Not worth the corrective re-prompt: nothing binds on it.
+			if (buy && idea.Target <= idea.Entry) || (!buy && idea.Target >= idea.Entry) {
+				warn("informational target %.2f is on the wrong side of entry %.2f for a %s — removed", idea.Target, idea.Entry, idea.Direction)
+				idea.Target = 0
+			}
+		}
+		if idea.Target > 0 {
+			if risk := math.Abs(idea.Entry - idea.Stop); risk > 0 {
+				idea.RiskReward = math.Round(math.Abs(idea.Target-idea.Entry)/risk*100) / 100
+			}
+		} else {
+			idea.RiskReward = 0
+		}
 		return ws
 	}
 	if idea.Entry <= 0 || idea.Stop <= 0 || idea.Target <= 0 {

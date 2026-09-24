@@ -23,6 +23,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
+	"github.com/mamut/claude-financial-researcher/internal/store"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
@@ -1180,10 +1181,15 @@ func TestADiscardedCorrectiveRepromptIsRecorded(t *testing.T) {
 // model asked for "usually 1–2σ" and "risk_reward ≥ 1.5 preferred" satisfies it
 // at the cheapest edge of the band. Here the fake Chief does exactly that, and
 // does it again when asked to fix it.
+//
+// The stop band and reward:risk floor bind on limit entries, which an operator
+// can still select with risk.entry_type = "limit"; a market-on-open idea is
+// covered by TestMarketOnOpenIdeasShipWithoutATarget.
 func TestRiskGateRePromptsThenDropsUnsoundConstructions(t *testing.T) {
 	t.Setenv("CFR_FAKE_MODE", "bad-levels")
 	cfg := testConfig(t, model.ModeIndependent)
 	cfg.Indices = []string{"sp500"}
+	cfg.Risk.EntryType = model.EntryLimit
 
 	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
 	if runErr != nil {
@@ -1214,11 +1220,13 @@ func TestRiskGateRePromptsThenDropsUnsoundConstructions(t *testing.T) {
 }
 
 // An idea that survives arrives sized: a share count, a notional, the currency
-// at risk, and the expectancy its geometry implies.
+// at risk, and the expectancy its geometry implies. Run under the limit entry
+// type, the only one with a take-profit and therefore a breakeven hit rate.
 func TestSurvivingIdeasArriveSized(t *testing.T) {
 	t.Setenv("CFR_FAKE_MODE", "ok")
 	cfg := testConfig(t, model.ModeIndependent)
 	cfg.Indices = []string{"sp500"}
+	cfg.Risk.EntryType = model.EntryLimit
 
 	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
 	if runErr != nil {
@@ -1245,6 +1253,65 @@ func TestSurvivingIdeasArriveSized(t *testing.T) {
 		if !strings.Contains(ideasJSON, want) {
 			t.Errorf("ideas.json missing %q:\n%s", want, ideasJSON)
 		}
+	}
+}
+
+// The default entry type: a hermetic headless run whose Chief writes what the
+// persona now asks for — no target, and a stop nearer than the catastrophe
+// floor — ships every idea as market-on-open, sized off a stop Go widened to
+// 2σ√h from the verified close, with no target, no reward:risk and no
+// breakeven hit rate, and without spending a corrective call on any of it.
+func TestMarketOnOpenIdeasShipWithoutATarget(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "no-target")
+	cfg := testConfig(t, model.ModeIndependent)
+	cfg.Indices = []string{"sp500"}
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil || len(complete.Ideas.Ideas) == 0 {
+		t.Fatalf("no market-on-open idea survived the gate:\n%s", strings.Join(logs, "\n"))
+	}
+	for _, l := range logs {
+		if strings.Contains(l, "reward:risk") || strings.Contains(l, "target") && strings.HasPrefix(l, "risk:") {
+			t.Errorf("a target-less idea drew a target finding: %s", l)
+		}
+	}
+	var pack quant.Pack
+	if ok, err := store.ReadQuantPack(runDir(t, cfg.RunsDir), &pack); !ok || err != nil {
+		t.Fatalf("quant pack: ok=%v err=%v", ok, err)
+	}
+	// Five are written; the fixture's XOM has no domain scores and falls to
+	// the evidence floor, which is not an entry-policy question.
+	if len(complete.Ideas.Ideas) < 3 {
+		t.Errorf("only %d market-on-open ideas shipped", len(complete.Ideas.Ideas))
+	}
+	for _, idea := range complete.Ideas.Ideas {
+		m := pack.ByTicker[idea.Ticker]
+		if idea.EntryType != model.EntryMarketOnOpen {
+			t.Errorf("%s entry_type = %q, want %q", idea.Ticker, idea.EntryType, model.EntryMarketOnOpen)
+		}
+		if idea.Target != 0 || idea.RiskReward != 0 || idea.BreakevenWinRate != 0 {
+			t.Errorf("%s carries target geometry it never stated: %+v", idea.Ticker, idea)
+		}
+		if math.Abs(idea.Entry-m.LastClose) > 0.006 {
+			t.Errorf("%s entry %.2f is not the verified close %.2f", idea.Ticker, idea.Entry, m.LastClose)
+		}
+		floor := 2 * m.SigmaDaily * math.Sqrt(15) * m.LastClose
+		if dist := idea.Entry - idea.Stop; dist < floor-1e-9 || dist > floor+0.02 {
+			t.Errorf("%s stop distance %.2f, want the 2σ√15 floor %.2f", idea.Ticker, dist, floor)
+		}
+		if idea.Shares <= 0 || idea.RiskAmount <= 0 || idea.RiskAmount > 500 {
+			t.Errorf("%s is not sized off its stop: %+v", idea.Ticker, idea)
+		}
+	}
+	ideasJSON := readFile(t, filepath.Join(runDir(t, cfg.RunsDir), "ideas.json"))
+	if !strings.Contains(ideasJSON, `"entry_type": "market_on_open"`) {
+		t.Errorf("ideas.json does not record the entry type:\n%s", ideasJSON)
+	}
+	if !strings.Contains(strings.Join(complete.Meta.Warnings, "\n"), "catastrophe-stop floor") {
+		t.Errorf("the widened stop is not in the run's warnings: %v", complete.Meta.Warnings)
 	}
 }
 

@@ -3,7 +3,8 @@
 These confidence rules apply to `research_mode = "legacy"`. The opt-in
 [`thesis` mode](thesis-research.md) has no weighted score anchor or probability
 display. It retains maximum risk constraints but does not enforce legacy minimum
-stop width, reward:risk or simulated-expectancy floors. Thesis observations are
+stop width, reward:risk or simulated-expectancy floors. Both modes share the
+market-on-open entry policy and its catastrophe-stop floor (see *The risk gate*). Thesis observations are
 excluded from legacy confidence calibration.
 
 How five domain reports become a **confidence score (0–100)** and a **ranked** list of
@@ -396,7 +397,37 @@ reward:risk ratios between 1.52 and 1.61 against "≥ 1.5 preferred".
 
 Let `σ = σ_daily · √h · close` for the idea's own `timeframe_days`.
 
-**Per idea — hard.** A violation earns one corrective re-prompt; an idea still violating
+### Entry type: market-on-open (default since 2026-09-23)
+
+Every idea a Chief produces, in both research modes, is stamped
+`entry_type: "market_on_open"` (`applyEntryPolicy`, `riskgate.go`) unless
+`risk.entry_type = "limit"`. The evidence is in `docs/research/2026-09-23-evidence/`:
+
+- In a 4,080-trade point-in-time backtest (next-open entry, 15-session hold, 30 bps
+  costs) holding with no barriers made **+0.71%** a trade; a `2σ` stop +0.61%, a `1σ`
+  stop +0.49%, the old ≈9%/15% stop/target +0.30%. **Every target lowered the return.**
+  Live, 86% of trades exited on time and 2 of 69 reached their target.
+- Live patient limits were adversely selected: calls whose limit never traded made
+  **+3.09%**, the filled ones **−0.90%** (10 sessions).
+
+A market-on-open idea therefore:
+
+| | Market-on-open | Limit (historical / `entry_type = "limit"`) |
+|---|---|---|
+| Entry | the verified last close, set in Go; a reference price, not an order. Fills at the next session's open | a resting limit inside the patient/chase band |
+| Stop | catastrophe stop, **≥ `catastrophe_stop_sigma`·σ** (default 2.0), ≤ twice that. A nearer or wrong-side stop is **widened in Go** with a warning, never re-prompted | `stop_sigma_min … stop_sigma_max` |
+| Target | optional, informational; a wrong-side one is removed | required, `≤ target_sigma_max` |
+| Reward:risk floor, breakeven hit rate | not applied / not recorded | `rr_min` |
+| Simulated expectancy | computed and recorded as a diagnostic, **never refuses** — with one barrier at a floor the backtest chose, the level is set by the assumed edge alone | `≥ min_expectancy_r` |
+| Exit | stop, or the close of session `timeframe_days` | stop, target or time |
+
+Sizing is unchanged: `shares = floor(risk$ / |entry − stop|)`, so a wider catastrophe stop
+is a smaller position, not a larger risk. In thesis mode the target provenance, outcome-range
+and plan-review `target_assessment` checks apply only when a target is stated.
+`entry_patience_sigma` and `entry_chase_sigma` still load and still bind — on limit ideas
+only.
+
+**Per idea — hard** (the table below is the limit policy; see above for market-on-open). A violation earns one corrective re-prompt; an idea still violating
 after it is **dropped with the reason recorded**. Returning four ideas is the intended
 outcome, not a shortfall.
 
@@ -405,7 +436,7 @@ outcome, not a shortfall.
 | Stop distance | `1.0σ … 2.0σ` | `stop_sigma_min`, `stop_sigma_max` |
 | Target distance | `≤ 3.5σ` | `target_sigma_max` |
 | Reward:risk | `≥ 1.8` | `rr_min` |
-| Liquidity | `AvgDollarVol20USD ≥ $20M` (FX-converted) | `adv_min_usd` |
+| Liquidity | `AvgDollarVol20USD ≥ $20M` (FX-converted) — both entry types | `adv_min_usd` |
 | Expectancy | `≥ 0.005R` | `min_expectancy_r`, `cost_bps`, `edge_sigma_daily` |
 
 Every key in that column is **presence-detected**: what you write is what is used, zero

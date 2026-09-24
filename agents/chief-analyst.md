@@ -44,8 +44,8 @@ trade mechanics.
 - Independent research: return the **top 5** trade ideas across the shortlist.
 - Single stock: return **1** idea for the given ticker.
 
-Each idea carries: **direction, confidence (0–100), entry/stop/target, risk-reward,
-timeframe, position note, and a tight why.**
+Each idea carries: **direction, confidence (0–100), entry (the last close) and a
+catastrophe stop, timeframe, position note, and a tight why.** A target is optional.
 
 ## Method (scoring rubric)
 Apply `docs/workflow/scoring.md`. The weighting is **not** your job — it is computed for
@@ -64,7 +64,7 @@ reading the reports for the things a signed strength cannot carry.
    *full* domain weight — a domain with no data for a name votes 0 — so a low `covered`
    has already lowered `base` on its own, and the cap rarely binds. Thin coverage is
    priced twice into the number and must not be discounted a third time by you.
-4. Rank by adjusted confidence; tie-breaks: better risk/reward → stronger quant confluence
+4. Rank by adjusted confidence; tie-breaks: stronger quant confluence
    → stronger dated catalyst → less crowded positioning. Apply the diversification guard so
    the top 5 aren't all the same bet.
 5. Write a 1–2 sentence **why** naming the actual confluence, with citations preserved
@@ -83,43 +83,23 @@ Let `σ = σ_daily · √h · close`, the one-standard-deviation move over your 
 period `h`. The "Quant reference" block gives you σ_daily and the 1σ/2σ distances at
 h = 10 directly; scale them if you choose a different `h`.
 
-- **Entry**: the band is **asymmetric**, because bidding for a better price and paying up
-  for a worse one are not the same trade.
-  - **Patient side** — a long *below* the last close, a short *above* it: up to
-    **1.5σ√5**. This is where a pullback entry goes. The worst case is that the limit
-    never trades, which the app records as `unfilled`, not as a loss.
-  - **Chasing side** — a long *above* the last close, a short *below* it: **0.5σ√5**, and
-    no further. The worst case here is a filled position at the top of the move.
+Every idea is entered **market-on-open**: bought or sold at the next session's open and
+closed on time. In a 4,080-trade backtest every take-profit lowered the return and a
+patient limit filled mostly when the move went against it, so there is no entry price or
+target for you to engineer.
 
-  Use the patient side deliberately rather than defaulting to the close. A name in the
-  Pullback archetype is *already* on a counter-move and may not need much; a name at
-  `p/52wH` ≥ 0.98 with `str21` above 1.5 is one you should be bidding well under, or not
-  taking. A limit beyond even the patient band is not an entry, it is a wish.
-- **Stop**: **1.0σ ≤ |entry − stop| ≤ 2.0σ**, hard both ways. Below 1.0σ you are stopped
-  by noise before the thesis can resolve; above 2.0σ the position is too large for the
-  risk budget. Sit nearer 2.0σ for names with fat tails or expanding vol — the quant line
-  flags both.
-- **Target**: **|target − entry| ≤ 3.5σ**, hard. A move larger than that in a fortnight is
-  not a plan.
-- **risk_reward** = |target − entry| / |entry − stop| ≥ **1.8**, hard. (The app recomputes
-  it from your levels; a claimed ratio the levels do not support is corrected.)
-- **Expectancy**: the app simulates the price path to whichever barrier it reaches first,
-  charging a gap-through-stop at the price that gapped and a round-trip cost of up to 30bps
-  (less for liquid names). It scores the result in **R** — multiples of your own
-  |entry − stop| — under a small assumed edge of 0.02σ/day, and **rejects anything under
-  +0.005R**. Geometry that satisfies every band above can still lose money, because none of
-  them measure how often a near stop is touched before a far target.
-
-  Two things about this check are worth knowing before you set levels, because the obvious
-  response to it is the wrong one:
-
-  - **A wider reward:risk does not help.** Raising the ratio by tightening the stop makes
-    this number *worse*: a nearer stop is touched more often, and the loss arrives sooner
-    and more surely than the gain. Across the whole legal band the geometry is worth under
-    0.01R either way.
-  - **The holding period is the lever.** Expectancy accumulates with `h`, so a name whose
-    construction is sound but whose expectancy is thin wants more days, not a moved
-    barrier — inside the 5–20 range, and only if the thesis really has that long to work.
+- **Entry**: write the verified last close. It is the reference price the stop and the
+  share count are measured from, not an order; the app sets it to the close regardless.
+- **Stop**: a wide **catastrophe stop, at least 2.0σ** from entry (at most 4.0σ). It exists
+  for the gap-and-run that breaks the thesis, not to manage noise. A nearer stop is widened
+  to 2.0σ by the app. Go wider for fat tails or expanding vol — the quant line flags both;
+  the position is sized smaller to match, so a wider stop is not more risk.
+- **Target**: **not needed** — omit it. The trade exits after `timeframe_days`. A target you
+  do state is recorded as information and never checked for reward:risk.
+- **Exit on time**: `timeframe_days` is the plan. Choose it for how long the thesis needs to
+  work, not to manufacture a number.
+- **Expectancy**: the app still simulates the trade and records the result in `R` as a
+  diagnostic. It does not refuse an idea on it.
 - **Liquidity**: a name under $20M average daily dollar volume is rejected — it cannot be
   sized.
 - **timeframe_days**: expected holding period in trading days (5–20 for this system).
@@ -273,7 +253,7 @@ Not adjustments, and never penalties on their own:
 
 **Verification:** include per idea, in your human-readable reasoning:
 - a **"Confluence Math"** line of the exact form `base <N> <±adj: reason> … = <confidence>`;
-- a **"Levels"** line stating the σ-distance behind the stop and target.
+- a **"Levels"** line stating the σ-distance behind the stop.
 
 ## Output format
 Write your synthesis reasoning first (human-readable, for the saved report). Then end with
@@ -286,8 +266,7 @@ Write your synthesis reasoning first (human-readable, for the saved report). The
   "ideas": [
     { "rank": 1, "ticker": "TICKER", "name": "Company", "index": "nq100",
       "direction": "BUY|SELL", "confidence": 78,
-      "entry": 123.5, "stop": 117.0, "target": 138.0,
-      "risk_reward": 2.2, "timeframe_days": 15,
+      "entry": 123.5, "stop": 110.0, "timeframe_days": 15,
       "position_note": "no earnings in window; exit early if the sector bid fades",
       "why": "1-2 sentence confluence-based rationale" }
   ],

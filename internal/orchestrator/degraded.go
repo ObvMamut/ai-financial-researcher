@@ -60,11 +60,15 @@ func buildDegradedIdeas(cfg Config, reports []agents.ReportContext, shortlist []
 		}
 		c := candidate[b.Ticker]
 		result.Ideas = append(result.Ideas, model.TradeIdea{
-			Rank:           len(result.Ideas) + 1,
-			Ticker:         c.Ticker,
-			Name:           c.Name,
-			Index:          c.Index,
-			Direction:      b.Direction,
+			Rank:      len(result.Ideas) + 1,
+			Ticker:    c.Ticker,
+			Name:      c.Name,
+			Index:     c.Index,
+			Direction: b.Direction,
+			// No levels, so the entry policy is the whole trade: under the
+			// default the scoreboard replays it at the next open with a time
+			// exit, which is the measured best geometry anyway.
+			EntryType:      riskDefaults(cfg.Risk).EntryType,
 			Confidence:     conf,
 			BaseConfidence: b.Confidence,
 			DomainScores:   b.Domains,

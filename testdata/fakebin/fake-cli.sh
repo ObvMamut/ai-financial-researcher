@@ -19,6 +19,9 @@
 #                 base ± band (confidence clamp + corrective re-prompt)
 #   bad-levels  - chief-analyst places a 0.9σ stop at reward:risk 1.4, and does
 #                 it again when asked to fix it (risk gate re-prompt, then drop)
+#   no-target   - chief-analyst writes market-on-open ideas the way the persona
+#                 now asks: a 1.5σ stop (inside the catastrophe floor, which Go
+#                 widens) and no target at all
 #   corrective-badjson
 #               - chief-analyst places bad levels, then answers the corrective
 #                 re-prompt with unparseable JSON (the discard must be recorded,
@@ -108,7 +111,8 @@ fi
 # hermetic run exercises the gate on coherent ideas.
 emit_ideas() {
   # $1 = mode string, $2 = how many ideas, $3 = confidence,
-  # $4/$5 = stop and target distance in sigma (default 1.5 / 3.0)
+  # $4/$5 = stop and target distance in sigma (default 1.5 / 3.0);
+  # a target of "none" omits the target and risk_reward fields
   ss="${4:-1.5}"; ts="${5:-3.0}"
   printf '%s\n' "$prompt" | awk -v mode="$1" -v topn="$2" -v conf="$3" -v ss="$ss" -v ts="$ts" '
     $1=="-" && $3=="close" {
@@ -130,8 +134,12 @@ emit_ideas() {
         # inside the gate bands at reward:risk 2.0.
         u = sd_unit(sig[t], c)
         printf "    {\"rank\": %d, \"ticker\": \"%s\", \"direction\": \"BUY\", \"confidence\": %d,\n", i, t, conf
-        printf "     \"entry\": %.2f, \"stop\": %.2f, \"target\": %.2f,\n", c, c-ss*u, c+ts*u
-        printf "     \"risk_reward\": %.2f, \"timeframe_days\": 15,\n", ts/ss
+        if (ts == "none") {
+          printf "     \"entry\": %.2f, \"stop\": %.2f, \"timeframe_days\": 15,\n", c, c-ss*u
+        } else {
+          printf "     \"entry\": %.2f, \"stop\": %.2f, \"target\": %.2f,\n", c, c-ss*u, c+ts*u
+          printf "     \"risk_reward\": %.2f, \"timeframe_days\": 15,\n", ts/ss
+        }
         printf "     \"position_note\": \"sized by the app\",\n"
         printf "     \"why\": \"Fake synthesis for %s; levels derived from verified sigma.\"}%s\n", t, (i<k ? "," : "")
       }
@@ -168,6 +176,10 @@ EOF
     # A stop inside the noise band at a reward:risk the old prose merely
     # "preferred" against — and unchanged after the corrective re-prompt.
     emit_ideas independent 5 55 0.9 1.26
+    exit 0
+  fi
+  if [ "$mode" = "no-target" ]; then
+    emit_ideas independent 5 55 1.5 none
     exit 0
   fi
   if [ "$mode" = "corrective-badjson" ]; then

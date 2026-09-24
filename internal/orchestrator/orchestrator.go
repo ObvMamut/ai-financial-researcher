@@ -1343,7 +1343,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			}
 			for _, w := range warnings {
 				if strings.Contains(w.Message, "level ordering") {
-					repromptReasons = append(repromptReasons, fmt.Sprintf("fix %s: stop/entry/target must be ordered for the trade direction (BUY: stop < entry < target; SELL: target < entry < stop)", w.Ticker))
+					repromptReasons = append(repromptReasons, fmt.Sprintf("fix %s: stop/entry/target must be ordered for the trade direction (BUY: stop < entry < target; SELL: target < entry < stop; a target is optional for a market-on-open idea)", w.Ticker))
 				}
 				if strings.Contains(w.Message, "far confidence") {
 					repromptReasons = append(repromptReasons, fmt.Sprintf(

@@ -140,7 +140,18 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 		if r.Eligibility != "" {
 			out = append(out, riskFinding{Ticker: ticker, Hard: true, Blocked: r.Eligibility, Message: ticker + ": " + r.Dossier.Hypothesis})
 		}
-		if idea.Thesis != nil {
+		// Stamped before any level is read: the entry type decides whether a
+		// target is required at all. A market-on-open plan is re-based on the
+		// verified close with its stop floored (applyEntryPolicy).
+		if idea.Direction == model.DirectionBuy || idea.Direction == model.DirectionSell {
+			for _, msg := range applyEntryPolicy(idea, v, cfg.Risk) {
+				out = append(out, riskFinding{Ticker: ticker, Observational: true, Message: ticker + ": " + msg})
+			}
+		}
+		// A target is optional on a market-on-open plan. Its provenance is
+		// still checked whenever one is stated.
+		hasTarget := !idea.MarketOnOpen() || idea.Target > 0
+		if idea.Thesis != nil && hasTarget {
 			for _, problem := range targetProvenanceProblems(r.Dossier, *idea.Thesis) {
 				hard(problem)
 			}
@@ -176,7 +187,11 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 			th.Prerequisites = appendUnique(th.Prerequisites, condition)
 		}
 		th.Monitoring = append([]string(nil), r.Dossier.Monitoring...)
-		for _, s := range []string{idea.Why, th.WhyNow, th.Invalidation, th.CatalystWindow, th.EntryReason, th.StopReason, th.TargetReason} {
+		reasons := []string{idea.Why, th.WhyNow, th.Invalidation, th.CatalystWindow, th.EntryReason, th.StopReason}
+		if hasTarget {
+			reasons = append(reasons, th.TargetReason)
+		}
+		for _, s := range reasons {
 			if strings.TrimSpace(s) == "" {
 				hard("incomplete thesis or level reasoning")
 				break
@@ -190,15 +205,22 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 			hard(s)
 		}
 		th.EvidenceQuality = r.Dossier.EvidenceQuality
-		if th.OutcomeLow <= 0 || th.OutcomeHigh <= th.OutcomeLow || idea.Target < th.OutcomeLow || idea.Target > th.OutcomeHigh {
-			hard("target outside supported outcome range")
-		}
-		if !((idea.Direction == model.DirectionBuy && idea.Stop < idea.Entry && idea.Entry < idea.Target) || (idea.Direction == model.DirectionSell && idea.Target < idea.Entry && idea.Entry < idea.Stop)) {
-			hard("invalid entry/stop/target ordering")
-		}
-		risk := math.Abs(idea.Entry - idea.Stop)
-		if risk > 0 {
-			idea.RiskReward = math.Round(math.Abs(idea.Target-idea.Entry)/risk*100) / 100
+		if hasTarget {
+			if th.OutcomeLow <= 0 || th.OutcomeHigh <= th.OutcomeLow || idea.Target < th.OutcomeLow || idea.Target > th.OutcomeHigh {
+				hard("target outside supported outcome range")
+			}
+			if !((idea.Direction == model.DirectionBuy && idea.Stop < idea.Entry && idea.Entry < idea.Target) || (idea.Direction == model.DirectionSell && idea.Target < idea.Entry && idea.Entry < idea.Stop)) {
+				hard("invalid entry/stop/target ordering")
+			}
+			risk := math.Abs(idea.Entry - idea.Stop)
+			if risk > 0 {
+				idea.RiskReward = math.Round(math.Abs(idea.Target-idea.Entry)/risk*100) / 100
+			}
+		} else {
+			if !((idea.Direction == model.DirectionBuy && idea.Stop < idea.Entry) || (idea.Direction == model.DirectionSell && idea.Entry < idea.Stop)) {
+				hard("invalid entry/stop ordering")
+			}
+			idea.RiskReward = 0
 		}
 		m, have := quantFor(v, ticker)
 		if !have || m.LastClose <= 0 || m.SigmaDaily <= 0 {
@@ -244,7 +266,12 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 		if len(th.Prerequisites) > 0 {
 			idea.Status = "conditional"
 		}
-		// Preserve the asymmetric patient/chase limits without legacy sigma floors.
+		// Preserve the asymmetric patient/chase limits without legacy sigma
+		// floors — for a limit entry only. A market-on-open plan's entry is the
+		// verified close itself.
+		if idea.MarketOnOpen() {
+			continue
+		}
 		dev := math.Abs(idea.Entry - m.LastClose)
 		band := cfg.Risk.EntryChaseSigma
 		if isPatientEntry(idea.Direction, idea.Entry-m.LastClose) {

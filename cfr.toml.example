@@ -408,8 +408,26 @@
 # One number could only ever be set to the chasing width. That is why a run bid
 # 442 for a stock at 444.12 sitting on its 52-week high: waiting for a genuine
 # pullback was not expressible.
+#
+# These two bind only on limit entries. New ideas enter market-on-open by default
+# (entry_type below), so they no longer drive fills unless entry_type = "limit".
 #entry_patience_sigma = 1.5
 #entry_chase_sigma    = 0.5
+
+# How new ideas enter. "market_on_open" (default): the entry is the verified last
+# close, the position fills at the next session's open, the target is optional and
+# informational, and it exits at the stop or after timeframe_days. No reward:risk
+# floor, target band or expectancy refusal applies. "limit" restores the old
+# resting-limit behaviour and every check above. Why: in a 4,080-trade backtest
+# every take-profit lowered returns, and live limits that never filled were the
+# right calls (+3.09%) while the filled ones lost (-0.90%). CFR_ENTRY_TYPE.
+#entry_type = "market_on_open"
+
+# The nearest a market-on-open stop may sit, in units of sigma_daily x
+# sqrt(timeframe_days) x the last close. A nearer stop is widened to it in Go; the
+# gate refuses one beyond twice this. 2.0 cost ~0.1%/trade against no stop at all
+# in the backtest, 1.0 cost ~0.2%. CFR_CATASTROPHE_STOP_SIGMA.
+#catastrophe_stop_sigma = 2.0
 
 # 20-day average dollar volume below which a name is not tradeable in size. The
 # pre-screen drops anything under it, so such names never reach a model, and the
