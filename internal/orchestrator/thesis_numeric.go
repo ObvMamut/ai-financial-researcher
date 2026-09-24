@@ -152,8 +152,7 @@ func (t *thesisRunner) validateComparisons(ctx context.Context, r *thesisResearc
 			continue
 		}
 		if err := normalizeComparison(ctx, claim.Comparison, r.Candidate.Ticker, r.Documents, prices, t.fx, t.run.TS); err != nil {
-			r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, "comparison "+claim.ID+": "+err.Error())
-			r.Dossier.Status = "watchlist"
+			r.hold("comparison " + claim.ID + ": " + err.Error())
 		}
 	}
 }

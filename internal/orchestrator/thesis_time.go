@@ -173,8 +173,7 @@ func validateEvidenceTime(r *thesisResearch, anchor time.Time) {
 	for _, c := range r.Dossier.Claims {
 		for _, id := range c.EvidenceIDs {
 			if d, ok := by[id]; ok && d.PublishedAt.After(anchor) {
-				r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, "claim "+c.ID+" cites publication after run anchor: "+id)
-				r.Dossier.Status = "watchlist"
+				r.hold("claim " + c.ID + " cites publication after run anchor: " + id)
 			}
 		}
 	}

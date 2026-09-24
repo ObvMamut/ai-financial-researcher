@@ -183,6 +183,26 @@ unavailable review and a historical review without a contract version keep
 their old meaning — only `supported` passes those. The same gate applies to the
 final plan review, together with its plan-hash and target-assessment checks.
 
+A final review — the last research challenge, or the plan review — is followed
+by no retrieval round, so its requests cannot be served. `finalReviewBlockers`
+does not count them; they ship as `unanswered_request:` disclosed risks. A first
+review's requests still block and still buy the revision.
+
+**Final status is Go's.** The researcher's `status` is its own pre-review
+reading. After the final review, `finalStatus` decides:
+- `watchlist` if the final review fails the gate;
+- `rejected` if the researcher rejected the dossier;
+- `watchlist` if a Go hold remains (`Holds`: a citation published after the run
+  anchor, an announcement reaction that cannot be verified or priced, a numerical
+  comparison that will not normalise) or a blocking validation problem does;
+- `supported` if the preferred direction is BUY or SELL;
+- `watchlist` otherwise.
+
+On 2026-09-24, MRK's SELL dossier had a supported final review, every claim
+confirmed and every issue a disclosed risk. It stayed on the watchlist for two
+reasons: its author had written `watchlist`, and the final review asked two
+questions nothing could answer.
+
 **Go validation.** `validateDossier` no longer writes its findings into the
 researcher's `unresolved` list, and that list no longer forces the watchlist.
 Blocking findings — invalid or invented evidence, missing reasoning references,

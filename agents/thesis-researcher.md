@@ -27,7 +27,7 @@ array, empty as `[]`, never a string, an object or null.
 {"contract_version": 2,
  "expectations_claim_ids": ["c1"], "priced_in_claim_ids": ["c1"],
  "ticker": "string, the supplied ticker exactly",
- "status": "string, one of: supported | watchlist | rejected",
+ "status": "string, one of: supported | watchlist | rejected — your own reading; Go sets the final status from the review",
  "long_case": "string, evidence and failure conditions for a long",
  "short_case": "string, evidence and failure conditions for a short",
  "no_trade_case": "string, why standing aside may be preferable",

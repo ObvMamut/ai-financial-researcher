@@ -211,7 +211,7 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 		if i >= max {
 			hard("exceeds maximum idea count")
 		}
-		if r.Dossier.Status != "supported" || len(reviewBlockers(r.Challenge)) > 0 {
+		if r.Dossier.Status != "supported" || len(finalReviewBlockers(r.Challenge)) > 0 {
 			hard("thesis or challenge unresolved")
 		}
 		if r.Eligibility != "" {

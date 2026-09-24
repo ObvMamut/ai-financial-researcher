@@ -44,7 +44,42 @@ type thesisResearch struct {
 	// Blocking keeps the dossier off supported, Disclosed becomes a risk.
 	Blocking  []string `json:"blocking,omitempty"`
 	Disclosed []string `json:"disclosed,omitempty"`
+	// Holds are Go's own findings that keep the dossier off supported however
+	// the review reads it: a citation published after the run anchor, an
+	// announcement reaction that cannot be verified or priced yet, a numerical
+	// comparison that does not normalise. Recorded apart from the researcher's
+	// own `unresolved` list so the final status can tell the two apart.
+	Holds []string `json:"holds,omitempty"`
 }
+
+// finalStatus is the dossier status after its final review. A directional
+// dossier with no Go hold, no blocking validation problem and a final review
+// that passes the gate is supported; a researcher's own rejection stands;
+// everything else is on the watchlist.
+func finalStatus(r thesisResearch, reviewFails bool) string {
+	switch {
+	case reviewFails:
+		return "watchlist"
+	case r.Dossier.Status == "rejected":
+		return "rejected"
+	case len(r.Holds) > 0 || len(r.Blocking) > 0:
+		return "watchlist"
+	case r.Dossier.PreferredDirection == "BUY" || r.Dossier.PreferredDirection == "SELL":
+		return "supported"
+	default:
+		return "watchlist"
+	}
+}
+
+// hold records a Go finding that keeps the dossier on the watchlist, both in
+// the dossier's own unresolved list (what the reviewer and Chief read) and in
+// Holds (what decides the final status).
+func (r *thesisResearch) hold(reason string) {
+	r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, reason)
+	r.Holds = appendUnique(r.Holds, reason)
+	r.Dossier.Status = "watchlist"
+}
+
 type thesisRunner struct {
 	discoveryDiagnostics []model.SourceDiagnostic // written under discovery's mutex, read after its wait
 	fx                   *marketdata.FXRates
@@ -1238,9 +1273,15 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 		out.Challenge.MaterialIssues = appendIssue(out.Challenge.MaterialIssues, problem)
 	}
 	out.Outcome.Review = out.Challenge.Verdict
-	if out.Challenge.Ticker != ticker || len(reviewBlockers(out.Challenge)) > 0 || len(validateClaimsAt(out.Challenge.Claims, out.Documents, ticker, t.run.TS)) > 0 || len(validateClaimPassages(out.Challenge.Claims, out.Documents)) > 0 {
-		out.Dossier.Status = "watchlist"
-	}
+	// Go, not the researcher, decides supported. The researcher writes its
+	// status before any review and cannot know the review's verdict; on the
+	// 2026-09-24 run MRK's SELL dossier was supported by its final review,
+	// every claim confirmed and every issue a disclosed risk, and stayed on
+	// the watchlist because its author had written "watchlist". A directional
+	// dossier with no Go hold, no blocking validation problem and a final
+	// review that passes the gate is supported; anything else is not.
+	reviewFails := out.Challenge.Ticker != ticker || len(finalReviewBlockers(out.Challenge)) > 0 || len(validateClaimsAt(out.Challenge.Claims, out.Documents, ticker, t.run.TS)) > 0 || len(validateClaimPassages(out.Challenge.Claims, out.Documents)) > 0
+	out.Dossier.Status = finalStatus(out, reviewFails)
 	// Only a review that actually happened and actually said "reject" is a
 	// rejection. An unavailable challenge leaves the company on the watchlist
 	// with the reason recorded as a research failure.
@@ -1342,7 +1383,7 @@ func (t *thesisRunner) reviewPlans(ctx context.Context, res *model.IdeasResult, 
 		if r.Dossier.ContractVersion == 2 && (challenge.PlanHash != executionPlanHash(idea) || !planTargetSupported(idea, challenge)) {
 			challenge.MaterialIssues = append(challenge.MaterialIssues, issue(model.IssueForm, "execution review must support target provenance and match the supplied plan hash"))
 		}
-		if e != nil || challenge.Ticker != idea.Ticker || len(reviewBlockers(challenge)) > 0 || len(validateClaimsAt(challenge.Claims, r.Documents, idea.Ticker, t.run.TS)) > 0 || len(validateClaimPassages(challenge.Claims, r.Documents)) > 0 {
+		if e != nil || challenge.Ticker != idea.Ticker || len(finalReviewBlockers(challenge)) > 0 || len(validateClaimsAt(challenge.Claims, r.Documents, idea.Ticker, t.run.TS)) > 0 || len(validateClaimPassages(challenge.Claims, r.Documents)) > 0 {
 			reason := challenge.Reason
 			blocked := model.BlockedReviewReject
 			if e != nil {

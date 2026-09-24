@@ -173,6 +173,16 @@ func reviewBlockers(c model.ThesisChallenge) []string {
 	return out
 }
 
+// finalReviewBlockers is reviewBlockers for a review nothing follows — the
+// final research challenge and the plan review. Their requests cannot be
+// served: no retrieval round comes after them. MRK's supported final review on
+// 2026-09-24 still asked two questions and was held off supported by them
+// alone. They are disclosed as unanswered questions (disclosedRisks) instead.
+func finalReviewBlockers(c model.ThesisChallenge) []string {
+	c.Requests = nil
+	return reviewBlockers(c)
+}
+
 func hasBlockingIssue(c model.ThesisChallenge) bool {
 	for _, m := range c.MaterialIssues {
 		if m.Blocking() {
@@ -197,6 +207,11 @@ func disclosedRisks(d model.CandidateDossier, c model.ThesisChallenge, notes []s
 	for _, m := range c.MaterialIssues {
 		if !m.Blocking() {
 			out = appendUnique(out, m.Category+": "+m.Issue)
+		}
+	}
+	for _, r := range c.Requests {
+		if q := strings.TrimSpace(r.Question); q != "" {
+			out = appendUnique(out, "unanswered_request: "+q)
 		}
 	}
 	core := model.CoreClaimIDs(d)

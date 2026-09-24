@@ -331,3 +331,91 @@ func TestStaleSourceIsADisclosedRiskWhenCoreClaimsHold(t *testing.T) {
 		t.Fatalf("the stale source was not carried as a risk:\n%s", risks)
 	}
 }
+
+// The researcher writes its status before any review; Go decides supported
+// after the final one. MRK's SELL dossier on 2026-09-24 was supported by its
+// final review — every claim confirmed, every issue a disclosed risk — and
+// stayed on the watchlist because its author had written "watchlist".
+func TestFinalStatusIsDecidedInGoNotByTheResearcher(t *testing.T) {
+	r := func(status, dir string) thesisResearch {
+		return thesisResearch{Dossier: model.CandidateDossier{Status: status, PreferredDirection: dir}}
+	}
+	cases := []struct {
+		name        string
+		r           thesisResearch
+		reviewFails bool
+		want        string
+	}{
+		{"author's watchlist, directional, review passes", r("watchlist", "SELL"), false, "supported"},
+		{"review fails", r("supported", "BUY"), true, "watchlist"},
+		{"no direction", r("supported", "NONE"), false, "watchlist"},
+		{"researcher rejected", r("rejected", "BUY"), false, "rejected"},
+		{"Go hold", func() thesisResearch {
+			x := r("watchlist", "BUY")
+			x.Holds = []string{"comparison c1: no FX"}
+			return x
+		}(), false, "watchlist"},
+		{"blocking validation", func() thesisResearch {
+			x := r("watchlist", "BUY")
+			x.Blocking = []string{"claim c1 quote not found"}
+			return x
+		}(), false, "watchlist"},
+	}
+	for _, c := range cases {
+		if got := finalStatus(c.r, c.reviewFails); got != c.want {
+			t.Errorf("%s: status %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A request in a final review cannot be served: no retrieval round follows
+// it. It is disclosed as an unanswered question, not counted as a block —
+// while the same request still blocks, and buys the revision, on a first
+// review.
+func TestFinalReviewRequestsAreDisclosedNotBlocking(t *testing.T) {
+	d := gateDossier()
+	c := gateReview(d, "supported")
+	c.Requests = []model.ResearchRequest{{Kind: "filings", Question: "Has the issuer published an earnings date?"}}
+	if len(reviewBlockers(c)) == 0 {
+		t.Fatal("a first review's pending request no longer blocks")
+	}
+	if b := finalReviewBlockers(c); len(b) != 0 {
+		t.Fatalf("a final review's unanswerable request blocked: %v", b)
+	}
+	if risks := strings.Join(disclosedRisks(d, c, nil), "\n"); !strings.Contains(risks, "unanswered_request: Has the issuer published an earnings date?") {
+		t.Fatalf("the request was not disclosed:\n%s", risks)
+	}
+}
+
+// End to end through the research loop: a BUY dossier whose author wrote
+// "watchlist", reviewed as supported with one unanswerable request, ships
+// supported and carries the request as a disclosed risk.
+func TestAuthorsWatchlistShipsWhenTheFinalReviewSupportsIt(t *testing.T) {
+	id := fixtureEvidenceID(t)
+	d := gateDossier()
+	for i := range d.Claims {
+		d.Claims[i].EvidenceIDs = []string{id}
+		d.Claims[i].Passages[0].EvidenceID = id
+	}
+	d.Status, d.Lean, d.Conviction = "watchlist", "BUY", 2
+	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
+		if strings.Contains(prompt, "# Independent thesis challenge") {
+			return fenced(model.ThesisChallenge{ContractVersion: 2, Ticker: "AAA", DossierHash: captured13Hash(prompt), Verdict: "supported",
+				Reason: "The release supports the mechanism.",
+				ClaimReviews: []model.ClaimReview{
+					{ClaimID: "c1", Assessment: "supported", Attribution: "confirmed", Reason: "issuer release quoted"},
+					{ClaimID: "c2", Assessment: "supported", Attribution: "confirmed", Reason: "same release"},
+				},
+				Requests: []model.ResearchRequest{{Kind: "filings", Question: "Is an earnings date published?"}}})
+		}
+		return fenced(d)
+	})
+	defer done()
+	out := runner.investigate(context.Background(), model.Candidate{Ticker: "AAA", Name: "Company", Sector: "Health Care"}, nil, pack, nil)
+	if out.Dossier.Status != "supported" {
+		t.Fatalf("status=%s holds=%v blocking=%v issues=%+v", out.Dossier.Status, out.Holds, out.Blocking, out.Challenge.MaterialIssues)
+	}
+	if !strings.Contains(strings.Join(out.Dossier.Risks, "\n"), "unanswered_request: Is an earnings date published?") {
+		t.Fatalf("the unanswered request was not disclosed: %v", out.Dossier.Risks)
+	}
+}

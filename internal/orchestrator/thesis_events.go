@@ -105,27 +105,23 @@ func addReleaseReactions(r *thesisResearch, pack *quant.Pack, series map[string]
 			invalid = !dateFound
 		}
 		if invalid {
-			r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, "Unverified announcement timestamp: "+ev.OccurredAt)
-			r.Dossier.Status = "watchlist"
+			r.hold("Unverified announcement timestamp: " + ev.OccurredAt)
 			continue
 		}
 		bench := series[m.Benchmark]
 		if bench == nil {
-			r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, "No benchmark for abnormal earnings reaction")
-			r.Dossier.Status = "watchlist"
+			r.hold("No benchmark for abnormal earnings reaction")
 			continue
 		}
 		session, estimated := releaseSessionCalendar(r.Candidate.Ticker, at, cal)
 		if session.IsZero() {
-			r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, "Unverified market hours for announcement reaction")
-			r.Dossier.Status = "watchlist"
+			r.hold("Unverified market hours for announcement reaction")
 			continue
 		}
 		d, ok := computeDrift(series[r.Candidate.Ticker], bench, session, m.SigmaDaily)
 		if !ok || !releasePricesAligned(series[r.Candidate.Ticker], bench, session) {
 			r.Eligibility = model.BlockedPrices
-			r.Dossier.Unresolved = appendUnique(r.Dossier.Unresolved, "Awaiting sufficient post-event prices and aligned benchmark bars for announcement reaction")
-			r.Dossier.Status = "watchlist"
+			r.hold("Awaiting sufficient post-event prices and aligned benchmark bars for announcement reaction")
 			continue
 		}
 		body := fmt.Sprintf("Announcement %s, source %s; first priceable session %s (calendar estimated=%t). Two-session abnormal reaction %.2f sigma, cumulative abnormal reaction %.2f%%, cumulative abnormal move since %.2f%%, fully retraced=%t. %d sessions since. Announcement attribution requires the independent source challenge; this is not a reaction to the quarterly filing date.", ev.OccurredAt, ev.EvidenceID, d.Date, estimated, d.GapZ, 100*math.Expm1(d.gapLog), 100*math.Expm1(d.postLog), d.retraced(), d.Sessions)
