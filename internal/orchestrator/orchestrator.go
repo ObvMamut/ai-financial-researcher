@@ -50,14 +50,18 @@ type Config struct {
 	Frozen        *marketdata.ResearchSnapshot
 	EvaluationRun *store.Run
 	ResearchMode  string
-	Research      model.ResearchConfig
-	Mode          model.Mode
-	Ticker        string   // single-stock mode only
-	Indices       []string // independent mode: index keys to screen; empty = all
-	AgentsDir     string   // path to agents/*.md
-	RunsDir       string   // base directory for run artifacts (default "runs")
-	DataDir       string   // path for cached market data
-	Workers       int      // bounded pool size (default 4)
+	// Selection is who picks the shipped names in legacy independent
+	// research: model.SelectionMeritVeto (the default; "" means it) or
+	// model.SelectionChief. Thesis mode and single-stock mode ignore it.
+	Selection string
+	Research  model.ResearchConfig
+	Mode      model.Mode
+	Ticker    string   // single-stock mode only
+	Indices   []string // independent mode: index keys to screen; empty = all
+	AgentsDir string   // path to agents/*.md
+	RunsDir   string   // base directory for run artifacts (default "runs")
+	DataDir   string   // path for cached market data
+	Workers   int      // bounded pool size (default 4)
 
 	Timeouts  model.StageTimeouts
 	Retry     model.RetryPolicy
@@ -195,6 +199,9 @@ type Config struct {
 func (c *Config) applyDefaults() {
 	if c.ResearchMode == "" {
 		c.ResearchMode = "legacy"
+	}
+	if c.Selection == "" {
+		c.Selection = model.SelectionMeritVeto
 	}
 	c.Research = c.Research.Defaults()
 	if c.AgentsDir == "" {
@@ -474,6 +481,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	}
 	if cfg.ResearchMode != "legacy" && cfg.ResearchMode != "thesis" {
 		return fmt.Errorf("research_mode must be legacy or thesis")
+	}
+	if !model.ValidSelection(cfg.Selection) {
+		return fmt.Errorf("selection must be %q or %q", model.SelectionMeritVeto, model.SelectionChief)
 	}
 	if cfg.ResearchMode == "thesis" {
 		if err := validateResearchBudgets(cfg.Research); err != nil {

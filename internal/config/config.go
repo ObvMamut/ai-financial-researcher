@@ -19,13 +19,18 @@ import (
 // Settings is the fully resolved configuration.
 type Settings struct {
 	ResearchMode string
-	Research     model.ResearchConfig
-	AgentsDir    string
-	RunsDir      string
-	DataDir      string
-	KeepRuns     int
-	Workers      int
-	Indices      []string
+	// Selection decides who picks the shipped names in legacy independent
+	// research: "merit_veto" (default — Go ships the top of the shortlist by
+	// merit after vetoes and the risk gate; the Chief writes the prose and a
+	// shadow ranking) or "chief" (the Chief ranks and picks, as before).
+	Selection string
+	Research  model.ResearchConfig
+	AgentsDir string
+	RunsDir   string
+	DataDir   string
+	KeepRuns  int
+	Workers   int
+	Indices   []string
 
 	// PriceTTL is how long a cached daily price series is served before being
 	// refetched. The cache used to be scoped to the UTC calendar day and nothing
@@ -133,6 +138,7 @@ type Settings struct {
 // fileFormat is the TOML shape of cfr.toml. All fields optional.
 type fileFormat struct {
 	ResearchMode string               `toml:"research_mode"`
+	Selection    string               `toml:"selection"`
 	Research     model.ResearchConfig `toml:"research"`
 	AgentsDir    string               `toml:"agents_dir"`
 	RunsDir      string               `toml:"runs_dir"`
@@ -330,6 +336,12 @@ func Load() (*Settings, error) {
 	if s.ResearchMode != "legacy" && s.ResearchMode != "thesis" {
 		return nil, fmt.Errorf("research_mode must be legacy or thesis")
 	}
+	if s.Selection == "" {
+		s.Selection = model.SelectionMeritVeto
+	}
+	if !model.ValidSelection(s.Selection) {
+		return nil, fmt.Errorf(`selection must be %q or %q`, model.SelectionMeritVeto, model.SelectionChief)
+	}
 	s.Research = s.Research.Defaults()
 	if err := s.Research.Budgets.Validate(); err != nil {
 		return nil, err
@@ -517,6 +529,7 @@ func (s *Settings) applyFile(path string) error {
 		}
 	}
 	setStr(&s.ResearchMode, f.ResearchMode)
+	setStr(&s.Selection, f.Selection)
 	setInt(&s.Research.Rounds, f.Research.Rounds)
 	setInt(&s.Research.Documents, f.Research.Documents)
 	setInt(&s.Research.Candidates, f.Research.Candidates)
@@ -743,6 +756,7 @@ func (s *Settings) applyEnv() {
 		}
 	}
 	setStr(&s.ResearchMode, "CFR_RESEARCH_MODE")
+	setStr(&s.Selection, "CFR_SELECTION")
 	setStr(&s.Research.SourcesFile, "CFR_RESEARCH_SOURCES_FILE")
 	setStr(&s.Research.HolidaysFile, "CFR_RESEARCH_HOLIDAYS_FILE")
 	setPosInt(&s.Research.Rounds, "CFR_RESEARCH_ROUNDS")

@@ -224,6 +224,9 @@ func testConfig(t *testing.T, mode model.Mode) Config {
 	}
 	return Config{
 		Mode:      mode,
+		// The legacy tests below were written against the Chief-selects
+		// pipeline; merit_veto runs opt in explicitly (selection_test.go).
+		Selection: model.SelectionChief,
 		AgentsDir: agentsDir,
 		RunsDir:   t.TempDir(),
 		DataDir:   sharedDataDir,
