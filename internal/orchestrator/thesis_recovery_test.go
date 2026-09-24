@@ -74,7 +74,7 @@ func TestSeptember13DossiersReachResearchContract(t *testing.T) {
 }
 
 func TestWritingTargetsDoNotEraseCompleteDossiers(t *testing.T) {
-	for _, length := range []int{400, 401} {
+	for _, length := range []int{writingTargetNarrative, writingTargetNarrative + 1} {
 		d := supportedResearch().Dossier
 		d.LongCase = strings.Repeat("界", length)
 		d.Claims[0].Passages[0].Quote = strings.Repeat("é", 301)

@@ -532,7 +532,7 @@
 # 50-360s per call instead of ~60s. Omit it for providers that reject the field.
 #[research.budgets.researcher]
 #input_bytes = 98304
-#response_bytes = 20480
+#response_bytes = 32768
 #[research.budgets.challenger]
 #input_bytes = 98304
 #response_bytes = 16384

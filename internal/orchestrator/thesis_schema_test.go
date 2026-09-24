@@ -38,6 +38,10 @@ func thesisFixture(t *testing.T, reply func(prompt string, call int) string) (*t
 	cfg := Config{ResearchMode: "thesis", CheapEngine: model.CLIApi, AgentsDir: "../../agents",
 		API:     model.APIConfig{BaseURL: srv.URL, Model: "fixture", APIKey: "fixture"},
 		DataDir: t.TempDir(), RunsDir: t.TempDir()}
+	// The oversized-response and compaction fixtures were sized against the
+	// researcher's original 20,480-byte budget and exercise that path; the
+	// production default (32,768) is pinned by TestDefaultResponseBudgets.
+	cfg.Research.Budgets.Researcher.ResponseBytes = 20 << 10
 	cfg.applyDefaults()
 	reg, err := agents.Load(cfg.AgentsDir)
 	if err != nil {

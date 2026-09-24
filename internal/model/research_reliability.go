@@ -122,7 +122,7 @@ func (b ResearchBudgets) Defaults() ResearchBudgets {
 	for _, v := range []struct {
 		p       *RoleBudget
 		in, out int
-	}{{&b.Triage, 96 << 10, 12 << 10}, {&b.Researcher, 96 << 10, 20 << 10}, {&b.Challenger, 96 << 10, 16 << 10}, {&b.Chief, 192 << 10, 24 << 10}} {
+	}{{&b.Triage, 96 << 10, 12 << 10}, {&b.Researcher, 96 << 10, 32 << 10}, {&b.Challenger, 96 << 10, 16 << 10}, {&b.Chief, 192 << 10, 24 << 10}} {
 		if v.p.InputBytes == 0 {
 			v.p.InputBytes = v.in
 		}
