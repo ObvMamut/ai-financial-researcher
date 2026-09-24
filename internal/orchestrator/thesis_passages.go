@@ -46,7 +46,9 @@ func validateClaimPassages(claims []model.ResearchClaim, docs []model.EvidenceDo
 
 // A supported review must address every dossier claim. It may add claims, but
 // cannot support the same claim while silently changing who acted in its source.
-func validateReviewConsistency(d model.CandidateDossier, review model.ThesisChallenge) []string {
+// Every problem is returned categorised; the historical repeated-claim path
+// below raises only blocking categories, as every problem blocked when it ran.
+func validateReviewConsistency(d model.CandidateDossier, review model.ThesisChallenge) []model.MaterialIssue {
 	if review.ContractVersion != 0 {
 		return compactReviewProblems(d, review)
 	}
@@ -57,11 +59,11 @@ func validateReviewConsistency(d model.CandidateDossier, review model.ThesisChal
 	for _, c := range review.Claims {
 		by[c.ID] = c
 	}
-	var problems []string
+	var problems []model.MaterialIssue
 	for _, c := range d.Claims {
 		r, ok := by[c.ID]
 		if !ok {
-			problems = append(problems, "review did not address claim "+c.ID)
+			problems = append(problems, issue(model.IssueForm, "review did not address claim "+c.ID))
 			continue
 		}
 		for _, p := range c.Passages {
@@ -70,12 +72,12 @@ func validateReviewConsistency(d model.CandidateDossier, review model.ThesisChal
 				if p.EvidenceID == rp.EvidenceID {
 					matched = true
 					if !strings.EqualFold(strings.TrimSpace(p.IssuerRole), strings.TrimSpace(rp.IssuerRole)) {
-						problems = append(problems, "conflicting issuer roles in claim "+c.ID+"; resolve attribution before support")
+						problems = append(problems, issue(model.IssueAttribution, "conflicting issuer roles in claim "+c.ID+"; resolve attribution before support"))
 					}
 				}
 			}
 			if !matched {
-				problems = append(problems, "review omitted source attribution for claim "+c.ID)
+				problems = append(problems, issue(model.IssueAttribution, "review omitted source attribution for claim "+c.ID))
 			}
 		}
 	}

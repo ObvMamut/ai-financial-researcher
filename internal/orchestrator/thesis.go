@@ -39,6 +39,11 @@ type thesisResearch struct {
 	// that cannot be fulfilled is stated once instead of retried each round.
 	Results []model.ResearchResult `json:"results,omitempty"`
 	Errors  []string               `json:"errors,omitempty"`
+	// Blocking and Disclosed are Go's own validation of the current dossier
+	// (validateDossier), kept out of the researcher's `unresolved` list:
+	// Blocking keeps the dossier off supported, Disclosed becomes a risk.
+	Blocking  []string `json:"blocking,omitempty"`
+	Disclosed []string `json:"disclosed,omitempty"`
 }
 type thesisRunner struct {
 	discoveryDiagnostics []model.SourceDiagnostic // written under discovery's mutex, read after its wait
@@ -1162,10 +1167,15 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 			out.Challenge = model.ThesisChallenge{Ticker: ticker, Verdict: model.ReviewUnavailable, Reason: "The independent challenge did not complete; this is a research failure, not a finding about the company."}
 		}
 		if out.Challenge.Verdict == "supported" && len(compactionOriginals(out.Reports)) > 0 && out.Challenge.CompactionAssessment != "preserved" {
-			out.Challenge.MaterialIssues = appendUnique(out.Challenge.MaterialIssues, "compacted narratives require explicit review of preserved qualifications and counterarguments")
+			out.Challenge.MaterialIssues = appendIssue(out.Challenge.MaterialIssues, issue(model.IssueForm, "compacted narratives require explicit review of preserved qualifications and counterarguments"))
 		}
-		for _, problem := range append(validateReviewConsistency(out.Dossier, out.Challenge), validateClaimsAt(out.Challenge.Claims, out.Documents, ticker, t.run.TS)...) {
-			out.Challenge.MaterialIssues = appendUnique(out.Challenge.MaterialIssues, problem)
+		// Consistency problems arrive categorised, so a non-core claim the
+		// review left unresolved no longer counts as a material issue.
+		for _, problem := range validateReviewConsistency(out.Dossier, out.Challenge) {
+			out.Challenge.MaterialIssues = appendIssue(out.Challenge.MaterialIssues, problem)
+		}
+		for _, problem := range validateClaimsAt(out.Challenge.Claims, out.Documents, ticker, t.run.TS) {
+			out.Challenge.MaterialIssues = appendIssue(out.Challenge.MaterialIssues, issue(model.IssueGrounding, problem))
 		}
 	}
 	// A challenge needs a dossier to challenge. When the research loop produced
@@ -1179,9 +1189,19 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	} else {
 		challenge("")
 	}
-	if out.Challenge.Verdict == "revise" || len(out.Challenge.MaterialIssues) > 0 || len(out.Challenge.Requests) > 0 {
+	// A review whose every objection is a disclosed risk needs no revision:
+	// those objections cannot be answered, only disclosed, and the gate
+	// already carries them as risks. Go's own blocking validation problems do
+	// buy the revision, since they are the ones a revision can actually fix —
+	// but only for a dossier that exists and was actually reviewed.
+	reviewed := !researchDossierFailed(out.Outcome) && out.Challenge.Verdict != model.ReviewUnavailable
+	if out.Challenge.Verdict == "revise" || hasBlockingIssue(out.Challenge) || len(out.Challenge.Requests) > 0 || reviewed && len(out.Blocking) > 0 {
 		fetch(out.Challenge.Requests)
-		revisionIssues := promptSection{Name: "revision_issues", Mandatory: true, Body: "\nFinal revision: resolve these issues or stand down. No further retrieval rounds.\n" + jsonText(challengeReference(out.Challenge))}
+		body := "\nFinal revision: resolve what can be resolved and disclose the rest as risks. No further retrieval rounds.\n" + jsonText(challengeReference(out.Challenge))
+		if len(out.Blocking) > 0 {
+			body += "\nValidation problems that keep this dossier off supported:\n" + jsonText(out.Blocking)
+		}
+		revisionIssues := promptSection{Name: "revision_issues", Mandatory: true, Body: body}
 		sections := append(base("thesis-researcher", revisionIssues), revisionIssues)
 		reports, transport, parsing, e := researchCallSections(ctx, t, "thesis-researcher", safeName+"-revision", sections, &out.Dossier, dossierSchema)
 		out.addResearchReports(reports)
@@ -1207,10 +1227,10 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	validateDossier(&out)
 	out.Outcome.Evidence = classifyEvidence(out.Documents)
 	for _, problem := range validateReviewConsistency(out.Dossier, out.Challenge) {
-		out.Challenge.MaterialIssues = appendUnique(out.Challenge.MaterialIssues, problem)
+		out.Challenge.MaterialIssues = appendIssue(out.Challenge.MaterialIssues, problem)
 	}
 	out.Outcome.Review = out.Challenge.Verdict
-	if out.Challenge.Ticker != ticker || out.Challenge.Verdict != "supported" || len(out.Challenge.MaterialIssues) > 0 || len(out.Challenge.Requests) > 0 || !reviewHasClaims(out.Challenge) || len(validateClaimsAt(out.Challenge.Claims, out.Documents, ticker, t.run.TS)) > 0 || len(validateClaimPassages(out.Challenge.Claims, out.Documents)) > 0 {
+	if out.Challenge.Ticker != ticker || len(reviewBlockers(out.Challenge)) > 0 || len(validateClaimsAt(out.Challenge.Claims, out.Documents, ticker, t.run.TS)) > 0 || len(validateClaimPassages(out.Challenge.Claims, out.Documents)) > 0 {
 		out.Dossier.Status = "watchlist"
 	}
 	// Only a review that actually happened and actually said "reject" is a
@@ -1221,6 +1241,14 @@ func (t *thesisRunner) investigate(ctx context.Context, c model.Candidate, initi
 	}
 	if researchDossierFailed(out.Outcome) || out.Outcome.Review == model.ReviewUnavailable {
 		out.Dossier.Status = "watchlist"
+	}
+	// Disclosed uncertainty travels with the dossier, after its final review
+	// (the review's dossier hash covers what the reviewer read, not this).
+	// A supported thesis carrying any disclosed risk is by definition mixed
+	// evidence, whatever its researcher called it.
+	out.Dossier.Risks = disclosedRisks(out.Dossier, out.Challenge, out.Disclosed)
+	if out.Dossier.Status == "supported" && len(out.Dossier.Risks) > 0 {
+		out.Dossier.EvidenceQuality = "mixed"
 	}
 	out.Outcome.Decision = out.Dossier.Status
 	out.Temporal = temporalFacts(out, t.run.TS, t.calendar, qp)
@@ -1293,9 +1321,9 @@ func (t *thesisRunner) reviewPlans(ctx context.Context, res *model.IdeasResult, 
 		reports = append(reports, rs...)
 		challenge.MaterialIssues = append(challenge.MaterialIssues, validateReviewConsistency(r.Dossier, challenge)...)
 		if r.Dossier.ContractVersion == 2 && (challenge.PlanHash != executionPlanHash(idea) || challenge.TargetAssessment != "supported") {
-			challenge.MaterialIssues = append(challenge.MaterialIssues, "execution review must support target provenance and match the supplied plan hash")
+			challenge.MaterialIssues = append(challenge.MaterialIssues, issue(model.IssueForm, "execution review must support target provenance and match the supplied plan hash"))
 		}
-		if e != nil || challenge.Ticker != idea.Ticker || challenge.Verdict != "supported" || len(challenge.MaterialIssues) > 0 || len(challenge.Requests) > 0 || !reviewHasClaims(challenge) || len(validateClaimsAt(challenge.Claims, r.Documents, idea.Ticker, t.run.TS)) > 0 || len(validateClaimPassages(challenge.Claims, r.Documents)) > 0 {
+		if e != nil || challenge.Ticker != idea.Ticker || len(reviewBlockers(challenge)) > 0 || len(validateClaimsAt(challenge.Claims, r.Documents, idea.Ticker, t.run.TS)) > 0 || len(validateClaimPassages(challenge.Claims, r.Documents)) > 0 {
 			reason := challenge.Reason
 			blocked := model.BlockedReviewReject
 			if e != nil {
