@@ -41,9 +41,11 @@ Every material issue names one category. Blocking categories name something
 the evidence could show and does not, or a malformed dossier:
 `grounding` (a quote or passage does not support the claim), `attribution` (the
 issuer's role or the actor is misread), `positioning_misread`,
-`stale_or_inaccessible_source`, `direction_unexamined` (the opposite case or
-no-trade case is not assessed) and `form`. Disclosed-risk categories name what
-free data can never answer: `priced_in_unprovable`, `forecast_mechanism` (the
+`direction_unexamined` (the opposite case or no-trade case is not assessed) and
+`form`. Disclosed-risk categories name what the evidence cannot settle:
+`stale_or_inaccessible_source` (a source is old or could not be read — judge any
+claim resting on it in its claim review, which is what blocks),
+`priced_in_unprovable`, `forecast_mechanism` (the
 mechanism depends on a future outcome), `future_prices` (post-event prices do
 not exist yet), `annual_target_horizon` (a 12-month target applied to 10–15
 sessions) and `issuer_time_unpublished` (the issuer has not published an event

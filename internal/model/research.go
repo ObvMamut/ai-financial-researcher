@@ -222,14 +222,19 @@ func CoreClaimIDs(d CandidateDossier) map[string]bool {
 // supported. A disclosed-risk category names an objection free data can never
 // answer — 65 of the 67 final challenges of the September 23 record carried at
 // least one — and travels with a supported plan as one of its risks instead.
+//
+// A stale or inaccessible source is a disclosed risk, not a block: whether a
+// claim rests on it is judged claim by claim, and core claims must already be
+// supported with confirmed attribution. Blocking on it held 2330.TW's BUY off
+// supported on 2026-09-24 with all nine claim reviews supported.
 const (
 	IssueGrounding           = "grounding"
 	IssueAttribution         = "attribution"
 	IssuePositioningMisread  = "positioning_misread"
-	IssueStaleSource         = "stale_or_inaccessible_source"
 	IssueDirectionUnexamined = "direction_unexamined"
 	IssueForm                = "form"
 
+	IssueStaleSource           = "stale_or_inaccessible_source"
 	IssuePricedInUnprovable    = "priced_in_unprovable"
 	IssueForecastMechanism     = "forecast_mechanism"
 	IssueFuturePrices          = "future_prices"
@@ -238,8 +243,8 @@ const (
 )
 
 var (
-	BlockingIssueCategories = []string{IssueGrounding, IssueAttribution, IssuePositioningMisread, IssueStaleSource, IssueDirectionUnexamined, IssueForm}
-	DisclosedRiskCategories = []string{IssuePricedInUnprovable, IssueForecastMechanism, IssueFuturePrices, IssueAnnualTargetHorizon, IssueIssuerTimeUnpublished}
+	BlockingIssueCategories = []string{IssueGrounding, IssueAttribution, IssuePositioningMisread, IssueDirectionUnexamined, IssueForm}
+	DisclosedRiskCategories = []string{IssueStaleSource, IssuePricedInUnprovable, IssueForecastMechanism, IssueFuturePrices, IssueAnnualTargetHorizon, IssueIssuerTimeUnpublished}
 )
 
 // MaterialIssue is one review objection and the category that decides whether

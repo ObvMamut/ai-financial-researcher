@@ -311,3 +311,23 @@ func TestDisclosedRiskThesisShipsAndPersistsItsLabels(t *testing.T) {
 		t.Fatalf("plan did not inherit the disclosed risks: %+v", th)
 	}
 }
+
+// An unreachable or stale source is a fact about retrieval, not about the
+// thesis: whether any claim rests on it is decided claim by claim, and core
+// claims must already be supported with confirmed attribution, their quotes
+// verified in Go against stored text. On the 2026-09-24 run 2330.TW's BUY
+// dossier had all nine claim reviews supported and was held off supported by
+// this one category alone. It travels as a disclosed risk.
+func TestStaleSourceIsADisclosedRiskWhenCoreClaimsHold(t *testing.T) {
+	d := gateDossier()
+	c := gateReview(d, "revise",
+		issue(model.IssueStaleSource, "the investor-relations page returned 403"),
+		issue(model.IssueAnnualTargetHorizon, "brokers' targets are twelve-month"))
+	if blockers := reviewBlockers(c); len(blockers) != 0 {
+		t.Fatalf("a stale source blocked a review whose core claims hold: %v", blockers)
+	}
+	risks := strings.Join(disclosedRisks(d, c, nil), "\n")
+	if !strings.Contains(risks, "stale_or_inaccessible_source: the investor-relations page returned 403") {
+		t.Fatalf("the stale source was not carried as a risk:\n%s", risks)
+	}
+}

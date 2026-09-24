@@ -159,8 +159,14 @@ are core, and failing those, its first three claims.
 
 | Kind | Categories |
 | --- | --- |
-| Blocking | `grounding`, `attribution`, `positioning_misread`, `stale_or_inaccessible_source`, `direction_unexamined`, `form` |
-| Disclosed risk | `priced_in_unprovable`, `forecast_mechanism`, `future_prices`, `annual_target_horizon`, `issuer_time_unpublished` |
+| Blocking | `grounding`, `attribution`, `positioning_misread`, `direction_unexamined`, `form` |
+| Disclosed risk | `stale_or_inaccessible_source`, `priced_in_unprovable`, `forecast_mechanism`, `future_prices`, `annual_target_horizon`, `issuer_time_unpublished` |
+
+`stale_or_inaccessible_source` moved from blocking to disclosed risk on
+2026-09-24: whether a claim rests on an unreadable source is judged in that
+claim's review, and core claims must already be supported with confirmed
+attribution. As a block it held 2330.TW's BUY dossier off supported with all nine
+claim reviews supported.
 
 An unknown category on a new challenge is a schema error. A missing category
 blocks. Historical challenges stored bare strings; they decode uncategorised
