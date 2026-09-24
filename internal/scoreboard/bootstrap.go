@@ -99,7 +99,15 @@ func weekKeys(ms ...map[string]weekSum) []string {
 // excessCI is the week-clustered bootstrap interval on the mean excess of the
 // closed calls in es. ok is false when the calls span fewer than minCIWeeks.
 func excessCI(es []Entry) (ExcessCI, bool) {
-	weeks := groupByWeek(es)
+	return clusteredMeanCI(groupByWeek(es), round2)
+}
+
+// clusteredMeanCI is the percentile bootstrap interval on the pooled mean of
+// weeks, resampling whole weeks with replacement. round sets the precision the
+// bounds are reported at: an excess is a percentage and two decimals is its
+// resolution, while a rank correlation lives in the third decimal and rounding
+// it to two would print most intervals as [0.00, 0.02].
+func clusteredMeanCI(weeks map[string]weekSum, round func(float64) float64) (ExcessCI, bool) {
 	keys := weekKeys(weeks)
 	if len(keys) < minCIWeeks {
 		return ExcessCI{}, false
@@ -116,7 +124,7 @@ func excessCI(es []Entry) (ExcessCI, bool) {
 		}
 		means = append(means, sum/float64(n))
 	}
-	return percentileCI(means, len(keys)), true
+	return percentileCI(means, len(keys), round), true
 }
 
 // excessDiffCI is the interval on mean(over) − mean(under), resampling the weeks
@@ -150,14 +158,14 @@ func excessDiffCI(over, under []Entry) (ExcessCI, bool) {
 	if len(diffs) < bootstrapDraws/2 {
 		return ExcessCI{}, false
 	}
-	return percentileCI(diffs, len(keys)), true
+	return percentileCI(diffs, len(keys), round2), true
 }
 
-func percentileCI(xs []float64, weeks int) ExcessCI {
+func percentileCI(xs []float64, weeks int, round func(float64) float64) ExcessCI {
 	sort.Float64s(xs)
 	at := func(q float64) float64 {
 		i := int(q * float64(len(xs)-1))
-		return round2(xs[i])
+		return round(xs[i])
 	}
 	return ExcessCI{Low: at(ciAlpha / 2), High: at(1 - ciAlpha/2), Weeks: weeks}
 }

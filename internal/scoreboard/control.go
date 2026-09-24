@@ -31,11 +31,14 @@ import (
 //	           No model was involved at any point.
 //	shortlist  the twelve names the funnel passed, at the bias the scouts gave
 //	           them. Scouts and the merge included; specialists and Chief not.
-//	shipped    what ideas.json actually contains.
+//	shipped    what ideas.json actually contains, for legacy-mode runs.
 //
 // Read it as a chain rather than as three numbers: shipped over composite is
 // what the whole model stack adds, and shipped over shortlist is what the
 // specialists and the Chief add on top of the screening they were handed.
+// Thesis mode gets its own arms (thesis_arms.go), every arm carries a
+// beta-hedged excess beside the plain one (hedge.go), and the report closes
+// with the pre-screen's whole-universe IC (universe_ic.go).
 //
 // Deliberately absent: entries, stops, targets and fills. A control arm has no
 // levels — the pre-screen never proposed any — so comparing on barrier outcomes
@@ -93,6 +96,14 @@ type ControlArm struct {
 	// ExcessCI is the week-clustered 95% bootstrap interval on Record.AvgExcess,
 	// absent while the closed calls span fewer than two weeks.
 	ExcessCI *ExcessCI `json:"excess_ci,omitempty"`
+	// Hedged is the arm's average excess net of each call's own beta to its
+	// benchmark rather than one unit of it (hedge.go). The gap between it and
+	// Record.AvgExcess is the arm's market exposure, not its selection.
+	Hedged *HedgedRecord `json:"beta_hedged,omitempty"`
+	// NonDirectional counts thesis dossiers whose lean was absent or NONE.
+	// They are not calls, and are reported so a thin lean arm can be told
+	// apart from a pipeline that researched nothing.
+	NonDirectional int `json:"non_directional,omitempty"`
 	// independent is the deduplicated entries the record was scored over, kept
 	// so two arms can be differenced on the same bets their records describe.
 	independent []Entry
@@ -107,14 +118,17 @@ type ArmDiff struct {
 	CI     *ExcessCI `json:"ci,omitempty"`
 }
 
-// ControlReport is the three arms plus the runs they were drawn from.
+// ControlReport is the arms plus the runs they were drawn from.
 type ControlReport struct {
 	HorizonDays int          `json:"horizon_days"`
 	RunCount    int          `json:"run_count"`
 	Arms        []ControlArm `json:"arms"`
-	// Diffs are the two comparisons the arms exist to make: shipped over
-	// composite, and shipped over shortlist.
+	// Diffs are the comparisons the arms exist to make (armPairs): shipped
+	// over composite and over shortlist, and the thesis leans over shortlist.
 	Diffs []ArmDiff `json:"diffs,omitempty"`
+	// UniverseIC is the pre-screen's whole-universe rank correlation with the
+	// realised benchmark-excess return, one entry per horizon (universe_ic.go).
+	UniverseIC []UniverseIC `json:"universe_ic,omitempty"`
 	// Skipped names runs that carry no prescreen.json, so the composite arm
 	// could not be reconstructed for them. Every run predating Stage 0.5 is one.
 	Skipped []string `json:"skipped,omitempty"`
@@ -130,41 +144,77 @@ type call struct {
 	anchor     float64 // the close the call was made off
 	setup      string
 	confidence int
+	// conviction and leanStrength are what a thesis lean said about itself.
+	conviction   int
+	leanStrength string
 }
 
-// Control builds and scores the three arms over every run in runsDir.
+// ControlOptions configures a control report.
+type ControlOptions struct {
+	// Horizon is the window every arm is scored over, in sessions.
+	Horizon int
+	// LeanBackfill is the historical lean CSV; empty or missing skips it.
+	LeanBackfill string
+	// ICHorizons are the windows the universe IC is measured over; nil means
+	// UniverseICHorizons.
+	ICHorizons []int
+}
+
+// Control builds and scores the arms over every run in runsDir, with the
+// historical lean backfill read from its default location.
 func Control(ctx context.Context, runsDir string, yc marketdata.PriceSource, horizon int) (*ControlReport, error) {
+	return ControlWithOptions(ctx, runsDir, yc, ControlOptions{Horizon: horizon, LeanBackfill: DefaultLeanBackfill})
+}
+
+// ControlWithOptions builds and scores the arms over every run in runsDir.
+func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.PriceSource, opt ControlOptions) (*ControlReport, error) {
 	runs, err := store.ListRuns(runsDir)
 	if err != nil {
 		return nil, err
 	}
+	horizon := opt.Horizon
 	if horizon <= 0 {
 		horizon = DefaultControlHorizon
+	}
+	icHorizons := opt.ICHorizons
+	if icHorizons == nil {
+		icHorizons = UniverseICHorizons
 	}
 	rep := &ControlReport{HorizonDays: horizon}
 	cache := &seriesCache{yc: yc, bySymbol: map[string]*quant.Series{}, byRun: map[string]*quant.Series{}}
 
 	composite := ControlArm{Name: "composite", Label: "pre-screen composite, no model"}
 	shortlist := ControlArm{Name: "shortlist", Label: "funnel output at the scouts' bias"}
-	shipped := ControlArm{Name: "shipped", Label: "what the pipeline shipped"}
+	shipped := ControlArm{Name: "shipped", Label: "what the legacy pipeline shipped"}
+	thesis := ControlArm{Name: "thesis", Label: "what thesis mode shipped"}
+	thesisLean := ControlArm{Name: "thesis-lean", Label: "every thesis dossier at its lean"}
+	backfill := ControlArm{Name: "thesis-lean-backfill", Label: "hand-judged leans, pre-lean runs"}
 
+	byName := map[string]store.RunSummary{}
+	backfillIndex := map[string]map[string]string{}
+	var icRuns []icRun
 	for _, r := range runs {
+		byName[r.Name] = r
 		ideas, err := store.LoadIdeas(r.Dir)
-		if err != nil || ideas == nil {
-			continue
+		if err != nil {
+			ideas = nil
 		}
-		rep.RunCount++
 		meta, _ := store.LoadMeta(r.Dir)
-
 		var ps prescreenFile
 		hasPrescreen, _ := store.ReadPrescreen(r.Dir, &ps)
-		if !hasPrescreen {
-			rep.Skipped = append(rep.Skipped, r.Name)
+		backfillIndex[r.Name] = runIndexOf(meta, ps.Rows)
+
+		generatedAt := r.GeneratedAt
+		if ideas != nil && ideas.GeneratedAt != "" {
+			generatedAt = ideas.GeneratedAt
+		}
+		if hasPrescreen && generatedAt != "" {
+			icRuns = append(icRuns, icRun{summary: r, generatedAt: generatedAt, rows: ps.Rows})
 		}
 
 		score := func(arm *ControlArm, calls []call) {
 			for _, c := range calls {
-				e, state := measureCall(ctx, cache, r, ideas.GeneratedAt, c, horizon)
+				e, state := measureCall(ctx, cache, r, generatedAt, c, horizon)
 				if state == callUnmeasurable {
 					arm.Unmeasurable++
 					continue
@@ -173,19 +223,58 @@ func Control(ctx context.Context, runsDir string, yc marketdata.PriceSource, hor
 			}
 		}
 
+		// Every lean a thesis run recorded is scored whether or not the run
+		// reached synthesis: a run that shipped nothing still judged every
+		// name it researched.
+		if isThesisRun(ideas, meta) && generatedAt != "" {
+			calls, none := leanCalls(r.Dir, prescreenCloses(ps.Rows))
+			thesisLean.NonDirectional += none
+			score(&thesisLean, calls)
+		}
+
+		if ideas == nil {
+			continue
+		}
+		rep.RunCount++
+		if !hasPrescreen {
+			rep.Skipped = append(rep.Skipped, r.Name)
+		}
 		if hasPrescreen {
 			score(&composite, compositeCalls(ps.Rows, controlArmSize))
 		}
 		if meta != nil {
 			score(&shortlist, shortlistCalls(meta.Shortlist, ps.Rows))
 		}
-		score(&shipped, shippedCalls(ideas.Ideas))
+		// The two modes' shipped ideas are two different pipelines' output,
+		// and pooling them would let one hide inside the other's record.
+		if isThesisRun(ideas, meta) {
+			score(&thesis, shippedCalls(ideas.Ideas))
+		} else {
+			score(&shipped, shippedCalls(ideas.Ideas))
+		}
 	}
 
-	rep.Arms = []ControlArm{composite, shortlist, shipped}
+	leans, none, err := readLeanBackfill(opt.LeanBackfill)
+	if err != nil {
+		return nil, err
+	}
+	backfill.NonDirectional = none
+	for _, l := range leans {
+		r, generatedAt := backfillRun(byName, l)
+		c := call{ticker: l.ticker, index: backfillIndex[l.run][strings.ToUpper(l.ticker)],
+			direction: l.direction, leanStrength: l.strength}
+		e, state := measureCall(ctx, cache, r, generatedAt, c, horizon)
+		if state == callUnmeasurable {
+			backfill.Unmeasurable++
+			continue
+		}
+		backfill.Entries = append(backfill.Entries, e)
+	}
+
+	rep.Arms = []ControlArm{composite, shortlist, shipped, thesis, thesisLean, backfill}
 	// Each arm is deduplicated on its own entries rather than on the union: the
-	// arms are three different sets of calls, and a name the shipped arm took
-	// once and the shortlist arm took five times is one bet in each.
+	// arms are different sets of calls, and a name the shipped arm took once
+	// and the shortlist arm took five times is one bet in each.
 	for i := range rep.Arms {
 		indep, dropped := Dedupe(rep.Arms[i].Entries, DefaultDedupeWindowDays)
 		rep.Arms[i].Duplicates = dropped
@@ -199,34 +288,57 @@ func Control(ctx context.Context, runsDir string, yc marketdata.PriceSource, hor
 			}
 		}
 		rep.Arms[i].Record, rep.Arms[i].Pending = acc.record(), pending
+		rep.Arms[i].Hedged = hedgedRecord(indep)
 		rep.Arms[i].independent = indep
 		if ci, ok := excessCI(indep); ok {
 			rep.Arms[i].ExcessCI = &ci
 		}
 	}
 	rep.Diffs = armDiffs(rep.Arms)
+	rep.UniverseIC = universeICs(ctx, cache, icRuns, icHorizons)
 	return rep, nil
 }
 
-// armDiffs differences shipped against each control arm that has closed calls.
+// prescreenCloses is the pre-screen's close per upper-cased ticker; the first
+// row wins for a dual-listed name, whose rows carry the same close.
+func prescreenCloses(rows []prescreenRow) map[string]float64 {
+	closes := map[string]float64{}
+	for _, r := range rows {
+		if r.Close > 0 {
+			k := strings.ToUpper(r.Ticker)
+			if _, ok := closes[k]; !ok {
+				closes[k] = r.Close
+			}
+		}
+	}
+	return closes
+}
+
+// armPairs are the differences the arms exist to measure, as (over, under):
+// what the whole model stack adds, what the specialists and Chief add, and
+// what thesis research adds over the names it was handed.
+var armPairs = [][2]string{
+	{"shipped", "composite"},
+	{"shipped", "shortlist"},
+	{"thesis-lean", "shortlist"},
+	{"thesis-lean-backfill", "shortlist"},
+}
+
+// armDiffs differences each pair whose arms both have closed calls.
 func armDiffs(arms []ControlArm) []ArmDiff {
 	by := map[string]ControlArm{}
 	for _, a := range arms {
 		by[a.Name] = a
 	}
-	shipped, ok := by["shipped"]
-	if !ok || shipped.Record.N == 0 {
-		return nil
-	}
 	var out []ArmDiff
-	for _, under := range []string{"composite", "shortlist"} {
-		u := by[under]
-		if u.Record.N == 0 {
+	for _, p := range armPairs {
+		o, u := by[p[0]], by[p[1]]
+		if o.Record.N == 0 || u.Record.N == 0 {
 			continue
 		}
-		d := ArmDiff{Over: "shipped", Under: under,
-			Excess: round2(shipped.Record.AvgExcess - u.Record.AvgExcess)}
-		if ci, ok := excessDiffCI(shipped.independent, u.independent); ok {
+		d := ArmDiff{Over: p[0], Under: p[1],
+			Excess: round2(o.Record.AvgExcess - u.Record.AvgExcess)}
+		if ci, ok := excessDiffCI(o.independent, u.independent); ok {
 			d.CI = &ci
 		}
 		out = append(out, d)
@@ -282,17 +394,7 @@ func compositeCalls(rows []prescreenRow, n int) []call {
 // neutral nomination is dropped: it is not a directional call and scoring it
 // either way would invent one.
 func shortlistCalls(cands []model.Candidate, rows []prescreenRow) []call {
-	closes := map[string]float64{}
-	for _, r := range rows {
-		// Keyed by index too, because a dual-listed name has a row per index and
-		// they carry the same close; first one wins either way.
-		if r.Close > 0 {
-			k := strings.ToUpper(r.Ticker)
-			if _, ok := closes[k]; !ok {
-				closes[k] = r.Close
-			}
-		}
-	}
+	closes := prescreenCloses(rows)
 	out := make([]call, 0, len(cands))
 	for _, c := range cands {
 		var dir model.Direction
@@ -345,6 +447,8 @@ func measureCall(ctx context.Context, cache *seriesCache, r store.RunSummary,
 		Index:         c.index,
 		Direction:     string(c.direction),
 		Confidence:    c.confidence,
+		Conviction:    c.conviction,
+		LeanStrength:  c.leanStrength,
 		PriceAtGen:    c.anchor,
 		TimeframeDays: horizon,
 	}
@@ -366,13 +470,22 @@ func measureCall(ctx context.Context, cache *seriesCache, r store.RunSummary,
 		e.Err = "no anchor price"
 		return e, callUnmeasurable
 	}
+	benchSym := benchmarkFor(c.index, c.ticker)
 	res := measureHorizon(ctx, cache, barsAfter(s, genDate), c.anchor,
-		c.direction, horizon, benchmarkFor(c.index, c.ticker), genDate)
+		c.direction, horizon, benchSym, genDate)
 	if !res.complete {
 		return e, callPending
 	}
 	e.CallDone = true
 	e.CallPnLPct, e.CallBenchPct, e.CallExcessPct, e.CallEndDate = res.pct, res.bench, res.excess, res.endDate
+	if res.benchOK {
+		if b, err := cache.get(ctx, benchSym, ""); err == nil {
+			if beta, ok := betaBefore(s, b, genDate); ok {
+				e.CallHedged, e.CallBeta = true, round2(beta)
+				e.CallHedgedPct = hedgedExcess(c.direction, res.pct, res.bench, beta)
+			}
+		}
+	}
 	return e, callScored
 }
 
@@ -409,28 +522,47 @@ func (r *ControlReport) FormatText() string {
 		fmt.Fprintf(&sb, "%d run(s) carry no prescreen.json, so the composite arm skips them.\n", len(r.Skipped))
 	}
 	sb.WriteString("\n")
-	fmt.Fprintf(&sb, "  %-12s %-34s %5s  %7s  %9s  %9s  %9s  %s\n",
-		"arm", "what it is", "n", "right", "beat bench", "avg", "avg excess", "95% CI (weeks)")
+	fmt.Fprintf(&sb, "  %-20s %-34s %5s  %7s  %9s  %9s  %9s  %9s  %s\n",
+		"arm", "what it is", "n", "right", "beat bench", "avg", "avg excess", "β-hedged", "95% CI (weeks)")
 	for _, a := range r.Arms {
 		rec := a.Record
 		if rec.N == 0 {
-			fmt.Fprintf(&sb, "  %-12s %-34s %5s  %7s  %9s  %9s  %9s   (%d still inside the window)\n",
-				a.Name, a.Label, "—", "—", "—", "—", "—", a.Pending)
+			fmt.Fprintf(&sb, "  %-20s %-34s %5s  %7s  %9s  %9s  %9s  %9s   (%d still inside the window)\n",
+				a.Name, a.Label, "—", "—", "—", "—", "—", "—", a.Pending)
 			continue
 		}
-		fmt.Fprintf(&sb, "  %-12s %-34s %5d  %6.0f%%  %8.0f%%  %+8.2f%%  %+8.2f%%  %s\n",
+		fmt.Fprintf(&sb, "  %-20s %-34s %5d  %6.0f%%  %8.0f%%  %+8.2f%%  %+8.2f%%  %9s  %s\n",
 			a.Name, a.Label, rec.N, rec.HitRate*100, rec.ExcessHitRate*100, rec.AvgPnL, rec.AvgExcess,
-			formatCI(a.ExcessCI))
+			formatHedged(a.Hedged), formatCI(a.ExcessCI))
 	}
 	sb.WriteString("\n")
 	for _, a := range r.Arms {
-		if a.Duplicates > 0 || a.Pending > 0 || a.Unmeasurable > 0 {
-			fmt.Fprintf(&sb, "  %-12s %d re-proposal(s) dropped, %d still inside the window, %d unmeasurable\n",
+		if a.Duplicates > 0 || a.Pending > 0 || a.Unmeasurable > 0 || a.NonDirectional > 0 {
+			fmt.Fprintf(&sb, "  %-20s %d re-proposal(s) dropped, %d still inside the window, %d unmeasurable",
 				a.Name, a.Duplicates, a.Pending, a.Unmeasurable)
+			if a.NonDirectional > 0 {
+				fmt.Fprintf(&sb, ", %d dossier(s) with no lean", a.NonDirectional)
+			}
+			sb.WriteString("\n")
+		}
+	}
+	if len(r.UniverseIC) > 0 {
+		sb.WriteString("\n  Universe IC (pre-screen score vs realised excess, every ranked name, per index then averaged):\n")
+		for _, u := range r.UniverseIC {
+			fmt.Fprintf(&sb, "    %2d sessions: %s\n", u.HorizonDays, u.formatLine())
 		}
 	}
 	sb.WriteString(r.verdict())
 	return sb.String()
+}
+
+// formatHedged renders an arm's average beta-hedged excess and the beta behind
+// it, or a dash when no call in the arm had enough history for a beta.
+func formatHedged(h *HedgedRecord) string {
+	if h == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%+.2f%%", h.AvgHedgedExcess)
 }
 
 // verdict states the two comparisons the arms exist to make, and refuses to
@@ -458,6 +590,7 @@ func (r *ControlReport) verdict() string {
 	}
 	gap("Whole model stack adds:", shipped, composite, "shipped vs composite")
 	gap("Specialists and Chief add:", shipped, shortlist, "shipped vs shortlist")
+	gap("Thesis research adds:", by["thesis-lean"], shortlist, "thesis-lean vs shortlist")
 	for _, d := range r.Diffs {
 		if d.CI == nil {
 			continue
@@ -466,11 +599,11 @@ func (r *ControlReport) verdict() string {
 		if !d.CI.Contains(0) {
 			verdict = "excludes zero"
 		}
-		fmt.Fprintf(&sb, "  excess, shipped − %-10s %+6.2f%%, 95%% CI %s — %s\n",
-			d.Under+":", d.Excess, formatCI(d.CI), verdict)
+		fmt.Fprintf(&sb, "  excess, %s − %-10s %+6.2f%%, 95%% CI %s — %s\n",
+			d.Over, d.Under+":", d.Excess, formatCI(d.CI), verdict)
 	}
 
-	if n := minN(composite, shortlist, shipped); n > 0 && n < MinArmN {
+	if n := minN(composite, shortlist, shipped, by["thesis-lean"]); n > 0 && n < MinArmN {
 		fmt.Fprintf(&sb, "\n  Both figures are noise at these counts (smallest arm n=%d, want %d+). "+
 			"They are printed so the sample can be watched filling up, not so they can be read yet.\n", n, MinArmN)
 	}

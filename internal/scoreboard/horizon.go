@@ -40,6 +40,7 @@ type horizonResult struct {
 	excess   float64 // direction-signed return less the benchmark's
 	endDate  string
 	complete bool
+	benchOK  bool // the benchmark's move over the window was measured
 }
 
 // measureHorizon computes the signed return from anchor over the h sessions of
@@ -80,6 +81,7 @@ func measureHorizon(ctx context.Context, cache *seriesCache, bars []quant.Bar, a
 		return out
 	}
 	out.bench = round2(br * 100)
+	out.benchOK = true
 	// pnl() has already flipped the sign for a short, so the benchmark is added
 	// rather than subtracted: a short that fell less than the market did badly.
 	if dir == model.DirectionSell {
