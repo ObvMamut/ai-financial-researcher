@@ -23,6 +23,13 @@ from `[api]` or `[local]`. Engine selection changes neither persona: `chief-anal
 for legacy mode, `thesis-chief` for thesis. The separate Chief API fallback remains
 optional and disabled without its own credentials. There is no paid search dependency.
 
+`[research] researcher_engine` picks the engine for thesis-researcher calls.
+The default, `"cheap"`, keeps the cost split. `"chief"` is opt-in and routes
+those calls to the run's Chief engine and dedicated credentials, with the
+ordinary retry budget. Every other thesis role stays on the cheap engine:
+challenger, triage, discovery and schema repair. See the live acceptance record
+in `docs/plans/2026-09-23-improvement-plan-v2.md` for why the option exists.
+
 The `[research]` settings are `rounds = 3`, `documents = 8`, `candidates = 24`,
 and `shortlist = 12`. Limits are 1–6 rounds, 1–32 document attempts, 1–48
 candidates, and a shortlist between 1 and the candidate budget. Environment

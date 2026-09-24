@@ -146,6 +146,9 @@ func validateResearchBudgets(c model.ResearchConfig) error {
 	if c.Rounds < 1 || c.Rounds > 6 || c.Documents < 1 || c.Documents > 32 || c.Candidates < 1 || c.Candidates > 48 || c.Shortlist < 1 || c.Shortlist > c.Candidates {
 		return fmt.Errorf("invalid research budgets")
 	}
+	if e := c.Defaults().ResearcherEngine; !model.ValidResearcherEngine(e) {
+		return fmt.Errorf("invalid researcher engine %q", e)
+	}
 	return c.Budgets.Defaults().Validate()
 }
 

@@ -14,6 +14,22 @@ type ResearchConfig struct {
 	Shortlist    int             `toml:"shortlist" json:"shortlist"`
 	SourcesFile  string          `toml:"sources_file" json:"sources_file,omitempty"`
 	HolidaysFile string          `toml:"holidays_file" json:"holidays_file,omitempty"`
+	// ResearcherEngine picks the engine for thesis-researcher calls: "cheap"
+	// (the default, the cost split as it has always been) or "chief" (the
+	// run's Chief engine, an opt-in reviewed exception — see CLAUDE.md). The
+	// challenger, triage, discovery and schema repairs stay on the cheap engine.
+	ResearcherEngine string `toml:"researcher_engine" json:"researcher_engine,omitempty"`
+}
+
+// Researcher engine choices for ResearchConfig.ResearcherEngine.
+const (
+	ResearcherEngineCheap = "cheap"
+	ResearcherEngineChief = "chief"
+)
+
+// ValidResearcherEngine reports whether s is a known researcher engine.
+func ValidResearcherEngine(s string) bool {
+	return s == ResearcherEngineCheap || s == ResearcherEngineChief
 }
 
 func (c ResearchConfig) Defaults() ResearchConfig {
@@ -29,6 +45,9 @@ func (c ResearchConfig) Defaults() ResearchConfig {
 	}
 	if c.Shortlist == 0 {
 		c.Shortlist = 12
+	}
+	if c.ResearcherEngine == "" {
+		c.ResearcherEngine = ResearcherEngineCheap
 	}
 	return c
 }

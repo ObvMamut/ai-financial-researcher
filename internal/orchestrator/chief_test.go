@@ -817,3 +817,30 @@ func TestCompactionReasoningEffortPolicy(t *testing.T) {
 		})
 	}
 }
+
+// research.researcher_engine = "chief" moves the thesis researcher — and only
+// the researcher — onto the resolved Chief engine, with the ordinary retry
+// budget. The default leaves every role on the cheap engine.
+func TestResearchTargetMovesOnlyTheResearcher(t *testing.T) {
+	runner, _, done := thesisFixture(t, func(string, int) string { return "" })
+	defer done()
+	runner.chief = chiefEngine{CLI: model.CLIApi, Model: "chief-model", API: model.APIConfig{BaseURL: "http://chief.invalid", Model: "chief-model", APIKey: "k2"}}
+	runner.cfg.Retry.MaxAttempts = 3
+	runner.cfg.SynthesisMaxAttempts = 1
+	cheap := runner.cheapTarget()
+	for _, role := range []string{"thesis-researcher", "thesis-challenger", "thesis-triage"} {
+		if got := runner.researchTarget(role); got.Model != cheap.Model || !got.throttled {
+			t.Fatalf("default %s left the cheap engine: %+v", role, got)
+		}
+	}
+	runner.cfg.Research.ResearcherEngine = model.ResearcherEngineChief
+	got := runner.researchTarget("thesis-researcher")
+	if got.Model != "chief-model" || got.API.BaseURL != "http://chief.invalid" || got.throttled || got.Retry.MaxAttempts != 3 || !got.Retry.NoRetryOnTimeout {
+		t.Fatalf("chief researcher target: %+v", got)
+	}
+	for _, role := range []string{"thesis-challenger", "thesis-triage"} {
+		if got := runner.researchTarget(role); got.Model != cheap.Model {
+			t.Fatalf("%s moved with the researcher: %+v", role, got)
+		}
+	}
+}

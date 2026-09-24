@@ -507,8 +507,13 @@
 #shortlist = 12      # 1–candidates; independent per-company research loops
 #sources_file = ""   # optional ticker,url CSV for additional public issuer pages
 #holidays_file = ""  # optional ticker,date CSV; markets outside bundled coverage remain estimated
+# Engine for thesis-researcher calls: "cheap" (default, the cost split) or
+# "chief" (opt-in: the run's Chief engine and credentials). Challenger, triage,
+# discovery and schema repairs stay cheap. Six 2026-09-24 live runs found the
+# cheap model's grounding, not the gate, was what kept dossiers off supported.
+#researcher_engine = "cheap"
 # Env: CFR_RESEARCH_ROUNDS / DOCUMENTS / CANDIDATES / SHORTLIST /
-# SOURCES_FILE / HOLIDAYS_FILE (each with the CFR_RESEARCH_ prefix).
+# SOURCES_FILE / HOLIDAYS_FILE / RESEARCHER_ENGINE (each with the CFR_RESEARCH_ prefix).
 
 # How past ideas are replayed by `cfr scoreboard`.
 #[scoreboard]

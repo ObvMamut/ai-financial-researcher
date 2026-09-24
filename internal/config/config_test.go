@@ -21,7 +21,7 @@ func clearEnv(t *testing.T) {
 		}
 	}
 	for _, k := range []string{
-		"CFR_RESEARCH_MODE", "CFR_SELECTION", "CFR_RESEARCH_ROUNDS", "CFR_RESEARCH_DOCUMENTS", "CFR_RESEARCH_CANDIDATES", "CFR_RESEARCH_SHORTLIST", "CFR_RESEARCH_SOURCES_FILE", "CFR_RESEARCH_HOLIDAYS_FILE",
+		"CFR_RESEARCH_MODE", "CFR_SELECTION", "CFR_RESEARCH_RESEARCHER_ENGINE", "CFR_RESEARCH_ROUNDS", "CFR_RESEARCH_DOCUMENTS", "CFR_RESEARCH_CANDIDATES", "CFR_RESEARCH_SHORTLIST", "CFR_RESEARCH_SOURCES_FILE", "CFR_RESEARCH_HOLIDAYS_FILE",
 		"CFR_RUNS_DIR", "CFR_AGENTS_DIR", "ALPHAVANTAGE_API_KEY", "FRED_API_KEY",
 		"CFR_CONTACT_EMAIL", "CFR_CLAUDE_MODEL", "CFR_GEMINI_MODEL",
 		"CFR_CLAUDE_BIN", "CFR_GEMINI_BIN", "CFR_GEMINI_CONCURRENCY", "CFR_KEEP_RUNS",
@@ -916,5 +916,32 @@ func TestSelectionDefaultsToMeritVetoAndHonoursPrecedence(t *testing.T) {
 	t.Setenv("CFR_SELECTION", "vibes")
 	if _, err = Load(); err == nil || !strings.Contains(err.Error(), "selection") {
 		t.Fatalf("an unknown selection loaded: %v", err)
+	}
+}
+
+// The thesis researcher stays on the cheap engine unless the operator opts in;
+// "chief" is the reviewed exception, settable in the file or the environment.
+func TestResearcherEngineDefaultsToCheapAndHonoursPrecedence(t *testing.T) {
+	_, cwd := isolate(t)
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Research.ResearcherEngine != "cheap" {
+		t.Fatalf("default researcher engine = %q, want cheap", s.Research.ResearcherEngine)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("[research]\nresearcher_engine = \"chief\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = Load(); err != nil || s.Research.ResearcherEngine != "chief" {
+		t.Fatalf("file researcher engine = %+v (%v), want chief", s.Research, err)
+	}
+	t.Setenv("CFR_RESEARCH_RESEARCHER_ENGINE", "cheap")
+	if s, err = Load(); err != nil || s.Research.ResearcherEngine != "cheap" {
+		t.Fatalf("env researcher engine = %+v (%v), want cheap over the file", s.Research, err)
+	}
+	t.Setenv("CFR_RESEARCH_RESEARCHER_ENGINE", "gpt")
+	if _, err = Load(); err == nil || !strings.Contains(err.Error(), "researcher_engine") {
+		t.Fatalf("an unknown researcher engine loaded: %v", err)
 	}
 }

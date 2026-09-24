@@ -25,6 +25,11 @@ const (
 	// prompt on the Chief model met 12/12 per-field budgets (2026-09-23,
 	// docs/plans/2026-09-23-compaction-on-chief-engine.md).
 	chiefCompaction chiefPurpose = "compaction"
+	// chiefResearch is a thesis-researcher call under
+	// research.researcher_engine = "chief": opt-in, for when the cheap model's
+	// grounding is what keeps dossiers off supported (six 2026-09-24 live runs;
+	// docs/plans/2026-09-23-improvement-plan-v2.md).
+	chiefResearch chiefPurpose = "research"
 )
 
 // chiefEngine is the Chief Analyst's dispatch target, resolved once per run
@@ -167,6 +172,21 @@ func chiefTarget(e chiefEngine, cfg Config, purpose chiefPurpose) callTarget {
 		Timeout: cfg.Timeouts.Synthesis,
 		Retry:   retry,
 	}
+}
+
+// researchTarget is the target for a thesis research call in role. Only the
+// researcher moves, and only when research.researcher_engine = "chief"; it
+// then keeps the ordinary transient-retry budget, as compaction does, because
+// synthesis_max_attempts is sized for a call with a fallback and research has
+// none. Every other role — and the researcher by default — is cheap.
+func (t *thesisRunner) researchTarget(role string) callTarget {
+	if role != "thesis-researcher" || t.cfg.Research.Defaults().ResearcherEngine != model.ResearcherEngineChief {
+		return t.cheapTarget()
+	}
+	target := chiefTarget(t.chief, t.cfg, chiefResearch)
+	target.Retry = t.cfg.Retry
+	target.Retry.NoRetryOnTimeout = true
+	return target
 }
 
 // compactionTarget is the dossier-compaction call's target: the run's own

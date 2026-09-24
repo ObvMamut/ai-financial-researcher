@@ -87,6 +87,15 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   and the revision can each earn one), only when that response is over budget,
   and runs in parallel up to `workers`; the model returns only the twelve
   narrative fields — Go splices them into the original payload.
+  The third reviewed exception is opt-in: `[research] researcher_engine = "chief"`
+  (env `CFR_RESEARCH_RESEARCHER_ENGINE`) moves only the thesis-researcher calls
+  onto the selected Chief engine and its dedicated credentials, with the ordinary
+  retry budget (`researchTarget` in `chief.go`). The default is `"cheap"`, which
+  keeps the split exactly as before. It exists because six live thesis runs on
+  2026-09-24 got every name researched and still shipped nothing: an audit found
+  the challenger's grounding and direction objections to the cheap model's
+  dossiers correct, so research quality, not the gate, was the limit. The
+  challenger, triage, discovery and schema repairs stay on the cheap engine.
 - Agent personas live in `agents/*.md` and are loaded at runtime — they are *data*, not
   Go source. Editing a persona must not require recompiling.
 

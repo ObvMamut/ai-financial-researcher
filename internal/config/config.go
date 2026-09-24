@@ -349,6 +349,9 @@ func Load() (*Settings, error) {
 	if s.Research.Rounds < 1 || s.Research.Rounds > 6 || s.Research.Documents < 1 || s.Research.Documents > 32 || s.Research.Candidates < 1 || s.Research.Candidates > 48 || s.Research.Shortlist < 1 || s.Research.Shortlist > s.Research.Candidates {
 		return nil, fmt.Errorf("invalid research budgets")
 	}
+	if !model.ValidResearcherEngine(s.Research.ResearcherEngine) {
+		return nil, fmt.Errorf(`research.researcher_engine must be %q or %q`, model.ResearcherEngineCheap, model.ResearcherEngineChief)
+	}
 	if err := s.validateRisk(); err != nil {
 		return nil, err
 	}
@@ -535,6 +538,7 @@ func (s *Settings) applyFile(path string) error {
 	setInt(&s.Research.Candidates, f.Research.Candidates)
 	setInt(&s.Research.Shortlist, f.Research.Shortlist)
 	setStr(&s.Research.SourcesFile, f.Research.SourcesFile)
+	setStr(&s.Research.ResearcherEngine, f.Research.ResearcherEngine)
 	setStr(&s.Research.HolidaysFile, f.Research.HolidaysFile)
 	setInt(&s.Research.Budgets.Triage.InputBytes, f.Research.Budgets.Triage.InputBytes)
 	setInt(&s.Research.Budgets.Triage.ResponseBytes, f.Research.Budgets.Triage.ResponseBytes)
@@ -758,6 +762,7 @@ func (s *Settings) applyEnv() {
 	setStr(&s.ResearchMode, "CFR_RESEARCH_MODE")
 	setStr(&s.Selection, "CFR_SELECTION")
 	setStr(&s.Research.SourcesFile, "CFR_RESEARCH_SOURCES_FILE")
+	setStr(&s.Research.ResearcherEngine, "CFR_RESEARCH_RESEARCHER_ENGINE")
 	setStr(&s.Research.HolidaysFile, "CFR_RESEARCH_HOLIDAYS_FILE")
 	setPosInt(&s.Research.Rounds, "CFR_RESEARCH_ROUNDS")
 	setPosInt(&s.Research.Documents, "CFR_RESEARCH_DOCUMENTS")

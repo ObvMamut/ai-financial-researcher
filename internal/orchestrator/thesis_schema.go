@@ -231,7 +231,7 @@ func researchCall[T any](ctx context.Context, t *thesisRunner, role, name, data 
 // already-concatenated string.
 func researchCallSections[T any](ctx context.Context, t *thesisRunner, role, name string, sections []promptSection, v *T, check func(*T) []string) (reports []model.DomainStatus, transport, parsing string, err error) {
 	check = currentResearchSchema(check)
-	r, callErr := t.callSections(ctx, role, name, sections, t.cheapTarget())
+	r, callErr := t.callSections(ctx, role, name, sections, t.researchTarget(role))
 	status := reportStatus(r)
 	if r.FailureKind == "response_capacity" {
 		// The engine returned a complete response. Its byte-budget failure is
