@@ -177,6 +177,27 @@ below zero. The backfill arm is differenced against the shortlist too, but it is
 judgement of old dossiers, not the researcher's own lean, and is never pooled with
 `thesis-lean`.
 
+### Selection arms (merit_veto shadow)
+
+Under `selection = "merit_veto"` (`independent-research.md`, Stage 3) the models stopped
+ranking: Go ships the top of the shortlist by merit, and the specialists and the Chief may
+only veto. Two arms, read from each legacy run's `data/selection.json`
+(`selection_arms.go`), measure whether that was right:
+
+| arm | what it is |
+| --- | --- |
+| `chief-shadow` | the Chief's own top-`top_n` names by its recorded `shadow_rank`, at the scout's direction — the book it would have shipped. Names without a scout direction are skipped. Anchored at the row's recorded close. Only `merit_veto` runs have a shadow ranking. |
+| `vetoed` | every shortlisted name any specialist (or, under `merit_veto`, the Chief) vetoed with a closed-enum reason, at the scout's direction. Filled under **both** policies: the labels are parsed and recorded under `chief` too, just not acted on. |
+
+The report adds two differences: **`shipped − chief-shadow`** (what taking the ranking away
+from the Chief cost or saved) and **`vetoed − shipped`** (below zero: the vetoes remove
+losers; at or above zero: they remove nothing and should go). Both use the same
+week-clustered interval as every other difference. Plan §6 retires a stage whose interval
+does not exclude zero in its favour after about six weeks of shadow. Two caveats: `shipped`
+pools both selection policies (group by `selection` in `ideas.json` to split them), and the
+per-label-value arms the plan also names are not built yet — the labels are in
+`selection.json` for when they are.
+
 ### Beta-hedged excess
 
 Every scored call also carries `call_beta` and `call_hedged_excess_pct`: the direction-signed

@@ -101,6 +101,8 @@ type PromptParams struct {
 	Weights              model.DomainWeights // structured weights
 	IndexConstituentList string              // scout only: formatted constituent list
 	PrescreenTable       string              // scout only: Stage 0.5 ranked table for this index
+	SelectionBlock       string              // chief-writer: Go's merit_veto book, reserves and exclusions
+	RegimeBlock          string              // chief-writer: the computed market regime that replaces macro
 	Caps                 Capabilities        // what the engine running this agent can do
 }
 
@@ -136,7 +138,7 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 	switch {
 	case thesisRole(p.Role):
 		sb.WriteString(thesisCapabilityBlock())
-	case p.Role != "chief-analyst":
+	case p.Role != "chief-analyst" && p.Role != "chief-writer":
 		sb.WriteString(capabilityBlock(p.Caps))
 	}
 
@@ -221,6 +223,30 @@ func (r *Registry) AssemblePrompt(p PromptParams) (string, error) {
 			sb.WriteString(fmt.Sprintf("\n- **Missing/failed specialist reports:** %s\n",
 				strings.Join(p.Missing, ", ")))
 			sb.WriteString("  (Apply confidence caps as per your instructions for missing data)\n")
+		}
+		sb.WriteString("\n### Specialist reports\n\n")
+		for _, rc := range p.Reports {
+			sb.WriteString(fmt.Sprintf("---\n#### %s specialist report\n\n", capitalize(rc.Domain)))
+			sb.WriteString(rc.Content)
+			sb.WriteString("\n\n")
+		}
+
+	case "chief-writer":
+		// merit_veto selection: the book is Go's, so there are no weights and
+		// no base-score table to adjust — only the decision to write up, the
+		// context to write it from, and the reports to cite.
+		sb.WriteString(shortlistSection(p.Shortlist, false))
+		if p.RegimeBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.RegimeBlock)
+		}
+		if p.SelectionBlock != "" {
+			sb.WriteString("\n")
+			sb.WriteString(p.SelectionBlock)
+		}
+		if p.QuantBlock != "" {
+			sb.WriteString("\n### Quant reference (verified)\n\n")
+			sb.WriteString(p.QuantBlock)
 		}
 		sb.WriteString("\n### Specialist reports\n\n")
 		for _, rc := range p.Reports {

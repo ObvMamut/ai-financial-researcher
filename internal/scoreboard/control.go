@@ -36,6 +36,8 @@ import (
 // Read it as a chain rather than as three numbers: shipped over composite is
 // what the whole model stack adds, and shipped over shortlist is what the
 // specialists and the Chief add on top of the screening they were handed.
+// merit_veto selection adds two shadow arms from data/selection.json — the
+// Chief's own ranking and the vetoed names (selection_arms.go).
 // Thesis mode gets its own arms (thesis_arms.go), every arm carries a
 // beta-hedged excess beside the plain one (hedge.go), and the report closes
 // with the pre-screen's whole-universe IC (universe_ic.go).
@@ -189,6 +191,8 @@ func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.Price
 	thesis := ControlArm{Name: "thesis", Label: "what thesis mode shipped"}
 	thesisLean := ControlArm{Name: "thesis-lean", Label: "every thesis dossier at its lean"}
 	backfill := ControlArm{Name: "thesis-lean-backfill", Label: "hand-judged leans, pre-lean runs"}
+	chiefShadow := ControlArm{Name: "chief-shadow", Label: "Chief's shadow top-5, merit_veto"}
+	vetoed := ControlArm{Name: "vetoed", Label: "shortlist names a model vetoed"}
 
 	byName := map[string]store.RunSummary{}
 	backfillIndex := map[string]map[string]string{}
@@ -251,6 +255,9 @@ func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.Price
 			score(&thesis, shippedCalls(ideas.Ideas))
 		} else {
 			score(&shipped, shippedCalls(ideas.Ideas))
+			sel := readSelection(r.Dir)
+			score(&chiefShadow, chiefShadowCalls(sel))
+			score(&vetoed, vetoedCalls(sel))
 		}
 	}
 
@@ -271,7 +278,7 @@ func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.Price
 		backfill.Entries = append(backfill.Entries, e)
 	}
 
-	rep.Arms = []ControlArm{composite, shortlist, shipped, thesis, thesisLean, backfill}
+	rep.Arms = []ControlArm{composite, shortlist, shipped, thesis, thesisLean, backfill, chiefShadow, vetoed}
 	// Each arm is deduplicated on its own entries rather than on the union: the
 	// arms are different sets of calls, and a name the shipped arm took once
 	// and the shortlist arm took five times is one bet in each.
@@ -322,6 +329,10 @@ var armPairs = [][2]string{
 	{"shipped", "shortlist"},
 	{"thesis-lean", "shortlist"},
 	{"thesis-lean-backfill", "shortlist"},
+	// merit_veto's shadow arms: what taking the ranking from the Chief did,
+	// and whether the vetoes remove losers (selection_arms.go).
+	{"shipped", "chief-shadow"},
+	{"vetoed", "shipped"},
 }
 
 // armDiffs differences each pair whose arms both have closed calls.
@@ -591,6 +602,8 @@ func (r *ControlReport) verdict() string {
 	gap("Whole model stack adds:", shipped, composite, "shipped vs composite")
 	gap("Specialists and Chief add:", shipped, shortlist, "shipped vs shortlist")
 	gap("Thesis research adds:", by["thesis-lean"], shortlist, "thesis-lean vs shortlist")
+	gap("Merit over the Chief's ranking:", shipped, by["chief-shadow"], "shipped vs chief-shadow")
+	gap("Vetoed names over what shipped:", by["vetoed"], shipped, "vetoed vs shipped")
 	for _, d := range r.Diffs {
 		if d.CI == nil {
 			continue

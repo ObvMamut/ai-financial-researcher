@@ -9,7 +9,9 @@ Goal: from a universe of 274 names (curated index samples, see `universe.md`), p
 
 A funnel keeps cost bounded: an in-process quant pre-screen ranks the whole universe,
 cheap screening filters that ranking, a fixed set of specialist agents analyze only the
-shortlist, then Claude synthesizes.
+shortlist, then — under the default `selection = "merit_veto"` — Go ships the top of the
+shortlist by merit after vetoes and the Chief writes it up (Stage 3). `selection = "chief"`
+keeps the Chief as the selector, for the A/B.
 
 ## Stage 0.5 — Universe-wide pre-screen (in-process, no model)
 
@@ -424,7 +426,68 @@ the name was nominated on instead of describing the company from scratch. Each r
 scores every shortlisted ticker on its domain (bias + strength) so the Chief Analyst can
 measure confluence.
 
-## Stage 3 — Synthesis (Claude Chief Analyst)
+Under `selection = "merit_veto"` the **macro call is not made**: it carried zero weight and
+no measured IC, and a regime is one fact per market. `computedRegimeLines`
+(`internal/orchestrator/regime.go`) writes one line per benchmark from the bars Stage 1.5
+already fetched — the 63-session return and its sign, and 21-session realized volatility
+against its own one-year median (`calm` / `stressed`) — and the Chief reads that instead.
+The chief policy still runs macro.
+
+### Structured labels and vetoes
+
+News, fundamentals, quant and sentiment keep their `scores` (so the domains stay
+measurable) and add a `labels` array: per name, `move_driver`
+(`news|earnings|none|unknown`), `pending_binary_event` `{present, date}`,
+`corporate_action`, and `veto` with a `veto_reason` from a closed enum —
+`binary_event_inside_window`, `corporate_action_pending`, `halted_or_illiquid`,
+`data_error`, `fraud_or_litigation_shock`. This is the one role the literature and this
+system's own record support for an LLM here: turning text into fixed-schema facts, not
+ranking. `parseSpecialistLabels` (`labels.go`) reads the tail defensively — anything
+malformed is `unknown`, a missing label is never a veto, a reason outside the enum is
+refused and logged, and a label for a name the domain had no verified data for is dropped
+as recollection (a measured abstention keeps its labels). Labels are parsed and recorded
+under both selection policies; only `merit_veto` acts on the vetoes.
+
+## Stage 3 — Selection
+
+The 2026-09-23 attribution study (`docs/research/2026-09-23-evidence/legacy/`) found no
+measurable value in any model stage above the funnel: specialist domain ICs of −0.08 to
++0.07, the top third of base scores doing worst, and the Chief's picks (+0.55%) level with
+the shortlisted names it left out (+0.58%). The scouts' shortlist was the only arm whose
+interval cleared zero. `selection` decides what follows from that.
+
+### `merit_veto` (default)
+
+Implementation: `internal/orchestrator/selection.go`; Chief persona `agents/chief-writer.md`.
+
+1. Every shortlisted name is ranked by **merit** — the same `meritScore` the shortlist
+   merge used (pre-screen composite aligned with the scout's direction, scaled by
+   coverage, plus scout agreement, less contest).
+2. A name with no scout direction, a name any specialist vetoed, and a name the **risk
+   gate** refuses on its own (every per-idea hard check, including the evidence floor) is
+   ineligible, with the reason recorded.
+3. Go takes the eligible names in merit order, holding each sector to the gate's
+   `max_per_sector`, until it has five. Each ships in the **scout's direction** as a
+   `market_on_open` idea: entry is the verified last close, the stop is the
+   `catastrophe_stop_sigma·σ_daily·√15` floor, there is no target, and the time exit is
+   15 sessions. Confidence is the computed base score for that direction — informational;
+   it ranks nothing.
+4. The Chief is called **once**. It sees Go's book, the next five eligible names as
+   reserves, what was excluded and why, the computed regime and the specialist reports. It
+   writes `why` / `position_note` for the book and reserves, may **veto** from the same
+   closed enum (the slot refills from the reserves in merit order), and returns
+   `shadow_rank`, its own ranking of the whole shortlist, which is recorded in `ideas.json`
+   and `data/selection.json` and never acted on. It may not change a direction, add a name
+   or reorder the book; anything of that kind is ignored and warned about.
+5. The final book is gated once more for sizing and book-level findings.
+
+If the Chief call fails or its JSON does not parse, the selection ships unchanged with
+mechanical prose and the run is `degraded`; no DeepSeek fallback is attempted, because the
+Chief's answer no longer decides what ships. `risk.entry_type = "limit"` does not apply
+under this policy: there is no one to place a limit or a target. Single-stock mode and
+thesis mode ignore `selection`.
+
+### `chief`
 
 Persona: `agents/chief-analyst.md`. Reads all 5 specialist reports, the **computed base
 scores** (the weighted domain confluence, already calculated — see `scoring.md`) and a
@@ -432,6 +495,11 @@ compact verified quant reference; adjusts each base by at most `chief_adjust_ban
 with a named reason, ranks, and emits the **top 5** ideas — including entry/stop/target derived from the
 vol-scaled distances — as a fenced ```json block (schema in `output-schema.md`). Go parses
 it into `[]model.TradeIdea`, validates the mechanics, and the TUI renders the results.
+
+Under either policy `data/selection.json` records every shortlisted name — merit rank,
+labels, vetoes, exclusion reason, domain scores, shipped rank and (merit_veto) the Chief's
+shadow rank — so the scoreboard's `chief-shadow` and `vetoed` arms can measure both
+policies' model stages over the whole shortlist (`scoreboard.md`).
 
 ## Flow summary
 
@@ -446,14 +514,19 @@ merged shortlist (validated, deduped, trimmed to 12 by merit)
         │
 Stage 1.5: quant metrics for the shortlist (cache hits from Stage 0.5)
         │
-5 Specialists (parallel, each covers shortlist; quant gets the computed pack,
-              news gets the bulk earnings calendar)
+Specialists (parallel; 4 under merit_veto, 5 with macro under chief; each covers
+              the shortlist and emits scores + labels/vetoes; quant gets the
+              computed pack, news the bulk earnings calendar)
         │
 computed base scores (weighted domain confluence, no model call)
         │
-Chief Analyst (Claude) → top 5 ideas (direction, confidence, entry/stop/target, why)
+merit_veto (default): merit order − vetoes − risk-gate refusals → top 5 at the
+                      scout's direction, market-on-open, catastrophe stop, time exit
+        │             Chief (one call): prose, closed-enum vetoes, shadow_rank
+chief:                Chief Analyst → top 5 ideas (direction, confidence, levels, why)
+        │             validation: confidence clamped to base ± band, levels, events
         │
-validation: confidence clamped to base ± band, levels, events, attribution
+data/selection.json: every shortlisted name, labels, vetoes, merit and shadow rank
 ```
 
 ## Quality / degradation

@@ -21,7 +21,7 @@ func clearEnv(t *testing.T) {
 		}
 	}
 	for _, k := range []string{
-		"CFR_RESEARCH_MODE", "CFR_RESEARCH_ROUNDS", "CFR_RESEARCH_DOCUMENTS", "CFR_RESEARCH_CANDIDATES", "CFR_RESEARCH_SHORTLIST", "CFR_RESEARCH_SOURCES_FILE", "CFR_RESEARCH_HOLIDAYS_FILE",
+		"CFR_RESEARCH_MODE", "CFR_SELECTION", "CFR_RESEARCH_ROUNDS", "CFR_RESEARCH_DOCUMENTS", "CFR_RESEARCH_CANDIDATES", "CFR_RESEARCH_SHORTLIST", "CFR_RESEARCH_SOURCES_FILE", "CFR_RESEARCH_HOLIDAYS_FILE",
 		"CFR_RUNS_DIR", "CFR_AGENTS_DIR", "ALPHAVANTAGE_API_KEY", "FRED_API_KEY",
 		"CFR_CONTACT_EMAIL", "CFR_CLAUDE_MODEL", "CFR_GEMINI_MODEL",
 		"CFR_CLAUDE_BIN", "CFR_GEMINI_BIN", "CFR_GEMINI_CONCURRENCY", "CFR_KEEP_RUNS",
@@ -888,5 +888,33 @@ func TestCompactionReasoningEffortIsReadAndValidated(t *testing.T) {
 	}
 	if s.ChiefAPI.CompactionEffort != "low" {
 		t.Fatalf("file value not read: %q", s.ChiefAPI.CompactionEffort)
+	}
+}
+
+// selection decides who ranks the legacy shortlist. merit_veto is the default
+// because the Chief's own picks measured no better than the names it left out;
+// "chief" keeps the old behaviour selectable for the A/B.
+func TestSelectionDefaultsToMeritVetoAndHonoursPrecedence(t *testing.T) {
+	_, cwd := isolate(t)
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Selection != "merit_veto" {
+		t.Fatalf("default selection = %q, want merit_veto", s.Selection)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "cfr.toml"), []byte("selection = \"chief\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = Load(); err != nil || s.Selection != "chief" {
+		t.Fatalf("file selection = %+v (%v), want chief", s, err)
+	}
+	t.Setenv("CFR_SELECTION", "merit_veto")
+	if s, err = Load(); err != nil || s.Selection != "merit_veto" {
+		t.Fatalf("env selection = %+v (%v), want merit_veto over the file", s, err)
+	}
+	t.Setenv("CFR_SELECTION", "vibes")
+	if _, err = Load(); err == nil || !strings.Contains(err.Error(), "selection") {
+		t.Fatalf("an unknown selection loaded: %v", err)
 	}
 }

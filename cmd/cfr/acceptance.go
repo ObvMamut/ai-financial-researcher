@@ -107,7 +107,7 @@ func writeAcceptanceManifest(s *config.Settings, args []string, out, diagnostics
 	// Explicit allowlist: never marshal Settings, Config or APIConfig. Hash the
 	// same secret-free projection we print, including selectors and capability gates.
 	projection := map[string]any{
-		"research_mode": c.ResearchMode, "mode": c.Mode, "ticker": c.Ticker,
+		"research_mode": c.ResearchMode, "selection": c.Selection, "mode": c.Mode, "ticker": c.Ticker,
 		"indices": c.Indices, "cheap_engine": c.CheapEngine, "chief_engine": c.ChiefEngine,
 		"chief_fallback_active": fallback, "chief_fallback_enabled": c.ChiefFallbackEnabled,
 		"provider_caps": map[string]manifestProvider{"api": provider(c.API), "local": provider(c.Local), "chief_api": provider(c.ChiefAPI), "chief_fallback": provider(c.ChiefFallback)},

@@ -85,7 +85,7 @@ func orchestratorConfig(s *config.Settings, req model.RunRequest) orchestrator.C
 		indices = s.Indices // config-file default selection (may still be empty = all)
 	}
 	return orchestrator.Config{
-		ResearchMode: s.ResearchMode, Research: s.Research,
+		ResearchMode: s.ResearchMode, Research: s.Research, Selection: s.Selection,
 		Mode:          req.Mode,
 		Ticker:        req.Ticker,
 		Indices:       indices,

@@ -392,6 +392,15 @@ type IdeasResult struct {
 	Ideas           []TradeIdea         `json:"ideas"`
 	Notes           string              `json:"notes"`
 
+	// Selection names the policy that picked Ideas in a legacy independent
+	// run (SelectionMeritVeto or SelectionChief); empty on runs that predate
+	// it, which were all Chief-selected.
+	Selection string `json:"selection,omitempty"`
+	// ShadowRank is the Chief's own full ranking of the shortlist under
+	// merit_veto selection. It is recorded, never acted on: the scoreboard's
+	// chief-shadow arm scores its top names against what shipped.
+	ShadowRank []string `json:"shadow_rank,omitempty"`
+
 	// ChiefEngine and ChiefAccepted are Go-computed run metadata attached to
 	// the Chief's parsed output, the same way ResearchSummary already is:
 	// `cfr run --json` encodes only this struct on stdout (never RunMeta), so
@@ -599,16 +608,19 @@ type DomainStatus struct {
 
 // RunMeta captures all parameters and outcomes of a run for audit.
 type RunMeta struct {
-	SchemaVersion int            `json:"schema_version,omitempty"`
-	ResearchMode  string         `json:"research_mode,omitempty"`
-	Research      ResearchConfig `json:"research,omitempty"`
-	Mode          string         `json:"mode"`
-	Ticker        string         `json:"ticker,omitempty"`
-	Indices       []string       `json:"indices,omitempty"` // indices screened (independent mode)
-	GeneratedAt   string         `json:"generated_at"`
-	Shortlist     []Candidate    `json:"shortlist"`
-	Domains       []DomainStatus `json:"domains"`
-	Weights       DomainWeights  `json:"weights"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	ResearchMode  string `json:"research_mode,omitempty"`
+	// Selection is the legacy independent selection policy the run used
+	// (merit_veto or chief); empty for thesis, single-stock and older runs.
+	Selection   string         `json:"selection,omitempty"`
+	Research    ResearchConfig `json:"research,omitempty"`
+	Mode        string         `json:"mode"`
+	Ticker      string         `json:"ticker,omitempty"`
+	Indices     []string       `json:"indices,omitempty"` // indices screened (independent mode)
+	GeneratedAt string         `json:"generated_at"`
+	Shortlist   []Candidate    `json:"shortlist"`
+	Domains     []DomainStatus `json:"domains"`
+	Weights     DomainWeights  `json:"weights"`
 	// ThinlyCovered names the shortlisted tickers the run's sources can ground
 	// less than 60% of the domain weight for: SEC filings and listed option
 	// chains are US instruments, so fundamentals and sentiment cannot reach a

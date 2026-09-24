@@ -9,6 +9,21 @@
 # Default remains legacy. Env: CFR_RESEARCH_MODE; headless: --research-mode thesis.
 #research_mode = "legacy"
 
+# Who picks the shipped names in legacy independent research. Env: CFR_SELECTION.
+#   "merit_veto" (default) — Go ranks the shortlist by the funnel's own merit
+#                 (pre-screen composite aligned with the scout's direction),
+#                 removes names a specialist or the Chief vetoed (closed reason
+#                 enum) and names the risk gate rejects, and ships the top 5 in
+#                 the scout's direction as market-on-open ideas with a
+#                 catastrophe stop and a time exit. The Chief writes the prose,
+#                 may veto, and records its own ranking as a shadow; the macro
+#                 LLM call is replaced by a computed regime line.
+#   "chief"      — the Chief ranks, prices and picks, as before (A/B control).
+# Evidence: the Chief's picks (+0.55%) matched the names it left out (+0.58%)
+# and no specialist domain IC exceeded ±0.08 (docs/research/2026-09-23-evidence).
+# Thesis mode and single-stock mode ignore this key.
+#selection = "merit_veto"
+
 # Where run artifacts (reports, ideas.json, prices/, quant.json) are written.
 #runs_dir = "runs"
 
