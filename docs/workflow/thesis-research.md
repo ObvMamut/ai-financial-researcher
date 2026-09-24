@@ -58,13 +58,20 @@ from the working directory. Neither file is required.
    observations from inferences and cite persisted evidence IDs with verbatim
    passages and issuer roles. Dossiers explicitly compare `long_case`,
    `short_case` and `no_trade_case`, and identify `preferred_direction` as
-   BUY, SELL or NONE. The selector may select only the reviewed direction. A supported
-   dossier needs a substantive cited document, valid citations and no unresolved
-   material questions. Headlines or factors alone cannot qualify.
-5. A separate challenger call checks the thesis against the evidence. A revision
-   request buys one further researcher revision and final challenge, within the
-   same document budget. This is a separate review, not an independent data
-   source or a promise that the two models have uncorrelated errors.
+   BUY, SELL or NONE. Every dossier also gives a `lean` (BUY or SELL) and a
+   `conviction` (1–5), so every researched name is scoreable; NONE requires a
+   `none_reason` (see [Leans, core claims and disclosed risk](#leans-core-claims-and-disclosed-risk)).
+   The selector may select only the reviewed direction. A supported
+   dossier needs a substantive cited document, valid citations, grounded core
+   claims and no pending requests; what it cannot establish it discloses as
+   risks. Headlines or factors alone cannot qualify.
+5. A separate challenger call checks the thesis against the evidence. A revise
+   verdict, a blocking issue, a pending request or a blocking Go validation
+   problem buys one further researcher revision ("resolve what can be resolved
+   and disclose the rest as risks") and final challenge, within the same
+   document budget; disclosed-risk issues alone do not. This is a separate
+   review, not an independent data source or a promise that the two models
+   have uncorrelated errors.
 6. Claude selects up to five ideas, or one in single-stock mode. Zero is valid.
    The selector reads dossiers, challenges, evidence, verified quant and Macro;
    it is not anchored to the old weighted confidence score. A final challenger
@@ -121,6 +128,71 @@ to clean research. A payload that still does not decode is a research failure.
 Malformed requests are not schema errors. Failing a whole dossier over one badly
 formed request would throw away the research to correct the postscript; the
 protocol answers the request instead.
+
+### Leans, core claims and disclosed risk
+
+Every final dossier of the September 23 record said NONE, and 65 of 67 final
+challenges carried at least one objection free data can never answer. Both
+were vetoes. The contract below replaces them with disclosure.
+
+**Lean.** New dossiers require `lean` (`BUY` | `SELL`) and `conviction`
+(integer 1–5). `preferred_direction: NONE` requires `none_reason` —
+`event_inside_window`, `evidence_conflict` or `no_mechanism` — and any other
+direction forbids it and must equal the lean. These are enforced on newly
+generated dossiers through the current-contract schema check, so a violation
+is a schema error that buys the single bounded repair; historical dossiers
+without a lean still load.
+
+**Labels.** Dossiers also emit fixed-schema labels: `move_driver` (`news` |
+`earnings` | `none` | `unknown`), `pending_binary_event` (`{present, date}`,
+date `YYYY-MM-DD` when known) and `corporate_action` (boolean). Enums are
+validated when present; absent means unlabelled. Nothing in selection reads
+them. Lean, conviction and labels persist in `data/research-<hex>.json`
+under `dossier`, readable by JSON key.
+
+**Core claims.** A dossier marks at most three claims `core: true`. When it
+marks none, the claims in `expectations_claim_ids` ∪ `priced_in_claim_ids`
+are core, and failing those, its first three claims.
+
+**Material-issue categories.** Each challenger `material_issues` entry is
+`{category, issue}` from a closed enum:
+
+| Kind | Categories |
+| --- | --- |
+| Blocking | `grounding`, `attribution`, `positioning_misread`, `stale_or_inaccessible_source`, `direction_unexamined`, `form` |
+| Disclosed risk | `priced_in_unprovable`, `forecast_mechanism`, `future_prices`, `annual_target_horizon`, `issuer_time_unpublished` |
+
+An unknown category on a new challenge is a schema error. A missing category
+blocks. Historical challenges stored bare strings; they decode uncategorised
+and block, exactly as every issue did when written. Go's own review-consistency
+problems arrive categorised (`form`, `grounding`, `attribution`).
+
+**Supported.** A review supports a dossier when there is no blocking-category
+issue, no pending request, every core claim is `supported` with attribution
+`confirmed`, and no claim is disputed (assessment or attribution). Non-core
+claims left `unresolved` and disclosed-risk issues are allowed. A contract-v2
+`revise` whose remaining issues are all disclosed risks passes: the verdict word
+is the challenger's, the gate (`reviewBlockers`) is Go's. `reject`, an
+unavailable review and a historical review without a contract version keep
+their old meaning — only `supported` passes those. The same gate applies to the
+final plan review, together with its plan-hash and target-assessment checks.
+
+**Go validation.** `validateDossier` no longer writes its findings into the
+researcher's `unresolved` list, and that list no longer forces the watchlist.
+Blocking findings — invalid or invented evidence, missing reasoning references,
+an ungrounded quotation on a core claim, incomplete cases or thesis fields, an
+invalid direction or status, pending requests, insufficient evidence quality,
+no substantive cited source — are recorded in the artifact's `blocking`, force
+the watchlist and are sent to the revision. A quotation problem on a non-core
+claim is recorded in `disclosed`. Look-ahead citations, failed numerical
+comparisons and unverifiable announcement reactions still force the watchlist
+as before.
+
+**Risks.** After the final review Go sets the dossier's `risks`: its own
+`unresolved` entries, `disclosed` notes, disclosed-risk issues
+(`category: issue`) and every non-core claim the review left unresolved. A
+supported dossier with any risk is marked `evidence_quality: mixed`, and a
+selected plan's `thesis.risks` carries the same list.
 
 ## Evidence and time
 
@@ -198,7 +270,7 @@ abstention; chart-pattern technical analysis is prohibited.
 
 Schema v2 adds `research_mode: "thesis"`, `decisions`, and a `thesis` object
 on selected ideas. Its fields include `why_now`, `invalidation`, `catalyst_window`,
-`evidence_quality`, `evidence_ids`, entry/stop/target reasons, `outcome_low`,
+`evidence_quality`, `evidence_ids`, `risks` (Go-copied disclosed risks), entry/stop/target reasons, `outcome_low`,
 `outcome_high`, `entry_expires_on`, `expires_on`, `prerequisites` and
 `calendar_estimated`. Ranges are plausible scenarios in listing currency, not
 probability intervals. Confidence/base confidence are zero and domain scores
@@ -462,8 +534,11 @@ path cannot certify newly generated output. New dossiers include
 explicit inferences whose premises the challenger must assess. Reference checks
 do not prove causal reasoning or semantic entailment.
 
-Dossiers target twelve material claims, 400 Unicode characters per narrative
-field and two quotations of at most 300 characters per claim. These are writing
+Dossiers target six material claims, 250 Unicode characters per narrative
+field and one quotation of at most 300 characters per claim (down from twelve,
+400 and two: the September 23 record lost 58% of researched names to budget,
+compaction or truncation, so the output shrank instead of the compaction
+growing). These are writing
 targets: `writing_diagnostics` records field names and actual lengths/counts;
 exceeding them does not invalidate complete research. Three requests per round
 and total input/response byte budgets remain hard limits.
@@ -526,7 +601,7 @@ Default complete-input / response-payload limits (UTF-8 bytes):
 | Role | Input | Response |
 | --- | ---: | ---: |
 | Discovery/triage | 98,304 | 12,288 |
-| Researcher/revision | 98,304 | 20,480 |
+| Researcher/revision | 98,304 | 32,768 |
 | Challenger/plan review | 98,304 | 16,384 |
 | Chief/corrective/fallback | 196,608 | 24,576 |
 
@@ -685,7 +760,7 @@ Globally infeasible requirements produce explicit omissions and capacity failure
 
 ## Conditional research and operational results
 
-`unresolved` contains material gaps in the existing thesis evidence. Optional
+`unresolved` discloses what the existing thesis evidence could not establish; it becomes part of the plan's risks and no longer forces the watchlist by itself. Optional
 `entry_conditions` and `monitoring` arrays distinguish observable prerequisites
 for entering an already evidenced thesis from future developments to monitor.
 Missing core evidence cannot be moved into either array to obtain support. The
