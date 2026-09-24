@@ -240,3 +240,15 @@ Acceptance bar status:
 - under 1M tokens per run: **not met** (1.3–1.5M).
 
 The remaining lever is research quality. That means either a stronger research model, or the lean arm proving an edge. A stronger model, such as running the researcher on the Chief's model, would breach CLAUDE.md's cost split, so it is an owner decision. Meanwhile about 60 thesis leans from these runs will mature in the `thesis-lean` scoreboard arm. The plan's rule stands: leans trade only if that arm's interval clears zero.
+
+### Run 7 and the switch (2026-09-24)
+
+Run 7 put the thesis researcher on the Chief engine (`researcher_engine = "chief"`, deepseek-v4-pro).
+- **Directional dossiers:** 7 of 12 (5 BUY, 2 SELL), up from 2–3 per run.
+- **First directional dossier supported by the gate:** ENI.MI, a BUY.
+- **Shipped: 0.** The Chief kept ENI.MI on the watchlist because the buyback execution its case needs was not evidenced or timed.
+- **Cost:** 34 minutes and 1.42M tokens, on the pricier model.
+
+The same hour, a legacy `merit_veto` run shipped 5 market-on-open ideas (MRK, MSFT, REGN, SAP.DE long; TTD short) in 5 minutes and 165K tokens. Their source is the scouts' shortlist, the only source with a positive interval.
+
+Under the owner's rule — switch thesis off only when a measurably better idea source exists — the local default is now `research_mode = "legacy"`. The backup is `.data/cfr.toml.pre-legacy-default`. Thesis mode and its fixes stay in the code; run it with `CFR_RESEARCH_MODE=thesis`, adding `CFR_RESEARCH_RESEARCHER_ENGINE=chief` for the stronger researcher. The `thesis-lean` scoreboard arm keeps measuring the leans those runs recorded.

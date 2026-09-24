@@ -28,8 +28,10 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
   configuration that does not set it behaves exactly as it did before). The
   selector exists and is tested. The operator has since switched this project's
   untracked local `cfr.toml` to `chief_engine = "api"` (DeepSeek
-  `deepseek-v4-pro`) with `research_mode = "thesis"`, so a local run is not a
-  Claude Chief run unless overridden; `chief_engine=claude` switches it back in
+  `deepseek-v4-pro`), so a local run is not a Claude Chief run unless overridden.
+  Its `research_mode` went back to `"legacy"` on 2026-09-24, because legacy
+  `merit_veto` ships ideas and thesis had shipped none in 27 runs; thesis is
+  `CFR_RESEARCH_MODE=thesis`; `chief_engine=claude` switches it back in
   one setting. An API Chief needs its own dedicated credentials (`[chief_api]` / `CFR_CHIEF_API_*`),
   **never** inherited from `[api]`, `[local]` or `DEEPSEEK_API_KEY`, so turning
   on `cheap_engine=api` can never silently also spend on synthesis. Do not add
