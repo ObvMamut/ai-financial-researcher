@@ -105,4 +105,58 @@ result.
 
 ## Results
 
-Not yet run.
+### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
+
+- **Sample.** 207 weekly rebalances from 2022-10-07 to 2026-09-18. The second
+  half starts on 2024-09-27. The panel has 55,344 rows: sp500 98 names, nq100 56,
+  eu50 47, asia100 67. No symbol was unavailable.
+- **Survivorship.** The universe is today's constituents only, so every positive
+  number below is an upper bound.
+
+**Parity with the Python study.** Every figure matches the Python study to the
+printed precision, and the row and date counts match exactly. This is what
+porting the same formulas onto the same Yahoo data should produce. The only
+known difference is that Go drops a bar with any missing OHLC field, where
+Python forward-filled it. That difference does not move a printed digit.
+
+| Figure | Python | Go lab | Plan's bar |
+|---|---:|---:|---|
+| Composite IC10 (t) | 0.012 (0.75) | 0.012 (0.75) | 0.012 ± 0.005 ✓ |
+| Composite IC5 / IC15 | 0.016 / 0.011 | 0.016 / 0.011 | |
+| mom12-1 IC10 (t) | 0.027 (1.61) | 0.027 (1.61) | |
+| Hold 15 sessions, no barriers, net | +0.712% | +0.712% | +0.71% ± 0.1% ✓ |
+| 2σ·√H stop only, net | +0.607% | +0.607% | |
+| 9% stop / 15% target, net | +0.297% | +0.297% | |
+| Top-5 15-session excess, gross (long / short) | 0.807% (1.316 / 0.111) | 0.807% (1.316 / 0.111) | |
+
+**Barrier grid, by half.**
+
+| Exit rule | H1 | H2 |
+|---|---:|---:|
+| Hold, no barriers | −0.169% | +1.611% |
+| 2σ stop only | −0.296% | +1.527% |
+| 9% / 15% (current) | +0.046% | +0.553% |
+
+Longs made +2.23% and shorts −1.36% under the hold rule. The hold's edge comes
+entirely from the second half and from the long side.
+
+**Pre-registered tests.** Three tests were run. C2 was untestable and C5 was
+skipped. No test passed, so nothing ships and `prescreen_version` was not added.
+
+| Test | Mean of the statistic | NW t | H1 / H2 | US / EU / Asia | Result |
+|---|---:|---:|---|---|---|
+| C1: momentum weighting | +0.0104 (IC10 0.022 vs 0.012) | 1.59 | +0.017 / +0.004 | +0.010 / +0.017 / +0.006 | **Fails.** The sign is positive in every half and region, but t < 2.5. |
+| C2: earnings premium | — | — | — | — | **Untestable.** No existing provider or cache holds point-in-time announcement dates. The Alpha Vantage calendar is keyed and forward-only. EDGAR gives only US 10-Q/10-K *filing* dates, and there is nothing for EU or Asia, so the every-region bar was unreachable. |
+| C3: news-conditioned residual reversal | −0.0014 | −0.23 | +0.007 / −0.010 | −0.005 / +0.007 / −0.002 | **Fails.** A null result. |
+| C4: beta-adjusted target | +0.0040 | 0.29 | −0.016 / +0.024 | −0.004 / +0.024 / +0.000 | **Fails.** The composite's IC10 falls from 0.012 to 0.004 once beta is removed. |
+| C5: breadth | — | — | — | — | **Skipped.** It needs a new list of several hundred US names, which no existing file or keyless source provides. |
+
+**What C4 adds to every signal's reading.** Measured against beta-adjusted
+excess:
+
+- **mom12-1** keeps most of its IC10: 0.027 falls to 0.019 (t 1.30).
+- **The composite** loses about two thirds of its IC10: 0.012 falls to 0.004.
+- **lowvol** flips sign, from −0.026 to +0.016. Its negative IC was the market's
+  beta, not stock selection.
+
+Most of what the screen appeared to earn is exposure to a rising market.
