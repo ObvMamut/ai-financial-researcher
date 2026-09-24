@@ -111,18 +111,18 @@ func parseSpecialistLabels(role, stdout string, shortlist []model.Candidate, ung
 
 // parseBinaryEvent accepts {present, date} or a bare boolean; anything else is
 // unknown. A date is kept only when it is a well-formed calendar date.
-func parseBinaryEvent(raw json.RawMessage) *model.BinaryEvent {
+func parseBinaryEvent(raw json.RawMessage) *model.LabelBinaryEvent {
 	if len(raw) == 0 {
 		return nil
 	}
 	if b := jsonBool(raw); b != nil {
-		return &model.BinaryEvent{Present: b}
+		return &model.LabelBinaryEvent{Present: b}
 	}
 	var obj map[string]json.RawMessage
 	if json.Unmarshal(raw, &obj) != nil {
 		return nil
 	}
-	ev := &model.BinaryEvent{Present: jsonBool(obj["present"])}
+	ev := &model.LabelBinaryEvent{Present: jsonBool(obj["present"])}
 	if d := strings.TrimSpace(jsonString(obj["date"])); labelDate.MatchString(d) {
 		ev.Date = d
 	}

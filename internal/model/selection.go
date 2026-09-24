@@ -69,9 +69,9 @@ func NormalizeMoveDriver(s string) string {
 	}
 }
 
-// BinaryEvent is a specialist's read on a scheduled binary event inside the
+// LabelBinaryEvent is a specialist's read on a scheduled binary event inside the
 // holding window. Present is nil when the specialist did not say.
-type BinaryEvent struct {
+type LabelBinaryEvent struct {
 	Present *bool  `json:"present,omitempty"`
 	Date    string `json:"date,omitempty"` // YYYY-MM-DD, only when stated and well-formed
 }
@@ -79,12 +79,12 @@ type BinaryEvent struct {
 // NameLabels are one specialist's structured labels for one shortlisted name.
 // Every field has an "unknown" state, and unknown is never a veto.
 type NameLabels struct {
-	MoveDriver         string       `json:"move_driver"`
-	PendingBinaryEvent *BinaryEvent `json:"pending_binary_event,omitempty"`
-	CorporateAction    *bool        `json:"corporate_action,omitempty"`
-	Veto               bool         `json:"veto,omitempty"`
-	VetoReason         string       `json:"veto_reason,omitempty"`
-	Note               string       `json:"note,omitempty"`
+	MoveDriver         string            `json:"move_driver"`
+	PendingBinaryEvent *LabelBinaryEvent `json:"pending_binary_event,omitempty"`
+	CorporateAction    *bool             `json:"corporate_action,omitempty"`
+	Veto               bool              `json:"veto,omitempty"`
+	VetoReason         string            `json:"veto_reason,omitempty"`
+	Note               string            `json:"note,omitempty"`
 }
 
 // Veto is one recorded refusal of a name: who refused it and why.
