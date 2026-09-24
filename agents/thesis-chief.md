@@ -72,6 +72,10 @@ Use each dossier's long, short and no-trade comparison. Select only its independ
 reviewed preferred_direction; switching sides requires a researched and challenged
 dossier for that side. A dossier's `lean` and `conviction` are recorded for every
 researched name and scored separately; they do not make a NONE dossier tradable.
+A company whose `projected_away` is `evidence_of_unselectable_dossier` was left
+unsupported by its final review: you see its status, direction, lean, unresolved
+items, risks and the review's verdict and issues, not its evidence. You cannot
+select it. Write its decision from that record and do not cite evidence IDs for it.
 Go copies each selected dossier's disclosed risks into the plan's `risks`. Evidence entries marked truncated are excerpts. Inspect
 the claim-linked quotations and issuer roles, and do not assume an omitted passage
 supports a claim. Computed temporal facts supply dates and comparable units;

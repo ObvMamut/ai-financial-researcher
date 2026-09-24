@@ -675,6 +675,15 @@ from `as_of` and `published_at`; and source scaffolding beyond identity and
 attribution (URL, retrieval time, page title, links, parent). An absent field
 whose name is not in `projected_away` was never written.
 
+A dossier whose final review left it unsupported cannot become a plan, so it
+carries no evidence onto the board and reserves nothing from the budget. Its
+record keeps status, preferred direction, lean, conviction, labels, unresolved
+items, disclosed risks, and the challenge's verdict, reason and material issues.
+Its `projected_away` is the single name `evidence_of_unselectable_dossier`. On the
+2026-09-24 run, eleven researched names needed 204 KB of required quotation
+against a 179 KB board, eight of them unselectable, and the Chief was never
+called.
+
 Allocation is two passes over the whole board. Every company's records and every
 cited claim's required quotations are reserved first; if those alone exceed the
 budget the call fails as an input-capacity failure naming each company and its

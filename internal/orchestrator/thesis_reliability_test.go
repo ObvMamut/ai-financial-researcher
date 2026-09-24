@@ -1799,3 +1799,46 @@ func TestCapacityUsesBytesWhileSpanOffsetsStayUnicodeCharacters(t *testing.T) {
 		t.Fatal("sizeEvidence dropped the required quotation while still overflowing on padding")
 	}
 }
+
+// A dossier its final review left unsupported reaches the Chief as a decision
+// record, not as evidence. On the 2026-09-24 run eleven researched names needed
+// 204 KB of required quotation against a 179 KB board — eight of them
+// watchlist dossiers the Chief could not select — and the Chief was never
+// called. Only selectable dossiers may reserve budget.
+func TestUnselectableDossiersReserveNothingOnTheChiefBoard(t *testing.T) {
+	all := sep13ResearchBoard(t)
+	_, full, err := chiefBoard(all, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed := sep13ResearchBoard(t)
+	for i := 2; i < len(mixed); i++ {
+		mixed[i].Dossier.Status = "watchlist"
+	}
+	board, alloc, err := chiefBoard(mixed, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alloc.RequiredBytes*2 > full.RequiredBytes {
+		t.Fatalf("ten unselectable dossiers still reserve %d of the all-supported %d required bytes",
+			alloc.RequiredBytes, full.RequiredBytes)
+	}
+	for i, c := range board {
+		if i < 2 {
+			if c.Dossier == nil || len(c.Dossier.Claims) == 0 || len(c.Documents) == 0 {
+				t.Fatalf("%s is selectable and lost its evidence", c.Candidate.Ticker)
+			}
+			continue
+		}
+		if c.Dossier == nil || c.Challenge == nil {
+			t.Fatalf("%s lost its decision record", c.Candidate.Ticker)
+		}
+		if len(c.Documents) > 0 || len(c.Dossier.Claims) > 0 || len(c.Challenge.ClaimReviews) > 0 {
+			t.Fatalf("%s is unselectable but still carries evidence", c.Candidate.Ticker)
+		}
+		if c.Dossier.Status != "watchlist" || c.Challenge.Verdict == "" ||
+			len(c.Projected) != 1 || c.Projected[0] != projectedUnselectable {
+			t.Fatalf("%s's record does not say what it is: %+v", c.Candidate.Ticker, c.Projected)
+		}
+	}
+}

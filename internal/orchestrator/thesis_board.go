@@ -74,6 +74,11 @@ const (
 	projectedScaffold    = "document_scaffolding"
 	projectedAges        = "derived_evidence_ages"
 	projectedContext     = "optional_source_context"
+	// projectedUnselectable replaces a whole evidence record: the dossier's
+	// claims, events, case narrative and cited sources, and the review's
+	// per-claim record. It applies only to a dossier its final review left
+	// unsupported, which the Chief may not select.
+	projectedUnselectable = "evidence_of_unselectable_dossier"
 )
 
 // caseNarrative is the dossier prose the Chief is told to read — "Use each
@@ -301,15 +306,18 @@ type boardAllocation struct {
 // neither pass has to redo them and so that nothing in either pass depends on
 // the company's position in the slice.
 type boardPlan struct {
-	research  thesisResearch
-	usable    bool
-	anchor    time.Time
-	docs      []model.EvidenceDocument // anchor-filtered, cited only
-	claims    []model.ResearchClaim
-	cited     map[string]bool
-	required  int // characters of required quotation
-	narrative int // bytes of case narrative this company would like to carry
-	need      int // characters of optional context this company could still use
+	research thesisResearch
+	usable   bool
+	// selectable is a usable dossier whose final review left it supported —
+	// the only kind the Chief may turn into a plan.
+	selectable bool
+	anchor     time.Time
+	docs       []model.EvidenceDocument // anchor-filtered, cited only
+	claims     []model.ResearchClaim
+	cited      map[string]bool
+	required   int // characters of required quotation
+	narrative  int // bytes of case narrative this company would like to carry
+	need       int // characters of optional context this company could still use
 }
 
 func planCompany(r thesisResearch) boardPlan {
@@ -319,6 +327,16 @@ func planCompany(r thesisResearch) boardPlan {
 	}
 	p.usable = true
 	p.anchor, _ = time.Parse(time.RFC3339, r.Temporal.AsOf)
+	// A dossier its final review left unsupported cannot become a plan, and
+	// the Chief's only job for it is a decision. Its evidence costs as much as
+	// a selectable company's — 16–22 KB of required quotation each on the
+	// 2026-09-24 run, where eleven researched names needed 204 KB against a
+	// 179 KB board and the Chief was never called. It reaches the Chief as its
+	// verdict and the reasons for it, and reserves nothing from the budget.
+	p.selectable = r.Dossier.Status == "supported"
+	if !p.selectable {
+		return p
+	}
 	p.claims = evidenceClaims(r.Dossier, r.Challenge.Claims...)
 	p.cited = map[string]bool{}
 	for _, claim := range p.claims {
@@ -643,6 +661,9 @@ func (p boardPlan) render(prose, extra int) chiefCompany {
 		v.Temporal.EvidenceAges = nil
 		return v
 	}
+	if !p.selectable {
+		return p.renderUnselectable(v)
+	}
 	docs := promptDocuments(p.docs, p.required+extra, p.claims...)
 	// placed is the text each cited source actually contributes to this
 	// prompt. It is what decides whether a claim's own words may be dropped,
@@ -782,6 +803,28 @@ func (p boardPlan) render(prose, extra int) chiefCompany {
 	if droppedAges {
 		v.Projected = append(v.Projected, projectedAges)
 	}
+	return v
+}
+
+// renderUnselectable is the decision record of a dossier the Chief may not
+// select: its status, direction, lean and labels, the unresolved gaps and
+// disclosed risks, and the review's verdict with the issues behind it. What is
+// withheld is the evidence for a thesis nobody may act on, and the record says
+// so rather than reading as research that found nothing.
+func (p boardPlan) renderUnselectable(v chiefCompany) chiefCompany {
+	d := p.research.Dossier
+	d.Claims, d.Events, d.Requests = nil, nil, nil
+	d.Hypothesis, d.Changed, d.Expectations = "", "", ""
+	d.Underappreciated, d.Mechanism, d.PricedIn, d.Counterargument = "", "", "", ""
+	for _, field := range caseNarrative(&d) {
+		*field = ""
+	}
+	v.Dossier = &d
+	ch := p.research.Challenge
+	ch.Claims, ch.ClaimReviews, ch.Requests = nil, nil, nil
+	v.Challenge = &ch
+	v.Temporal.EvidenceAges = nil
+	v.Projected = []string{projectedUnselectable}
 	return v
 }
 
