@@ -26,6 +26,15 @@
 #               - chief-analyst places bad levels, then answers the corrective
 #                 re-prompt with unparseable JSON (the discard must be recorded,
 #                 not swallowed)
+#   veto        - news vetoes NVDA (binary_event_inside_window) and quant
+#                 "vetoes" JPM with a reason outside the closed enum, which must
+#                 not count (merit_veto selection)
+#   chief-veto  - the merit_veto Chief Writer vetoes the first name of the book
+#                 it was handed (the app must refill from the reserves)
+#
+# Specialists always emit a structured `labels` array; outside `veto` mode it
+# carries no veto. The merit_veto Chief Writer honours chief-fail and badjson
+# like the Chief Analyst does.
 prompt="$2"
 mode="${CFR_FAKE_MODE:-ok}"
 
@@ -148,6 +157,35 @@ emit_ideas() {
     function sd_unit(sd, c) { return (sd/100) * sqrt(15) * c }
   '
 }
+
+# ── Chief Writer (merit_veto selection) ─────────────────────────────────────
+#
+# Writes prose for every name Go listed under Book and Reserves (lines of the
+# form "- #<merit rank> TICKER DIRECTION · …"), and ranks them in reverse as its
+# shadow ranking, so the shadow visibly differs from the merit order.
+if has "# Agent: Chief Writer"; then
+  has "### Computed market regime" && echo "saw-computed-regime"
+  case "$mode" in
+    chief-fail) echo "fake chief crashed" >&2; exit 1 ;;
+    badjson)
+      printf 'Synthesis.\n\n```json\n{"ideas": [ not json !!! ]}\n```\n'
+      exit 0 ;;
+  esac
+  printf '%s\n' "$prompt" | awk -v mode="$mode" '
+    $1=="-" && $2 ~ /^#[0-9]+$/ { n++; tick[n]=$3; dir[n]=$4 }
+    END {
+      printf "Fake write-up of the merit book.\n\n```json\n{\n  \"ideas\": [\n"
+      for (i=1;i<=n;i++) {
+        printf "    {\"ticker\": \"%s\", \"direction\": \"%s\", \"why\": \"Fake prose for %s.\", \"position_note\": \"exit on a regime turn\"}%s\n", tick[i], dir[i], tick[i], (i<n ? "," : "")
+      }
+      printf "  ],\n  \"vetoes\": ["
+      if (mode=="chief-veto" && n>0) printf "{\"ticker\": \"%s\", \"veto_reason\": \"fraud_or_litigation_shock\", \"note\": \"fake allegation\"}", tick[1]
+      printf "],\n  \"shadow_rank\": ["
+      for (i=n;i>=1;i--) printf "\"%s\"%s", tick[i], (i>1 ? ", " : "")
+      printf "],\n  \"notes\": \"Hermetic fake write-up.\"\n}\n```\n"
+    }'
+  exit 0
+fi
 
 if has "# Agent: Chief Analyst"; then
   # Echo a marker when the pipeline's own track record reached the prompt, so a
@@ -275,6 +313,12 @@ spec_scores() {
   # against, rather than only that the role ran.
   has "### Verified market regime" && echo "saw-regime-block"
   has "### Verified price context" && echo "saw-price-context"
+  nvda_veto='"veto": false'
+  jpm_veto='"veto": false'
+  if [ "$mode" = "veto" ]; then
+    [ "$1" = "news" ] && nvda_veto='"veto": true, "veto_reason": "binary_event_inside_window", "note": "prints inside the window"'
+    [ "$1" = "quant" ] && jpm_veto='"veto": true, "veto_reason": "does not like it"'
+  fi
   cat <<EOF
 Fake $1 report covering the shortlist. Findings per ticker follow.
 
@@ -290,7 +334,11 @@ Fake $1 report covering the shortlist. Findings per ticker follow.
   {"ticker": "NKE", "bias": "bearish", "strength": 7, "note": "weak"},
   {"ticker": "TSLA", "bias": "bearish", "strength": 4, "note": "mixed"},
   {"ticker": "AAPL", "bias": "bullish", "strength": 6, "note": "steady"}
-], "missing": []}
+], "missing": [], "labels": [
+  {"ticker": "NVDA", "move_driver": "news", "pending_binary_event": {"present": false}, "corporate_action": false, $nvda_veto},
+  {"ticker": "JPM", "move_driver": "earnings", "corporate_action": false, $jpm_veto},
+  {"ticker": "NKE", "move_driver": "none"}
+]}
 \`\`\`
 EOF
 }

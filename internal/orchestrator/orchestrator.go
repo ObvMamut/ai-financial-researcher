@@ -915,7 +915,6 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	// ── Stage 2: Specialists (parallel) ────────────────────────────────────────
 	analysisStart := time.Now()
-	log(ch, "Stage 2: running 5 specialist agents…")
 	specialists := []struct {
 		role string
 		cli  model.CLI
@@ -926,6 +925,14 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		{"sentiment", cheapCLI},
 		{"macro", cheapCLI},
 	}
+	// Under merit_veto the macro call is not made: it carried zero weight and
+	// no measured IC, and a regime is one fact per market that Go computes
+	// from the benchmark bars it already has (computedRegimeLines).
+	meritVeto := useMeritVeto(cfg)
+	if meritVeto {
+		specialists = specialists[:4]
+	}
+	log(ch, fmt.Sprintf("Stage 2: running %d specialist agents…", len(specialists)))
 
 	eventDates := map[string]time.Time{}
 	verifiedDates := map[string]bool{}
@@ -1013,6 +1020,8 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 
 	var specReports []agents.ReportContext
 	var missingDomains []string
+	// ticker → domain → the structured labels that domain gave it.
+	nameLabels := map[string]map[string]model.NameLabels{}
 
 	for i, sp := range specialists {
 		if specChans[i] == nil {
@@ -1055,6 +1064,23 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				log(ch, fmt.Sprintf("warn: %s report unusable: %v", sp.role, err))
 			default:
 				r.Stdout, enf = corrected, e
+				labels, refused := parseSpecialistLabels(sp.role, r.Stdout, shortlist, ungrounded[i], abstained[i])
+				for _, n := range refused {
+					log(ch, "warn: labels: "+n)
+				}
+				vetoes := 0
+				for t, l := range labels {
+					if nameLabels[t] == nil {
+						nameLabels[t] = map[string]model.NameLabels{}
+					}
+					nameLabels[t][sp.role] = l
+					if l.Veto {
+						vetoes++
+					}
+				}
+				if len(labels) > 0 {
+					log(ch, fmt.Sprintf("%s labelled %d name(s), %d veto(es)", sp.role, len(labels), vetoes))
+				}
 				if len(enf.Renamed) > 0 {
 					log(ch, fmt.Sprintf("%s named %d company(ies) instead of their symbols (%s) — resolved, scores kept",
 						sp.role, len(enf.Renamed), strings.Join(enf.Renamed, ", ")))
@@ -1233,51 +1259,6 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			b.Ticker, b.Direction, b.Confidence, b.CoveredWeight*100, capNote))
 	}
 
-	prompt, err := reg.AssemblePrompt(agents.PromptParams{
-		Role:             "chief-analyst",
-		Mode:             cfg.Mode,
-		RunTS:            run.TS,
-		Shortlist:        shortlist,
-		Ticker:           cfg.Ticker,
-		Reports:          specReports,
-		Missing:          missingDomains,
-		Weights:          cfg.Weights,
-		QuantBlock:       quantPack.CompactBlock() + driftBlock(prescreen, shortlist) + regimeSuffix(quantPack),
-		BaseScoreBlock:   baseScoreBlock(bases, cfg.ChiefAdjustBand),
-		TrackRecordBlock: cal.Block(),
-		PostMortemBlock:  pmRes.PM.Block(),
-	})
-	if err != nil {
-		return fmt.Errorf("assemble chief-analyst prompt: %w", err)
-	}
-
-	// The primary Chief Analyst call gets its own attempt budget: a timeout
-	// means "too slow," not "flaky," so retrying identically just delays
-	// reaching the DeepSeek fallback below. cfg.Retry (still governing
-	// screening/analysis, and the fallback's own transient-error retries) is
-	// left untouched. chiefTarget bakes this into every purpose and both
-	// engines, so it is computed once here and reused for the corrective call.
-	chiefT := chiefTarget(chiefE, cfg, chiefInitial)
-
-	agentStatus(ch, "chief-analyst", model.StatusRunning, nil)
-	r := runAgent(ctx, chiefT.CLI, "chief-analyst", string(chiefT.Stage), prompt, chiefT.Timeout, chiefT.Retry, chiefT.Model, chiefT.Binary, chiefT.API)
-	r.Path = fmt.Sprintf("%s/chief-analyst.md", run.Dir)
-	if err := run.WriteReport("chief-analyst", r.Stdout); err != nil {
-		log(ch, fmt.Sprintf("warn: write chief-analyst report: %v", err))
-	}
-	// The synthesis call is the single most expensive step in the run and had
-	// no row of its own; only the five specialists were accounted for.
-	//
-	// The index is kept because a corrective re-prompt is a second call on this
-	// same row: recording only the first left 273s of the 2026-09-01 run — 36% of
-	// its most expensive stage — visible in `stages.synthesis` and accounted for
-	// nowhere, under `attempts: 1`.
-	chiefStatusIdx := len(domainStatuses)
-	domainStatuses = append(domainStatuses, model.DomainStatus{
-		Domain: "chief-analyst", Status: r.Status, Err: r.Err,
-		Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Usage: r.Usage,
-	})
-
 	var ideas *model.IdeasResult
 	var warnings []warning
 	outcome := "complete"
@@ -1298,157 +1279,86 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	var synthesisFallbackEngine string
 	chiefAttemptedEngines := []string{string(chiefE.CLI)}
 	var chiefAcceptedEngine string
-	if r.Status == model.StatusFailed {
-		agentStatus(ch, "chief-analyst", model.StatusFailed, &r)
-		fellBack := false
-		if fallbackOK {
-			chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
-			fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, r.Err, verifiedCtx)
-			domainStatuses = append(domainStatuses, fbStatus)
-			if ok {
-				ideas = fbIdeas
-				warnings = fbWarnings
-				synthesisFallbackEngine = fallbackAPI.Model
-				chiefAcceptedEngine = string(model.CLIApi)
-				fellBack = true
-			}
+
+	// Every shortlisted name, in merit order, with its labels, vetoes and
+	// domain scores — built under both policies so the labels are measured
+	// whichever one ships (data/selection.json).
+	var selRows []model.SelectionRow
+	var selRec *model.SelectionRecord
+	if cfg.Mode == model.ModeIndependent {
+		selRows = buildSelectionRows(cfg, shortlist, prescreen, bases, nameLabels, verifiedCtx)
+	}
+
+	if meritVeto {
+		// Go selects; the Chief writes the prose, may veto from the closed
+		// list, and records a shadow ranking. A Chief failure costs the
+		// prose, never the selection, so no DeepSeek fallback is attempted.
+		regime := computedRegimeLines(quantPack, quantSeries)
+		for _, l := range regime {
+			log(ch, "regime: "+l)
 		}
-		if !fellBack {
-			log(ch, "Chief analyst failed — building degraded fallback from specialist scores…")
-			ideas = buildDegradedIdeas(cfg, specReports, shortlist, stoodDown)
-		}
-		outcome = "degraded"
-	} else {
-		agentStatus(ch, "chief-analyst", model.StatusDone, &r)
-		// Parse and validate ideas
-		var parseErr error
-		ideas, parseErr = parseIdeas(r.Stdout)
-		if parseErr == nil {
-			// The primary's output is what ships from here on, whatever the
-			// (optional) corrective re-prompt below does to it — a corrective
-			// call that fails or returns unparseable JSON keeps this pass, it
-			// never falls through to the DeepSeek fallback.
+		mv := runMeritVeto(ctx, ch, cfg, run, reg, chiefE, shortlist, selRows, verifiedCtx, specReports,
+			quantPack.CompactBlock()+driftBlock(prescreen, shortlist), regime)
+		domainStatuses = append(domainStatuses, mv.Status)
+		ideas, warnings, selRec = mv.Ideas, mv.Warnings, mv.Record
+		if mv.Accepted {
 			chiefAcceptedEngine = string(chiefE.CLI)
-			warnings = validateIdeas(ideas, cfg, verifiedCtx)
-			findings := applyRiskGate(ideas, verifiedCtx, cfg.Risk)
+		}
+		if mv.Degraded {
+			outcome = "degraded"
+		}
+	} else {
+		prompt, err := reg.AssemblePrompt(agents.PromptParams{
+			Role:             "chief-analyst",
+			Mode:             cfg.Mode,
+			RunTS:            run.TS,
+			Shortlist:        shortlist,
+			Ticker:           cfg.Ticker,
+			Reports:          specReports,
+			Missing:          missingDomains,
+			Weights:          cfg.Weights,
+			QuantBlock:       quantPack.CompactBlock() + driftBlock(prescreen, shortlist) + regimeSuffix(quantPack),
+			BaseScoreBlock:   baseScoreBlock(bases, cfg.ChiefAdjustBand),
+			TrackRecordBlock: cal.Block(),
+			PostMortemBlock:  pmRes.PM.Block(),
+		})
+		if err != nil {
+			return fmt.Errorf("assemble chief-analyst prompt: %w", err)
+		}
 
-			// Corrective re-prompt for violations worth a second model call:
-			// concentration, inverted stop/target levels, a confidence scored
-			// against a different thesis than the domains reported, and every
-			// actionable risk-gate violation.
-			//
-			// Observational findings are logged and warned about but never
-			// re-prompted: there is one corrective call, and asking the Chief to
-			// fix the account's equity or the run's missing price history spends
-			// it on something no re-emission can change.
-			var repromptReasons []string
-			// Whether the one corrective call actually landed. The drop note
-			// below used to claim it had, unconditionally.
-			correctiveApplied := false
-			for _, f := range findings {
-				log(ch, "risk: "+f.Message)
-				if f.actionable() {
-					repromptReasons = append(repromptReasons, f.Message)
-				}
-			}
-			for _, w := range warnings {
-				if strings.Contains(w.Message, "level ordering") {
-					repromptReasons = append(repromptReasons, fmt.Sprintf("fix %s: stop/entry/target must be ordered for the trade direction (BUY: stop < entry < target; SELL: target < entry < stop; a target is optional for a market-on-open idea)", w.Ticker))
-				}
-				if strings.Contains(w.Message, "far confidence") {
-					repromptReasons = append(repromptReasons, fmt.Sprintf(
-						"%s: your confidence was more than %d points outside its computed base score — re-score it from the base in the \"Computed base scores\" table and name each adjustment",
-						w.Ticker, 2*cfg.ChiefAdjustBand))
-				}
-			}
+		// The primary Chief Analyst call gets its own attempt budget: a timeout
+		// means "too slow," not "flaky," so retrying identically just delays
+		// reaching the DeepSeek fallback below. cfg.Retry (still governing
+		// screening/analysis, and the fallback's own transient-error retries) is
+		// left untouched. chiefTarget bakes this into every purpose and both
+		// engines, so it is computed once here and reused for the corrective call.
+		chiefT := chiefTarget(chiefE, cfg, chiefInitial)
 
-			if len(repromptReasons) > 0 {
-				log(ch, "Validation failed — attempting corrective re-prompt…")
-				first := r
-				reprompt := correctivePrompt(prompt, first.Stdout, repromptReasons, bases)
-				correctiveT := chiefTarget(chiefE, cfg, chiefCorrective)
-				r = runAgent(ctx, correctiveT.CLI, "chief-analyst", string(correctiveT.Stage), reprompt, correctiveT.Timeout, correctiveT.Retry, correctiveT.Model, correctiveT.Binary, correctiveT.API)
-				r.Path = first.Path // same artifact; the corrected pass is written over it
+		agentStatus(ch, "chief-analyst", model.StatusRunning, nil)
+		r := runAgent(ctx, chiefT.CLI, "chief-analyst", string(chiefT.Stage), prompt, chiefT.Timeout, chiefT.Retry, chiefT.Model, chiefT.Binary, chiefT.API)
+		r.Path = fmt.Sprintf("%s/chief-analyst.md", run.Dir)
+		if err := run.WriteReport("chief-analyst", r.Stdout); err != nil {
+			log(ch, fmt.Sprintf("warn: write chief-analyst report: %v", err))
+		}
+		// The synthesis call is the single most expensive step in the run and had
+		// no row of its own; only the five specialists were accounted for.
+		//
+		// The index is kept because a corrective re-prompt is a second call on this
+		// same row: recording only the first left 273s of the 2026-09-01 run — 36% of
+		// its most expensive stage — visible in `stages.synthesis` and accounted for
+		// nowhere, under `attempts: 1`.
+		chiefStatusIdx := len(domainStatuses)
+		domainStatuses = append(domainStatuses, model.DomainStatus{
+			Domain: "chief-analyst", Status: r.Status, Err: r.Err,
+			Duration: r.Duration, Attempts: r.Attempts, Tokens: r.Tokens, Usage: r.Usage,
+		})
 
-				// The second call is part of the same synthesis step, so it lands
-				// on the same status row rather than vanishing from the accounting.
-				st := &domainStatuses[chiefStatusIdx]
-				st.Duration += r.Duration
-				st.Attempts += r.Attempts
-				st.Tokens += r.Tokens
-				st.Usage = append(st.Usage, r.Usage...)
-				if r.Status != model.StatusFailed {
-					st.Status, st.Err = r.Status, r.Err
-				}
-
-				// Every outcome of the corrective call is recorded. A silent
-				// discard here is worse than no re-prompt at all: the run spends
-				// a full synthesis call, keeps the uncorrected book, and then
-				// describes itself as having been corrected.
-				switch newIdeas, err := parseIdeas(r.Stdout); {
-				case r.Status == model.StatusFailed:
-					st.Corrective = "failed"
-					log(ch, fmt.Sprintf("warn: the corrective re-prompt failed (%v) — shipping the first pass unchanged", r.Err))
-					warnings = append(warnings, warning{Message: fmt.Sprintf(
-						"the corrective re-prompt failed (%v); the ideas below are the uncorrected first pass", r.Err)})
-				case err != nil:
-					st.Corrective = "unparseable"
-					log(ch, fmt.Sprintf("warn: the corrective re-prompt returned unparseable JSON (%v) — shipping the first pass unchanged", err))
-					warnings = append(warnings, warning{Message: fmt.Sprintf(
-						"the corrective re-prompt returned unparseable JSON (%v); the ideas below are the uncorrected first pass", err)})
-				default:
-					st.Corrective = "applied"
-					correctiveApplied = true
-					ideas = newIdeas
-					warnings = validateIdeas(ideas, cfg, verifiedCtx)
-					findings = applyRiskGate(ideas, verifiedCtx, cfg.Risk)
-					// Persist the reasoning that produced the ideas actually
-					// shipped. Only the first response used to be written, so
-					// chief-analyst.md documented ranks, levels and
-					// confidences that contradicted the ideas.json beside it.
-					if err := run.WriteReport("chief-analyst", correctedReport(first.Stdout, r.Stdout, repromptReasons)); err != nil {
-						log(ch, fmt.Sprintf("warn: write corrected chief-analyst report: %v", err))
-					}
-				}
-			}
-
-			// One corrective call is the budget. An idea whose construction is
-			// still negative-expectancy or noise-stopped after that is dropped:
-			// shipping four ideas is a success, and an unsound one is worse than
-			// none because it looks like the others.
-			for _, f := range findings {
-				msg := f.Message
-				if f.Ticker != "" {
-					msg = strings.TrimPrefix(msg, f.Ticker+": ")
-				}
-				warnings = append(warnings, warning{Ticker: f.Ticker, Message: "risk gate: " + msg})
-			}
-			if dropped := dropViolating(ideas, findings); len(dropped) > 0 {
-				// Say which it was. "After one corrective re-prompt" was printed
-				// whether or not the corrective pass had produced anything, so
-				// the artifact could not distinguish a book the Chief had been
-				// given a chance to fix from one it had not.
-				after := "after one corrective re-prompt"
-				switch {
-				case len(repromptReasons) == 0:
-					after = "with no corrective re-prompt spent"
-				case !correctiveApplied:
-					after = "after a corrective re-prompt that did not land"
-				}
-				log(ch, fmt.Sprintf("Risk gate dropped %d idea(s) %s", len(dropped), after))
-				for _, d := range dropped {
-					log(ch, "dropped: "+d)
-				}
-				ideas.Notes = strings.TrimSpace(ideas.Notes + fmt.Sprintf(
-					" Risk gate dropped %d idea(s) %s: %s. Fewer ideas is the intended outcome — an unsound construction is worse than none.",
-					len(dropped), after, strings.Join(dropped, "; ")))
-			}
-		} else {
-			log(ch, fmt.Sprintf("warn: parse ideas JSON: %v", parseErr))
+		if r.Status == model.StatusFailed {
+			agentStatus(ch, "chief-analyst", model.StatusFailed, &r)
 			fellBack := false
 			if fallbackOK {
 				chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
-				fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, fmt.Sprintf("unparseable JSON: %v", parseErr), verifiedCtx)
+				fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, r.Err, verifiedCtx)
 				domainStatuses = append(domainStatuses, fbStatus)
 				if ok {
 					ideas = fbIdeas
@@ -1459,10 +1369,156 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 				}
 			}
 			if !fellBack {
+				log(ch, "Chief analyst failed — building degraded fallback from specialist scores…")
 				ideas = buildDegradedIdeas(cfg, specReports, shortlist, stoodDown)
-				ideas.Notes = fmt.Sprintf("JSON parse error: %v — %s", parseErr, ideas.Notes)
 			}
 			outcome = "degraded"
+		} else {
+			agentStatus(ch, "chief-analyst", model.StatusDone, &r)
+			// Parse and validate ideas
+			var parseErr error
+			ideas, parseErr = parseIdeas(r.Stdout)
+			if parseErr == nil {
+				// The primary's output is what ships from here on, whatever the
+				// (optional) corrective re-prompt below does to it — a corrective
+				// call that fails or returns unparseable JSON keeps this pass, it
+				// never falls through to the DeepSeek fallback.
+				chiefAcceptedEngine = string(chiefE.CLI)
+				warnings = validateIdeas(ideas, cfg, verifiedCtx)
+				findings := applyRiskGate(ideas, verifiedCtx, cfg.Risk)
+
+				// Corrective re-prompt for violations worth a second model call:
+				// concentration, inverted stop/target levels, a confidence scored
+				// against a different thesis than the domains reported, and every
+				// actionable risk-gate violation.
+				//
+				// Observational findings are logged and warned about but never
+				// re-prompted: there is one corrective call, and asking the Chief to
+				// fix the account's equity or the run's missing price history spends
+				// it on something no re-emission can change.
+				var repromptReasons []string
+				// Whether the one corrective call actually landed. The drop note
+				// below used to claim it had, unconditionally.
+				correctiveApplied := false
+				for _, f := range findings {
+					log(ch, "risk: "+f.Message)
+					if f.actionable() {
+						repromptReasons = append(repromptReasons, f.Message)
+					}
+				}
+				for _, w := range warnings {
+					if strings.Contains(w.Message, "level ordering") {
+						repromptReasons = append(repromptReasons, fmt.Sprintf("fix %s: stop/entry/target must be ordered for the trade direction (BUY: stop < entry < target; SELL: target < entry < stop; a target is optional for a market-on-open idea)", w.Ticker))
+					}
+					if strings.Contains(w.Message, "far confidence") {
+						repromptReasons = append(repromptReasons, fmt.Sprintf(
+							"%s: your confidence was more than %d points outside its computed base score — re-score it from the base in the \"Computed base scores\" table and name each adjustment",
+							w.Ticker, 2*cfg.ChiefAdjustBand))
+					}
+				}
+
+				if len(repromptReasons) > 0 {
+					log(ch, "Validation failed — attempting corrective re-prompt…")
+					first := r
+					reprompt := correctivePrompt(prompt, first.Stdout, repromptReasons, bases)
+					correctiveT := chiefTarget(chiefE, cfg, chiefCorrective)
+					r = runAgent(ctx, correctiveT.CLI, "chief-analyst", string(correctiveT.Stage), reprompt, correctiveT.Timeout, correctiveT.Retry, correctiveT.Model, correctiveT.Binary, correctiveT.API)
+					r.Path = first.Path // same artifact; the corrected pass is written over it
+
+					// The second call is part of the same synthesis step, so it lands
+					// on the same status row rather than vanishing from the accounting.
+					st := &domainStatuses[chiefStatusIdx]
+					st.Duration += r.Duration
+					st.Attempts += r.Attempts
+					st.Tokens += r.Tokens
+					st.Usage = append(st.Usage, r.Usage...)
+					if r.Status != model.StatusFailed {
+						st.Status, st.Err = r.Status, r.Err
+					}
+
+					// Every outcome of the corrective call is recorded. A silent
+					// discard here is worse than no re-prompt at all: the run spends
+					// a full synthesis call, keeps the uncorrected book, and then
+					// describes itself as having been corrected.
+					switch newIdeas, err := parseIdeas(r.Stdout); {
+					case r.Status == model.StatusFailed:
+						st.Corrective = "failed"
+						log(ch, fmt.Sprintf("warn: the corrective re-prompt failed (%v) — shipping the first pass unchanged", r.Err))
+						warnings = append(warnings, warning{Message: fmt.Sprintf(
+							"the corrective re-prompt failed (%v); the ideas below are the uncorrected first pass", r.Err)})
+					case err != nil:
+						st.Corrective = "unparseable"
+						log(ch, fmt.Sprintf("warn: the corrective re-prompt returned unparseable JSON (%v) — shipping the first pass unchanged", err))
+						warnings = append(warnings, warning{Message: fmt.Sprintf(
+							"the corrective re-prompt returned unparseable JSON (%v); the ideas below are the uncorrected first pass", err)})
+					default:
+						st.Corrective = "applied"
+						correctiveApplied = true
+						ideas = newIdeas
+						warnings = validateIdeas(ideas, cfg, verifiedCtx)
+						findings = applyRiskGate(ideas, verifiedCtx, cfg.Risk)
+						// Persist the reasoning that produced the ideas actually
+						// shipped. Only the first response used to be written, so
+						// chief-analyst.md documented ranks, levels and
+						// confidences that contradicted the ideas.json beside it.
+						if err := run.WriteReport("chief-analyst", correctedReport(first.Stdout, r.Stdout, repromptReasons)); err != nil {
+							log(ch, fmt.Sprintf("warn: write corrected chief-analyst report: %v", err))
+						}
+					}
+				}
+
+				// One corrective call is the budget. An idea whose construction is
+				// still negative-expectancy or noise-stopped after that is dropped:
+				// shipping four ideas is a success, and an unsound one is worse than
+				// none because it looks like the others.
+				for _, f := range findings {
+					msg := f.Message
+					if f.Ticker != "" {
+						msg = strings.TrimPrefix(msg, f.Ticker+": ")
+					}
+					warnings = append(warnings, warning{Ticker: f.Ticker, Message: "risk gate: " + msg})
+				}
+				if dropped := dropViolating(ideas, findings); len(dropped) > 0 {
+					// Say which it was. "After one corrective re-prompt" was printed
+					// whether or not the corrective pass had produced anything, so
+					// the artifact could not distinguish a book the Chief had been
+					// given a chance to fix from one it had not.
+					after := "after one corrective re-prompt"
+					switch {
+					case len(repromptReasons) == 0:
+						after = "with no corrective re-prompt spent"
+					case !correctiveApplied:
+						after = "after a corrective re-prompt that did not land"
+					}
+					log(ch, fmt.Sprintf("Risk gate dropped %d idea(s) %s", len(dropped), after))
+					for _, d := range dropped {
+						log(ch, "dropped: "+d)
+					}
+					ideas.Notes = strings.TrimSpace(ideas.Notes + fmt.Sprintf(
+						" Risk gate dropped %d idea(s) %s: %s. Fewer ideas is the intended outcome — an unsound construction is worse than none.",
+						len(dropped), after, strings.Join(dropped, "; ")))
+				}
+			} else {
+				log(ch, fmt.Sprintf("warn: parse ideas JSON: %v", parseErr))
+				fellBack := false
+				if fallbackOK {
+					chiefAttemptedEngines = append(chiefAttemptedEngines, string(model.CLIApi))
+					fbIdeas, fbWarnings, fbStatus, ok := attemptChiefFallback(ctx, ch, run, cfg, fallbackAPI, prompt, fmt.Sprintf("unparseable JSON: %v", parseErr), verifiedCtx)
+					domainStatuses = append(domainStatuses, fbStatus)
+					if ok {
+						ideas = fbIdeas
+						warnings = fbWarnings
+						synthesisFallbackEngine = fallbackAPI.Model
+						chiefAcceptedEngine = string(model.CLIApi)
+						fellBack = true
+					}
+				}
+				if !fellBack {
+					ideas = buildDegradedIdeas(cfg, specReports, shortlist, stoodDown)
+					ideas.Notes = fmt.Sprintf("JSON parse error: %v — %s", parseErr, ideas.Notes)
+				}
+				outcome = "degraded"
+			}
 		}
 	}
 
@@ -1485,6 +1541,16 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// which engine's output shipped. The full trail stays on RunMeta below.
 	ideas.ChiefEngine = string(chiefE.CLI)
 	ideas.ChiefAccepted = chiefAcceptedEngine
+	if selRows != nil {
+		ideas.Selection = cfg.Selection
+		if selRec == nil {
+			markShipped(selRows, ideas.Ideas)
+			selRec = &model.SelectionRecord{Policy: cfg.Selection, TopN: meritVetoTopN, Rows: selRows}
+		}
+		if err := run.WriteDataPack("selection", selRec); err != nil {
+			log(ch, fmt.Sprintf("warn: write data/selection.json: %v", err))
+		}
+	}
 	if err := run.WriteIdeas(ideas); err != nil {
 		log(ch, fmt.Sprintf("warn: write ideas.json: %v", err))
 	}
@@ -1553,6 +1619,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		chiefModel = synthesisFallbackEngine
 	}
 	meta := model.RunMeta{
+		Selection:     ideas.Selection,
 		Mode:          string(cfg.Mode),
 		Ticker:        cfg.Ticker,
 		Indices:       indices,
