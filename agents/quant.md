@@ -76,10 +76,25 @@ Short per-ticker notes quoting the metrics you used, then end with this exact JS
   "scores": [
     { "ticker": "TICKER", "bias": "bullish|bearish|neutral", "strength": 0, "note": "the deciding metrics + suggested stop distance in σ units, one line" }
   ],
-  "missing": ["tickers absent from the verified pack"]
+  "missing": ["tickers absent from the verified pack"],
+  "labels": [
+    { "ticker": "TICKER", "move_driver": "news|earnings|none|unknown", "pending_binary_event": { "present": false, "date": "YYYY-MM-DD or omit" }, "corporate_action": false, "veto": false, "veto_reason": "", "note": "" }
+  ]
 }
 ```
 `strength` is an integer 0–10 per the rubric above.
+
+**Labels.** Alongside the scores, give every shortlisted name you have evidence for one
+`labels` entry — fixed-schema facts, not a view. `move_driver` is what moved the name
+recently as far as your evidence shows (`unknown` when it does not say);
+`pending_binary_event` is a scheduled binary event (earnings, a ruling, a readout) inside
+the next 15 sessions, with its date only if a verified block gives it; `corporate_action`
+is a pending merger, tender, spin-off or delisting. Set `veto: true` **only** when the name
+cannot be traded as a 15-session idea, and then `veto_reason` must be exactly one of
+`binary_event_inside_window`, `corporate_action_pending`, `halted_or_illiquid`,
+`data_error`, `fraud_or_litigation_shock`. Any other reason is discarded, and so is a label
+for a name your evidence did not cover. Leave a field out rather than guess: a missing
+label reads as unknown, never as a veto.
 
 ## Constraints
 - Every number you state must come from the injected pack and carry `[verified]`.

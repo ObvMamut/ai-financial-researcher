@@ -223,7 +223,7 @@ func testConfig(t *testing.T, mode model.Mode) Config {
 		t.Fatal(err)
 	}
 	return Config{
-		Mode:      mode,
+		Mode: mode,
 		// The legacy tests below were written against the Chief-selects
 		// pipeline; merit_veto runs opt in explicitly (selection_test.go).
 		Selection: model.SelectionChief,

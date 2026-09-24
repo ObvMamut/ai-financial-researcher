@@ -183,10 +183,27 @@ Short per-ticker notes, then end with this exact JSON block:
   "scores": [
     { "ticker": "TICKER", "bias": "bullish|bearish|neutral", "strength": 0, "note": "insider + options positioning, and which side is crowded, in one line" }
   ],
-  "missing": ["tickers with no positioning data, and tickers whose computed verdict reads no directional signal"]
+  "missing": ["tickers with no positioning data, and tickers whose computed verdict reads no directional signal"],
+  "labels": [
+    { "ticker": "TICKER", "move_driver": "news|earnings|none|unknown", "pending_binary_event": { "present": false, "date": "YYYY-MM-DD or omit" }, "corporate_action": false, "veto": false, "veto_reason": "", "note": "" }
+  ]
 }
 ```
 `strength` is an integer 0–10.
+
+**Labels.** Alongside the scores, give every shortlisted name you have evidence for one
+`labels` entry — fixed-schema facts, not a view — including a name whose computed verdict
+is non-directional (it sits in `missing` for scoring, but you did read its filings).
+`move_driver` is what moved the name recently as far as your evidence shows (`unknown`
+when it does not say); `pending_binary_event` is a scheduled binary event inside the next
+15 sessions, with its date only if a verified block gives it; `corporate_action` is a
+pending merger, tender, spin-off or delisting (a 13D or a tender filing is evidence of
+one). Set `veto: true` **only** when the name cannot be traded as a 15-session idea, and
+then `veto_reason` must be exactly one of `binary_event_inside_window`,
+`corporate_action_pending`, `halted_or_illiquid`, `data_error`,
+`fraud_or_litigation_shock`. Any other reason is discarded, and so is a label for a name
+you had no data for. Leave a field out rather than guess: a missing label reads as
+unknown, never as a veto.
 
 ## Constraints
 - Every note must quote at least one figure from the insider or options facts.
