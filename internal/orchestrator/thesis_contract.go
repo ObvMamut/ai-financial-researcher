@@ -23,7 +23,7 @@ func dossierLimits(d *model.CandidateDossier) []string {
 const (
 	writingTargetClaims    = 6
 	writingTargetNarrative = 250 // characters per narrative field
-	writingTargetPassages  = 1   // quotations per claim
+	writingTargetPassages  = 1   // cited sources, each quoted, per claim
 	writingTargetQuote     = 300 // characters per quotation
 )
 

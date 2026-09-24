@@ -563,10 +563,14 @@ explicit inferences whose premises the challenger must assess. Reference checks
 do not prove causal reasoning or semantic entailment.
 
 Dossiers target six material claims, 250 Unicode characters per narrative
-field and one quotation of at most 300 characters per claim (down from twelve,
+field and one cited source per claim, each cited source with its own verbatim
+quotation of at most 300 characters (down from twelve,
 400 and two: the September 23 record lost 58% of researched names to budget,
 compaction or truncation, so the output shrank instead of the compaction
-growing). These are writing
+growing). The target is on sources, not on quotations. The first version of this
+persona asked for one quotation per claim while Go requires one per cited
+source, and on the 2026-09-24 runs claims citing several sources with one quote
+were blocked as ungrounded. These are writing
 targets: `writing_diagnostics` records field names and actual lengths/counts;
 exceeding them does not invalidate complete research. Three requests per round
 and total input/response byte budgets remain hard limits.

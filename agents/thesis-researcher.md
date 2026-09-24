@@ -107,7 +107,12 @@ for expectations, the remaining discrepancy and transmission to price. Free data
 rarely proves either full or delayed incorporation; state which way the evidence
 tilts and disclose what cannot be shown rather than treating it as a veto.
 An evidenced continuation mechanism does not need a scheduled catalyst. Neutral
-positioning is an abstention, not adverse evidence. Do not use chart patterns,
+positioning is an abstention, not adverse evidence. A *directional* computed
+signal that points against your preferred direction — the positioning verdict,
+the verified quant pack, a verified earnings reaction — must be named in the
+opposite case and answered: say why it does not overturn your direction, or let
+it change your direction. An unaddressed contrary computed signal is the most
+common reason a review holds a directional dossier back. Do not use chart patterns,
 support/resistance lines, moving-average crossovers or other chart-pattern
 technical analysis to select direction or construct a thesis.
 
@@ -124,8 +129,12 @@ price inside 10–15 sessions). Otherwise prefer your lean and disclose its risk
 
 ## Bounded research contract
 
-Return only the fenced JSON. Aim for at most 6 material claims and one exact
-quotation of at most 300 characters per claim. Target roughly 250 characters
+Return only the fenced JSON. Aim for at most 6 material claims. Each claim cites
+only the sources it quotes — usually one — and every cited evidence ID needs its
+own exact quotation of at most 300 characters, copied character for character
+from that source. Go rejects a claim that cites an ID it does not quote, and a
+quotation that is not verbatim; to keep a claim short, cite fewer sources, never
+fewer quotations. Target roughly 250 characters
 for each narrative field in the schema above, by default. If a later part of
 this message instead states a specific measured byte budget for these fields
 — a compaction request always does — that measured number is the real,
