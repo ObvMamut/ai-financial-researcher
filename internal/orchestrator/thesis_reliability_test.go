@@ -293,7 +293,7 @@ func TestFailedRevisionSkipsFinalChallenge(t *testing.T) {
 			return strings.Repeat("x", 21<<10)
 		}
 		if strings.Contains(prompt, "# Independent thesis challenge") {
-			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "revise", Reason: "Resolve material uncertainty", MaterialIssues: []string{"Check costs"}})
+			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "revise", Reason: "Resolve material uncertainty", MaterialIssues: []model.MaterialIssue{{Issue: "Check costs"}}})
 		}
 		return fenced(supportedResearch().Dossier)
 	})
@@ -495,7 +495,7 @@ func sep13ResearchBoard(t *testing.T) []thesisResearch {
 			Documents: docs, Dossier: d,
 			Challenge: model.ThesisChallenge{ContractVersion: 2, Ticker: d.Ticker, DossierHash: dossierHash(d),
 				Verdict: "supported", Reason: strings.Repeat("x", 220), ClaimReviews: reviews,
-				MaterialIssues: []string{}, TargetAssessment: "supported",
+				MaterialIssues: []model.MaterialIssue{}, TargetAssessment: "supported",
 				CompactionAssessment: "preserved", ConditionsReviewed: true},
 			Outcome: model.ResearchOutcome{Ticker: d.Ticker, Transport: model.OutcomeOK,
 				Parsing: model.OutcomeOK, Evidence: model.EvidenceDocuments, Review: "supported", Decision: "actionable"},
@@ -561,8 +561,10 @@ func TestTwelveRealisticDossiersFitTheChiefInputBudget(t *testing.T) {
 	if profile.Bytes > 192<<10 {
 		t.Fatalf("assembled Chief prompt is %d bytes, over the %d limit", profile.Bytes, 192<<10)
 	}
-	if profile.Components["company_board"] > budget {
-		t.Fatalf("board section %d exceeds its own budget %d", profile.Components["company_board"], budget)
+	// The section is the label prefix plus the board JSON; chiefBoardBudget
+	// has already charged the prefix, so the budget bounds the JSON alone.
+	if board := profile.Components["company_board"] - len(prefix); board > budget {
+		t.Fatalf("board section %d exceeds its own budget %d", board, budget)
 	}
 	t.Logf("board %d of %d budget; prompt %d of %d; required floor %d; optional pool %d",
 		alloc.BoardBytes, budget, profile.Bytes, profile.InputLimit, alloc.RequiredBytes, alloc.OptionalPool)
@@ -1409,6 +1411,10 @@ func TestCapturedRevisionAndChallengePromptsFit(t *testing.T) {
 		"unresolved: guidance timing versus the described catalyst window",
 		"unresolved: whether peer commentary corroborates the reported trend",
 	}
+	var issues []model.MaterialIssue
+	for _, s := range initialIssues {
+		issues = append(issues, model.MaterialIssue{Category: model.IssueGrounding, Issue: s})
+	}
 	reviewReason := "The quoted passage attributes the disclosed metric to the reporting issuer and supports the claim as stated."
 
 	calls := 0
@@ -1426,7 +1432,7 @@ func TestCapturedRevisionAndChallengePromptsFit(t *testing.T) {
 			return fenced(model.ThesisChallenge{ContractVersion: 2, Ticker: ticker, DossierHash: captured13Hash(prompt),
 				Verdict:        "revise",
 				Reason:         "The currency treatment of the disclosed metric and its corroborating timing are unresolved.",
-				MaterialIssues: initialIssues,
+				MaterialIssues: issues,
 				ClaimReviews:   captured13Reviews(claimIDs, reviewReason)})
 		default:
 			return fenced(dossier)

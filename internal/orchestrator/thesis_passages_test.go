@@ -109,3 +109,29 @@ func TestFullArticleReuseAndSavedReviewEvidence(t *testing.T) {
 		t.Fatalf("review input not preserved: %v", err)
 	}
 }
+
+// A context grant smaller than one full ±180-character window must still buy
+// context. The board allocator treats source context as divisible; a window
+// that could only be taken whole made every sliver grant — ~300 characters
+// per company on a twelve-name board — buy nothing, and left a third of the
+// optional pool unconverted.
+func TestPromptDocumentsNarrowsContextToASmallGrant(t *testing.T) {
+	quote := "revenue rose 12 percent"
+	text := strings.Repeat("a", 1000) + quote + strings.Repeat("b", 1000)
+	doc := model.EvidenceDocument{ID: "ev-1", Kind: "document", Text: text}
+	claim := model.ResearchClaim{ID: "c1", Kind: "observation", EvidenceIDs: []string{"ev-1"},
+		Passages: []model.ClaimPassage{{EvidenceID: "ev-1", Quote: quote, IssuerRole: "issuer"}}}
+
+	required := requiredChars([]model.EvidenceDocument{doc}, []model.ResearchClaim{claim})
+	bare := promptDocuments([]model.EvidenceDocument{doc}, required, claim)[0].Text
+	grant := 120 // well under the 360 characters a full window costs
+	padded := promptDocuments([]model.EvidenceDocument{doc}, required+grant, claim)[0].Text
+
+	if !strings.Contains(padded, quote) {
+		t.Fatalf("the required quotation was lost: %q", padded)
+	}
+	gained := len([]rune(padded)) - len([]rune(bare))
+	if gained <= 0 || gained > grant {
+		t.Fatalf("a %d-character grant bought %d characters of context; want some, and no more than the grant", grant, gained)
+	}
+}

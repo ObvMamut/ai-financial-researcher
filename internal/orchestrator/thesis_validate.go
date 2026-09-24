@@ -35,11 +35,92 @@ func validateClaims(claims []model.ResearchClaim, docs []model.EvidenceDocument,
 	}
 	return errs
 }
+
+// dossierLabelProblems enforces the direction and label enums on a newly
+// generated dossier. It runs through the current-contract schema check, so a
+// missing lean is a schema error that buys the one bounded repair rather than
+// a finding about the company; historical artifacts, which have no lean, are
+// never passed through it.
+func dossierLabelProblems(d *model.CandidateDossier) []string {
+	var out []string
+	if !model.ContainsString(model.Leans, d.Lean) {
+		out = append(out, fmt.Sprintf(`"lean" is %q; it is required and must be "BUY" or "SELL" — the side the evidence tilts toward, even when no trade qualifies`, d.Lean))
+	}
+	if d.Conviction < 1 || d.Conviction > 5 {
+		out = append(out, fmt.Sprintf(`"conviction" is %d; it is required and must be an integer from 1 to 5`, d.Conviction))
+	}
+	switch d.PreferredDirection {
+	case "NONE":
+		if !model.ContainsString(model.NoneReasons, d.NoneReason) {
+			out = append(out, fmt.Sprintf(`preferred_direction NONE requires "none_reason" of %s; got %q`, strings.Join(model.NoneReasons, ", "), d.NoneReason))
+		}
+	case "BUY", "SELL":
+		if d.NoneReason != "" {
+			out = append(out, `"none_reason" applies only to preferred_direction NONE`)
+		}
+		if model.ContainsString(model.Leans, d.Lean) && d.Lean != d.PreferredDirection {
+			out = append(out, fmt.Sprintf("preferred_direction %s contradicts lean %s", d.PreferredDirection, d.Lean))
+		}
+	}
+	if d.MoveDriver != "" && !model.ContainsString(model.MoveDrivers, d.MoveDriver) {
+		out = append(out, fmt.Sprintf(`"move_driver" %q is not one of %s`, d.MoveDriver, strings.Join(model.MoveDrivers, ", ")))
+	}
+	if e := d.PendingBinaryEvent; e != nil && e.Date != "" {
+		if _, err := time.Parse("2006-01-02", e.Date); err != nil {
+			out = append(out, fmt.Sprintf(`"pending_binary_event.date" %q must be YYYY-MM-DD or omitted`, e.Date))
+		}
+	}
+	core := 0
+	for _, c := range d.Claims {
+		if c.Core {
+			core++
+		}
+	}
+	if core > model.MaxCoreClaims {
+		out = append(out, fmt.Sprintf("%d claims are marked core; at most %d may be", core, model.MaxCoreClaims))
+	}
+	return out
+}
+
+// materialIssueProblems enforces the closed category enum on a newly
+// generated review. A missing category is not a schema error: it blocks, the
+// meaning every issue had before categories existed.
+func materialIssueProblems(c *model.ThesisChallenge) []string {
+	var out []string
+	for i, m := range c.MaterialIssues {
+		if strings.TrimSpace(m.Issue) == "" {
+			out = append(out, fmt.Sprintf(`material issue %d has no "issue" text`, i+1))
+		}
+		if m.Category != "" && !model.ValidIssueCategory(m.Category) {
+			out = append(out, fmt.Sprintf("material issue %d has category %q; use one of %s", i+1, m.Category, strings.Join(append(append([]string(nil), model.BlockingIssueCategories...), model.DisclosedRiskCategories...), ", ")))
+		}
+	}
+	return out
+}
+
+// validateDossier judges whether a decoded dossier's research holds up. Its
+// problems no longer go into the dossier's `unresolved` list wholesale: that
+// list is the researcher's own disclosed uncertainty, and every validator
+// string pushed into it used to force the dossier to the watchlist. Problems
+// are split instead. Blocking ones — invented evidence, a malformed or
+// incomplete thesis, an ungrounded core claim, pending requests — land in
+// r.Blocking and force the watchlist exactly as before. The one kind that does
+// not block is a quotation problem on a non-core claim: the thesis does not
+// stand on that claim, so it becomes a disclosed risk (r.Disclosed).
 func validateDossier(r *thesisResearch) {
 	d := &r.Dossier
+	core := model.CoreClaimIDs(*d)
 	problems := validateClaims(d.Claims, r.Documents, r.Candidate.Ticker)
 	problems = append(problems, reasoningReferences(*d)...)
-	problems = append(problems, validateClaimPassages(d.Claims, r.Documents)...)
+	var disclosed []string
+	for _, c := range d.Claims {
+		passages := validateClaimPassages([]model.ResearchClaim{c}, r.Documents)
+		if core[c.ID] {
+			problems = append(problems, passages...)
+		} else {
+			disclosed = append(disclosed, passages...)
+		}
+	}
 	for _, s := range []string{d.LongCase, d.ShortCase, d.NoTradeCase} {
 		if strings.TrimSpace(s) == "" {
 			problems = appendUnique(problems, "explicit long, short and no-trade reasoning required")
@@ -87,18 +168,14 @@ func validateDossier(r *thesisResearch) {
 	if !substantive {
 		problems = append(problems, "no cited source document; headline/factor evidence alone is insufficient")
 	}
+	r.Blocking, r.Disclosed = nil, nil
 	for _, s := range problems {
-		found := false
-		for _, u := range d.Unresolved {
-			if s == u {
-				found = true
-			}
-		}
-		if !found {
-			d.Unresolved = append(d.Unresolved, s)
-		}
+		r.Blocking = appendUnique(r.Blocking, s)
 	}
-	if len(d.Unresolved) > 0 && d.Status != "rejected" {
+	for _, s := range disclosed {
+		r.Disclosed = appendUnique(r.Disclosed, s)
+	}
+	if len(r.Blocking) > 0 && d.Status != "rejected" {
 		d.Status = "watchlist"
 	}
 }
@@ -134,7 +211,7 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 		if i >= max {
 			hard("exceeds maximum idea count")
 		}
-		if r.Dossier.Status != "supported" || r.Challenge.Verdict != "supported" || len(r.Challenge.MaterialIssues) > 0 || len(r.Challenge.Requests) > 0 {
+		if r.Dossier.Status != "supported" || len(reviewBlockers(r.Challenge)) > 0 {
 			hard("thesis or challenge unresolved")
 		}
 		if r.Eligibility != "" {
@@ -205,6 +282,7 @@ func validateThesisResult(res *model.IdeasResult, research []thesisResearch, v v
 			hard(s)
 		}
 		th.EvidenceQuality = r.Dossier.EvidenceQuality
+		th.Risks = append([]string(nil), r.Dossier.Risks...)
 		if hasTarget {
 			if th.OutcomeLow <= 0 || th.OutcomeHigh <= th.OutcomeLow || idea.Target < th.OutcomeLow || idea.Target > th.OutcomeHigh {
 				hard("target outside supported outcome range")

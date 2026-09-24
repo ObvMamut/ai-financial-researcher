@@ -168,7 +168,10 @@ It has schema v2, a 10–15-session horizon, no weighted confidence anchor, and 
 mechanical trade fallback. Writing targets are advisory within hard byte budgets;
 a complete oversized dossier may use its one repair allowance for evidence-preserving
 narrative compaction, explicitly checked by the challenger. Reviewed entry conditions
-and future monitoring are separate from unresolved core evidence. All-failed research
+and future monitoring are separate from unresolved core evidence. Every dossier gives a
+`lean`/`conviction` (NONE needs a `none_reason`) and event labels; challenger issues are
+categorised, and only blocking categories, unsupported core claims or disputed claims keep a
+dossier off supported — disclosed risks ship as the plan's `risks`. All-failed research
 skips Chief synthesis and still persists degraded decisions and research counts. Preserve the configured Chief/cheap-engine split.
 `scoreboard --research-compare` compares separate cohorts at 10 and 15 sessions.
 `research-pair` explicitly registers and collects a common frozen corpus for

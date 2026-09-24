@@ -190,7 +190,7 @@ func TestChallengeSectionsNeverOmitPreviousChallengeUnderCapacity(t *testing.T) 
 		{Name: "compaction_originals", Mandatory: false, Body: strings.Repeat("c", 10)},
 		{Name: "retrieval_errors", Mandatory: false, Body: strings.Repeat("d", 10)},
 	}
-	previous := model.ThesisChallenge{Ticker: "AAA", Verdict: "revise", MaterialIssues: []string{"unresolved: does the delivery timing actually resolve expectations"}}
+	previous := model.ThesisChallenge{Ticker: "AAA", Verdict: "revise", MaterialIssues: []model.MaterialIssue{{Issue: "unresolved: does the delivery timing actually resolve expectations"}}}
 	sections := challengeSections(base, previous)
 
 	last := sections[len(sections)-1]

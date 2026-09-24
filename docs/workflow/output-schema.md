@@ -18,6 +18,18 @@ and watchlist decisions blocked by `awaiting_event` or `awaiting_prices`.
 Older saved schema-v2 trade plans remain readable; new dossier requirements
 apply to newly generated research.
 
+New thesis dossiers also require `lean` (BUY, SELL) and `conviction` (integer
+1–5), and `none_reason` (`event_inside_window`, `evidence_conflict`,
+`no_mechanism`) exactly when `preferred_direction` is NONE. They may carry the
+labels `move_driver` (`news`, `earnings`, `none`, `unknown`),
+`pending_binary_event` (`{"present": bool, "date": "YYYY-MM-DD"}`) and
+`corporate_action` (bool), and mark at most three claims `core: true`. Challenge
+`material_issues` entries are objects `{"category", "issue"}` with a category
+from a closed enum; historical bare-string entries still load, uncategorised,
+and block. Go adds dossier `risks` and plan `thesis.risks` (disclosed risks), and
+research artifacts add `blocking` and `disclosed` validation lists. See
+[leans, core claims and disclosed risk](thesis-research.md#leans-core-claims-and-disclosed-risk).
+
 Optional thesis fields include dossier `entry_conditions` and `monitoring`, plan
 `monitoring`, reviewer `conditions_reviewed` and `compaction_assessment`, and
 Go-computed result `research_summary`. Research outcomes record contract recovery

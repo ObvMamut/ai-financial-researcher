@@ -74,7 +74,7 @@ func TestSeptember13DossiersReachResearchContract(t *testing.T) {
 }
 
 func TestWritingTargetsDoNotEraseCompleteDossiers(t *testing.T) {
-	for _, length := range []int{400, 401} {
+	for _, length := range []int{writingTargetNarrative, writingTargetNarrative + 1} {
 		d := supportedResearch().Dossier
 		d.LongCase = strings.Repeat("界", length)
 		d.Claims[0].Passages[0].Quote = strings.Repeat("é", 301)
@@ -824,10 +824,19 @@ func TestConditionsRequireReviewAndDoNotHideCoreEvidenceGaps(t *testing.T) {
 	if problems := compactReviewProblems(r.Dossier, c); len(problems) != 0 {
 		t.Fatal(problems)
 	}
-	r.Dossier.Unresolved = []string{"Missing issuer attribution"}
-	validateDossier(&r)
-	if r.Dossier.Status == "supported" {
+	// Missing core evidence is judged on the core claim's review, not on the
+	// researcher's disclosed list: an unresolved core claim still blocks
+	// however many conditions the dossier carries.
+	c.ClaimReviews[0].Attribution = "unresolved"
+	c.MaterialIssues = validateReviewConsistency(r.Dossier, c)
+	if len(reviewBlockers(c)) == 0 {
 		t.Fatal("entry conditions bypassed missing core evidence")
+	}
+	// The researcher's own disclosed gap is a risk, not a veto.
+	r.Dossier.Unresolved = []string{"Whether channel checks corroborate the delivery update"}
+	validateDossier(&r)
+	if r.Dossier.Status != "supported" || len(r.Blocking) != 0 {
+		t.Fatalf("a disclosed gap vetoed the dossier: %+v blocking=%v", r.Dossier, r.Blocking)
 	}
 }
 

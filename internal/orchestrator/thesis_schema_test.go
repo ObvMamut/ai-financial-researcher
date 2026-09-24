@@ -38,6 +38,10 @@ func thesisFixture(t *testing.T, reply func(prompt string, call int) string) (*t
 	cfg := Config{ResearchMode: "thesis", CheapEngine: model.CLIApi, AgentsDir: "../../agents",
 		API:     model.APIConfig{BaseURL: srv.URL, Model: "fixture", APIKey: "fixture"},
 		DataDir: t.TempDir(), RunsDir: t.TempDir()}
+	// The oversized-response and compaction fixtures were sized against the
+	// researcher's original 20,480-byte budget and exercise that path; the
+	// production default (32,768) is pinned by TestDefaultResponseBudgets.
+	cfg.Research.Budgets.Researcher.ResponseBytes = 20 << 10
 	cfg.applyDefaults()
 	reg, err := agents.Load(cfg.AgentsDir)
 	if err != nil {
@@ -78,7 +82,7 @@ func TestMalformedPayloadBuysOneBoundedRepairAndIsRecordedAsRepaired(t *testing.
 		case strings.Contains(prompt, "formatting correction only"):
 			repairs++
 			if strings.Contains(prompt, "# Independent thesis challenge") {
-				return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "supported", Reason: "Release supports the timing", Claims: []model.ResearchClaim{claim}, MaterialIssues: []string{}})
+				return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "supported", Reason: "Release supports the timing", Claims: []model.ResearchClaim{claim}, MaterialIssues: []model.MaterialIssue{}})
 			}
 			d := supportedResearch().Dossier
 			d.Claims = []model.ResearchClaim{claim}
@@ -416,7 +420,7 @@ func TestEveryResearchRequestIsAnsweredAndRepeatsAreRefused(t *testing.T) {
 	var seenAnswers string
 	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
 		if strings.Contains(prompt, "# Independent thesis challenge") {
-			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "reject", Reason: "no", MaterialIssues: []string{}})
+			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "reject", Reason: "no", MaterialIssues: []model.MaterialIssue{}})
 		}
 		round++
 		d := model.CandidateDossier{Ticker: "AAA", Status: "watchlist", EvidenceQuality: "mixed", Hypothesis: "h", Unresolved: []string{}}
@@ -496,7 +500,7 @@ func TestEveryResearchRequestIsAnsweredAndRepeatsAreRefused(t *testing.T) {
 func TestExhaustedDocumentBudgetStillAnswersEveryRequest(t *testing.T) {
 	runner, pack, done := thesisFixture(t, func(prompt string, _ int) string {
 		if strings.Contains(prompt, "# Independent thesis challenge") {
-			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "reject", Reason: "no", MaterialIssues: []string{}})
+			return fenced(model.ThesisChallenge{Ticker: "AAA", Verdict: "reject", Reason: "no", MaterialIssues: []model.MaterialIssue{}})
 		}
 		return fenced(model.CandidateDossier{Ticker: "AAA", Status: "watchlist", EvidenceQuality: "mixed", Hypothesis: "h", Unresolved: []string{},
 			Requests: []model.ResearchRequest{
@@ -530,7 +534,25 @@ func currentFixtureReply(raw, prompt string) string {
 	if _, ok := value["ticker"]; !ok {
 		return raw
 	}
+	// Fixtures written before the required lean get one consistent with
+	// their preferred direction. A fixture that states "lean" at all, even
+	// empty, is testing the lean and is passed through untouched.
+	_, dossier := value["status"]
+	_, hasLean := value["lean"]
+	if dossier && !hasLean {
+		direction, _ := value["preferred_direction"].(string)
+		value["lean"], value["conviction"] = "BUY", 3
+		if direction == "SELL" {
+			value["lean"] = "SELL"
+		}
+		if _, ok := value["none_reason"]; !ok && direction == "NONE" {
+			value["none_reason"] = "no_mechanism"
+		}
+	}
 	if _, ok := value["contract_version"]; ok {
+		if dossier && !hasLean {
+			return fenced(value)
+		}
 		return raw
 	}
 	value["contract_version"] = 2

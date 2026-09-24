@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ResearchConfig bounds the Go-managed research loop, independently of model tools.
 type ResearchConfig struct {
@@ -55,12 +58,16 @@ type EvidenceDocument struct {
 	Truncated       bool           `json:"truncated,omitempty"`
 }
 type ResearchClaim struct {
-	Comparison  *NumericalComparison `json:"comparison,omitempty"`
-	ID          string               `json:"id"`
-	Kind        string               `json:"kind"` // observation or inference
-	Text        string               `json:"text"`
-	EvidenceIDs []string             `json:"evidence_ids"`
-	Passages    []ClaimPassage       `json:"passages,omitempty"`
+	Comparison *NumericalComparison `json:"comparison,omitempty"`
+	// Core marks one of the at most three claims the thesis stands on. Only
+	// core claims must be supported and attribution-confirmed for a review to
+	// support the dossier; see CoreClaimIDs for the default when none is marked.
+	Core        bool           `json:"core,omitempty"`
+	ID          string         `json:"id"`
+	Kind        string         `json:"kind"` // observation or inference
+	Text        string         `json:"text"`
+	EvidenceIDs []string       `json:"evidence_ids"`
+	Passages    []ClaimPassage `json:"passages,omitempty"`
 }
 
 // ClaimPassage preserves the words and issuer role used to ground a claim.
@@ -119,32 +126,164 @@ type ResearchResult struct {
 	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 }
 type CandidateDossier struct {
-	EntryConditions      []string          `json:"entry_conditions,omitempty"`
-	Monitoring           []string          `json:"monitoring,omitempty"`
-	ContractVersion      int               `json:"contract_version,omitempty"`
-	ExpectationsClaimIDs []string          `json:"expectations_claim_ids,omitempty"`
-	PricedInClaimIDs     []string          `json:"priced_in_claim_ids,omitempty"`
-	LongCase             string            `json:"long_case"`
-	ShortCase            string            `json:"short_case"`
-	NoTradeCase          string            `json:"no_trade_case"`
-	PreferredDirection   string            `json:"preferred_direction"` // BUY, SELL, NONE
-	Events               []ResearchEvent   `json:"events,omitempty"`
-	Ticker               string            `json:"ticker"`
-	Status               string            `json:"status"` // supported, watchlist, rejected
-	Hypothesis           string            `json:"hypothesis"`
-	Changed              string            `json:"changed"`
-	Expectations         string            `json:"expectations"`
-	Underappreciated     string            `json:"underappreciated"`
-	Mechanism            string            `json:"mechanism"`
-	PricedIn             string            `json:"priced_in"`
-	Counterargument      string            `json:"counterargument"`
-	Invalidation         string            `json:"invalidation"`
-	CatalystWindow       string            `json:"catalyst_window"`
-	EvidenceQuality      string            `json:"evidence_quality"` // strong, mixed, insufficient
-	Claims               []ResearchClaim   `json:"claims"`
-	Unresolved           []string          `json:"unresolved"`
-	Requests             []ResearchRequest `json:"requests,omitempty"`
+	EntryConditions      []string `json:"entry_conditions,omitempty"`
+	Monitoring           []string `json:"monitoring,omitempty"`
+	ContractVersion      int      `json:"contract_version,omitempty"`
+	ExpectationsClaimIDs []string `json:"expectations_claim_ids,omitempty"`
+	PricedInClaimIDs     []string `json:"priced_in_claim_ids,omitempty"`
+	LongCase             string   `json:"long_case"`
+	ShortCase            string   `json:"short_case"`
+	NoTradeCase          string   `json:"no_trade_case"`
+	PreferredDirection   string   `json:"preferred_direction"` // BUY, SELL, NONE
+	// Lean is the side the evidence tilts toward even when no trade qualifies,
+	// and Conviction (1–5) how far. Every final dossier of the September 23
+	// record said NONE, so "no view" carried no information; a required lean
+	// makes every researched name scoreable. NoneReason is required exactly
+	// when PreferredDirection is NONE (see NoneReasons).
+	Lean       string `json:"lean,omitempty"`
+	Conviction int    `json:"conviction,omitempty"`
+	NoneReason string `json:"none_reason,omitempty"`
+	// Fixed-schema event labels. They are labels, not votes: nothing in the
+	// selection gate reads them. Absent means unlabelled (older artifacts).
+	MoveDriver         string            `json:"move_driver,omitempty"` // news, earnings, none, unknown
+	PendingBinaryEvent *BinaryEvent      `json:"pending_binary_event,omitempty"`
+	CorporateAction    *bool             `json:"corporate_action,omitempty"`
+	Events             []ResearchEvent   `json:"events,omitempty"`
+	Ticker             string            `json:"ticker"`
+	Status             string            `json:"status"` // supported, watchlist, rejected
+	Hypothesis         string            `json:"hypothesis"`
+	Changed            string            `json:"changed"`
+	Expectations       string            `json:"expectations"`
+	Underappreciated   string            `json:"underappreciated"`
+	Mechanism          string            `json:"mechanism"`
+	PricedIn           string            `json:"priced_in"`
+	Counterargument    string            `json:"counterargument"`
+	Invalidation       string            `json:"invalidation"`
+	CatalystWindow     string            `json:"catalyst_window"`
+	EvidenceQuality    string            `json:"evidence_quality"` // strong, mixed, insufficient
+	Claims             []ResearchClaim   `json:"claims"`
+	Unresolved         []string          `json:"unresolved"`
+	Requests           []ResearchRequest `json:"requests,omitempty"`
+	// Risks is Go-owned: the uncertainty a supported dossier discloses rather
+	// than resolves — its own unresolved gaps, disclosed-risk review issues and
+	// non-core claims the review left unresolved. Set after the final review
+	// and copied to the plan; anything a model writes here is replaced.
+	Risks []string `json:"risks,omitempty"`
 }
+
+// BinaryEvent labels a pending scheduled event whose outcome is binary for
+// the stock (a ruling, a trial readout, a vote). Date is YYYY-MM-DD when known.
+type BinaryEvent struct {
+	Present bool   `json:"present"`
+	Date    string `json:"date,omitempty"`
+}
+
+// Dossier label enums. A lean is always BUY or SELL; NONE is a preferred
+// direction, never a lean, and has to name its reason.
+var (
+	Leans       = []string{"BUY", "SELL"}
+	NoneReasons = []string{"event_inside_window", "evidence_conflict", "no_mechanism"}
+	MoveDrivers = []string{"news", "earnings", "none", "unknown"}
+)
+
+// MaxCoreClaims bounds how many claims a dossier may mark core.
+const MaxCoreClaims = 3
+
+// CoreClaimIDs names the claims a review must support outright. A dossier
+// marks at most three itself; when it marks none, its expectations and
+// priced-in claims are core, and failing those, its first three claims.
+func CoreClaimIDs(d CandidateDossier) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range d.Claims {
+		if c.Core {
+			out[c.ID] = true
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, id := range append(append([]string(nil), d.ExpectationsClaimIDs...), d.PricedInClaimIDs...) {
+		out[id] = true
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for i, c := range d.Claims {
+		if i == MaxCoreClaims {
+			break
+		}
+		out[c.ID] = true
+	}
+	return out
+}
+
+// Material-issue categories. A blocking category names something the evidence
+// could have shown and did not, or a malformed review: it keeps a dossier off
+// supported. A disclosed-risk category names an objection free data can never
+// answer — 65 of the 67 final challenges of the September 23 record carried at
+// least one — and travels with a supported plan as one of its risks instead.
+const (
+	IssueGrounding           = "grounding"
+	IssueAttribution         = "attribution"
+	IssuePositioningMisread  = "positioning_misread"
+	IssueStaleSource         = "stale_or_inaccessible_source"
+	IssueDirectionUnexamined = "direction_unexamined"
+	IssueForm                = "form"
+
+	IssuePricedInUnprovable    = "priced_in_unprovable"
+	IssueForecastMechanism     = "forecast_mechanism"
+	IssueFuturePrices          = "future_prices"
+	IssueAnnualTargetHorizon   = "annual_target_horizon"
+	IssueIssuerTimeUnpublished = "issuer_time_unpublished"
+)
+
+var (
+	BlockingIssueCategories = []string{IssueGrounding, IssueAttribution, IssuePositioningMisread, IssueStaleSource, IssueDirectionUnexamined, IssueForm}
+	DisclosedRiskCategories = []string{IssuePricedInUnprovable, IssueForecastMechanism, IssueFuturePrices, IssueAnnualTargetHorizon, IssueIssuerTimeUnpublished}
+)
+
+// MaterialIssue is one review objection and the category that decides whether
+// it blocks. Historical artifacts stored bare strings; those decode with an
+// empty category, which blocks — exactly what every issue did when written.
+type MaterialIssue struct {
+	Category string `json:"category,omitempty"`
+	Issue    string `json:"issue"`
+}
+
+func (m *MaterialIssue) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*m = MaterialIssue{Issue: s}
+		return nil
+	}
+	type plain MaterialIssue
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*m = MaterialIssue(v)
+	return nil
+}
+
+// Blocking reports whether the issue keeps a dossier off supported. Only a
+// known disclosed-risk category does not; an uncategorised or unknown one does.
+func (m MaterialIssue) Blocking() bool { return !ContainsString(DisclosedRiskCategories, m.Category) }
+
+// ValidIssueCategory reports whether c belongs to the closed category enum.
+func ValidIssueCategory(c string) bool {
+	return ContainsString(BlockingIssueCategories, c) || ContainsString(DisclosedRiskCategories, c)
+}
+
+// ContainsString reports whether s is one of xs; the enum checks use it.
+func ContainsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 type ThesisChallenge struct {
 	ConditionsReviewed   bool              `json:"conditions_reviewed,omitempty"`
 	CompactionAssessment string            `json:"compaction_assessment,omitempty"`
@@ -157,7 +296,7 @@ type ThesisChallenge struct {
 	Verdict              string            `json:"verdict"` // supported, revise, reject
 	Reason               string            `json:"reason"`
 	Claims               []ResearchClaim   `json:"claims"`
-	MaterialIssues       []string          `json:"material_issues"`
+	MaterialIssues       []MaterialIssue   `json:"material_issues"`
 	Requests             []ResearchRequest `json:"requests,omitempty"`
 }
 type SelectionDecision struct {
@@ -244,14 +383,17 @@ const (
 )
 
 type ThesisPlan struct {
-	Monitoring        []string `json:"monitoring,omitempty"`
-	TargetMethod      string   `json:"target_method,omitempty"` // external_comparison or thesis_scenario
-	TargetClaimIDs    []string `json:"target_claim_ids,omitempty"`
-	WhyNow            string   `json:"why_now"`
-	Invalidation      string   `json:"invalidation"`
-	CatalystWindow    string   `json:"catalyst_window"`
-	EvidenceQuality   string   `json:"evidence_quality"`
-	EvidenceIDs       []string `json:"evidence_ids"`
+	Monitoring      []string `json:"monitoring,omitempty"`
+	TargetMethod    string   `json:"target_method,omitempty"` // external_comparison or thesis_scenario
+	TargetClaimIDs  []string `json:"target_claim_ids,omitempty"`
+	WhyNow          string   `json:"why_now"`
+	Invalidation    string   `json:"invalidation"`
+	CatalystWindow  string   `json:"catalyst_window"`
+	EvidenceQuality string   `json:"evidence_quality"`
+	EvidenceIDs     []string `json:"evidence_ids"`
+	// Risks are the dossier's disclosed risks, copied by Go: the uncertainty
+	// this thesis ships with rather than resolves.
+	Risks             []string `json:"risks,omitempty"`
 	EntryReason       string   `json:"entry_reason"`
 	StopReason        string   `json:"stop_reason"`
 	TargetReason      string   `json:"target_reason"`

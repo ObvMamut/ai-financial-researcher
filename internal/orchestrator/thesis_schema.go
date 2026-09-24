@@ -274,7 +274,7 @@ func researchCallSections[T any](ctx context.Context, t *thesisRunner, role, nam
 			if value.Verdict == "supported" {
 				for _, c := range value.Claims {
 					if c.Comparison != nil {
-						value.MaterialIssues = appendUnique(value.MaterialIssues, "new numerical comparison requires researcher validation: "+c.ID)
+						value.MaterialIssues = appendIssue(value.MaterialIssues, issue(model.IssueGrounding, "new numerical comparison requires researcher validation: "+c.ID))
 					}
 				}
 			}
@@ -337,6 +337,8 @@ func classifyEvidence(docs []model.EvidenceDocument) string {
 
 // Historical decoders remain permissive; newly generated research must use the
 // current contract, including when a provider omits its version discriminator.
+// That includes a dossier's lean and label enums and a review's issue
+// categories, which no historical artifact carries.
 func currentResearchSchema[T any](check func(*T) []string) func(*T) []string {
 	return func(v *T) []string {
 		problems := check(v)
@@ -345,10 +347,12 @@ func currentResearchSchema[T any](check func(*T) []string) func(*T) []string {
 			if value.ContractVersion != 2 {
 				problems = append(problems, "new dossiers require contract_version 2")
 			}
+			problems = append(problems, dossierLabelProblems(value)...)
 		case *model.ThesisChallenge:
 			if value.ContractVersion != 2 {
 				problems = append(problems, "new challenges require contract_version 2")
 			}
+			problems = append(problems, materialIssueProblems(value)...)
 		}
 		return problems
 	}
