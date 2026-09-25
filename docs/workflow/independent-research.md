@@ -367,7 +367,12 @@ The quant specialist receives the full computed pack as ground truth; news and s
 get compact verified price lines so their narratives stay anchored. The news pack also
 carries a **verified next-earnings date** per name, fetched as a single bulk
 `EARNINGS_CALENDAR` request covering the whole shortlist (one of the free tier's 25 daily
-requests, cached per UTC day). The persona may state a date **only** if it appears there:
+requests, cached per UTC day). That one request is held in reserve against the daily
+budget rather than queued behind per-ticker news: news calls for a shortlist run
+concurrently and, unreserved, could spend the whole 25 before the calendar's single
+request ever got a turn — which is what happened in every run on 2026-09-24, all of
+which shipped with no verified calendar at all. The persona may state a date **only** if
+it appears there:
 previously it was asked for earnings dates it had no way to know, and on a search-less
 engine it supplied plausible ones from memory. An unresolved earnings date inside the
 window caps that ticker's news strength at 5, and the validator flags any idea whose

@@ -169,6 +169,66 @@ func TestLimiterDailyBudgetReportsTheRemainingCount(t *testing.T) {
 	}
 }
 
+// Reserve holds a slot back from ordinary Wait/Allow callers so a privileged
+// caller (WaitReserved) always has one left, even when every ordinary caller
+// that raced it lost. This is the primitive avcalendar.go's earnings calendar
+// relies on to survive a shortlist of per-ticker news calls spending the rest
+// of the day's budget first.
+func TestReserveHoldsBackASlotForWaitReserved(t *testing.T) {
+	l := NewLimiter(3, 600, 5)
+	l.Reserve(1)
+
+	// Ordinary callers may spend only dailyLimit-reserved = 2.
+	if !l.Allow() || !l.Allow() {
+		t.Fatal("the first two ordinary requests should be admitted")
+	}
+	if l.Allow() {
+		t.Error("a third ordinary request should be refused: only 2 of 3 are theirs to spend")
+	}
+
+	// The reserved slot is still there for a privileged caller.
+	if err := l.WaitReserved(context.Background()); err != nil {
+		t.Fatalf("WaitReserved on the reserved slot: %v", err)
+	}
+	// And now the whole day, reserve included, is genuinely gone.
+	if err := l.WaitReserved(context.Background()); err == nil {
+		t.Error("a second WaitReserved past the daily limit should be refused")
+	}
+}
+
+// An ordinary Wait must never be able to spend the slot Reserve held back —
+// otherwise a burst of concurrent ordinary callers reproduces exactly the
+// 2026-09-24 race the reservation exists to prevent.
+func TestReserveIsNeverSpentByAnOrdinaryWait(t *testing.T) {
+	l := NewLimiter(1, 600, 5)
+	l.Reserve(1)
+
+	if err := l.Wait(context.Background()); err == nil {
+		t.Error("an ordinary Wait spent the day's only, reserved slot")
+	}
+	// The privileged caller can still have it.
+	if err := l.WaitReserved(context.Background()); err != nil {
+		t.Errorf("WaitReserved should still admit the reserved slot: %v", err)
+	}
+}
+
+// A limiter that never calls Reserve behaves exactly as before: reserved
+// defaults to zero, so WaitReserved and Wait/Allow draw from the same full
+// budget. Every limiter besides AlphaVantage's must be unaffected by this
+// change.
+func TestUnreservedLimiterIsUnaffectedByWaitReserved(t *testing.T) {
+	l := NewLimiter(2, 600, 5)
+	if !l.Allow() || !l.Allow() {
+		t.Fatal("both ordinary requests should be admitted with nothing reserved")
+	}
+	if l.Allow() {
+		t.Error("a third request should exceed the unreserved daily limit")
+	}
+	if err := l.WaitReserved(context.Background()); err == nil {
+		t.Error("WaitReserved should not admit past a fully spent, unreserved budget")
+	}
+}
+
 // tryAllow resets the count on a new UTC day before admitting. An accessor that
 // skips that check reports yesterday's spend on the first call of a new day —
 // which would announce an exhausted key at the top of a run that has its whole

@@ -2,8 +2,11 @@ package marketdata
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -106,6 +109,139 @@ func TestEarningsCalendarReachesForeignNamesThroughTheirUSLine(t *testing.T) {
 
 	if _, ok := pack.EventDates["2330.TW"]; !ok {
 		t.Errorf("2330.TW should get TSM's calendar date, pack has %v", pack.EventDates)
+	}
+}
+
+// writeLimiterState pre-seeds the AlphaVantage limiter's persisted daily count,
+// exactly as .data/limiter-alphavantage.json stood on the morning of an
+// incident — the fixture NewAlphaVantageProvider's NewPersistentLimiter loads
+// on construction. limiterState is defined in limiter.go; reused rather than
+// duplicated so the fixture cannot drift from the real on-disk shape.
+func writeLimiterState(t *testing.T, dir string, dailyCount int) {
+	t.Helper()
+	data, err := json.Marshal(limiterState{DailyCount: dailyCount, LastReset: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "limiter-alphavantage.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readLimiterDailyCount(t *testing.T, dir string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "limiter-alphavantage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st limiterState
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	return st.DailyCount
+}
+
+// TestCalendarStillLoadsWhenNewsHasAlreadySpentTheOrdinaryBudget is the fix for
+// F1 (2026-09-24): every one of that day's 8 runs spent the AlphaVantage key's
+// whole 25-request daily budget on per-ticker news before the calendar's one
+// bulk request ever got a turn, so all 8 shipped with no verified earnings
+// calendar at all. NewAlphaVantageProvider now reserves one of the 25 for the
+// calendar (Limiter.Reserve + WaitReserved), so it must still load here with
+// only that one slot left.
+func TestCalendarStillLoadsWhenNewsHasAlreadySpentTheOrdinaryBudget(t *testing.T) {
+	soon := time.Now().AddDate(0, 0, 5).Format("2006-01-02")
+	srv, _, calHits := serveAVMixed(t, calendarCSV("AAPL,Apple Inc,"+soon+",2026-10-31,1.20,USD"))
+	t.Setenv("CFR_AV_BASE", srv.URL)
+
+	dataDir := t.TempDir()
+	// 24 of today's 25 already spent on per-ticker news, one shy of the daily
+	// cap — the exact shape of the 2026-09-24 incident.
+	writeLimiterState(t, dataDir, 24)
+
+	p := NewAlphaVantageProvider("testkey", dataDir)
+	svc := NewService(nil, p)
+	pack := svc.BuildPack(context.Background(), "news", []string{"AAPL"})
+
+	want, _ := time.Parse("2006-01-02", soon)
+	got, ok := pack.EventDates["AAPL"]
+	if !ok {
+		t.Fatalf("the calendar did not load with 24 of 25 requests already spent; EventDates=%v errors=%v",
+			pack.EventDates, pack.Errors)
+	}
+	if !got.Equal(want) {
+		t.Errorf("AAPL next earnings = %s, want %s", got.Format("2006-01-02"), soon)
+	}
+	if gotHits := atomic.LoadInt32(calHits); gotHits != 1 {
+		t.Errorf("fetched the calendar %d times, want exactly 1", gotHits)
+	}
+	// The reservation is exactly one slot: this fetch must spend the day's
+	// last request, not find one spare.
+	if used := readLimiterDailyCount(t, dataDir); used != 25 {
+		t.Errorf("daily count after the calendar's fetch = %d, want the full 25 (the reserved slot spent)", used)
+	}
+}
+
+// TestCalendarFailsHonestlyWhenTheReservedSlotIsAlsoGone proves the reservation
+// is a priority, not a 26th free request: once the whole day's budget — the
+// reserved slot included — is genuinely spent, the calendar must still report
+// the same honest failure it always did, not silently produce no date and no
+// complaint.
+func TestCalendarFailsHonestlyWhenTheReservedSlotIsAlsoGone(t *testing.T) {
+	soon := time.Now().AddDate(0, 0, 5).Format("2006-01-02")
+	srv, _, calHits := serveAVMixed(t, calendarCSV("AAPL,Apple Inc,"+soon+",2026-10-31,1.20,USD"))
+	t.Setenv("CFR_AV_BASE", srv.URL)
+
+	dataDir := t.TempDir()
+	writeLimiterState(t, dataDir, 25) // the whole day, reserve included, already gone
+
+	p := NewAlphaVantageProvider("testkey", dataDir)
+	svc := NewService(nil, p)
+	pack := svc.BuildPack(context.Background(), "news", []string{"AAPL"})
+
+	if _, ok := pack.EventDates["AAPL"]; ok {
+		t.Errorf("a fully exhausted budget must not produce a date: %v", pack.EventDates)
+	}
+	if len(pack.Errors) == 0 {
+		t.Error("a fully exhausted daily budget must still be reported, not swallowed")
+	}
+	if gotHits := atomic.LoadInt32(calHits); gotHits != 0 {
+		t.Errorf("fetched the calendar %d times against an exhausted budget, want 0", gotHits)
+	}
+}
+
+// TestCalendarSurvivesForASecondRunTheSameDay is the acceptance test from the
+// brief: two runs back to back on one UTC day must both carry EventDates. The
+// second run starts from a persisted budget the first run fully spent, and
+// must get its date from the per-day cache rather than needing a request of
+// its own — proving the reservation and the cache protect each other's runs.
+func TestCalendarSurvivesForASecondRunTheSameDay(t *testing.T) {
+	soon := time.Now().AddDate(0, 0, 5).Format("2006-01-02")
+	srv, _, calHits := serveAVMixed(t, calendarCSV("AAPL,Apple Inc,"+soon+",2026-10-31,1.20,USD"))
+	t.Setenv("CFR_AV_BASE", srv.URL)
+
+	dataDir := t.TempDir()
+	writeLimiterState(t, dataDir, 24)
+	want, _ := time.Parse("2006-01-02", soon)
+
+	first := NewAlphaVantageProvider("testkey", dataDir)
+	firstPack := NewService(nil, first).BuildPack(context.Background(), "news", []string{"AAPL"})
+	if got, ok := firstPack.EventDates["AAPL"]; !ok || !got.Equal(want) {
+		t.Fatalf("setup: first run did not carry EventDates: %v errors=%v", firstPack.EventDates, firstPack.Errors)
+	}
+
+	// A brand new provider — a second process — over the same data dir on the
+	// same UTC day: the persisted budget is now 25/25, fully spent.
+	second := NewAlphaVantageProvider("testkey", dataDir)
+	secondPack := NewService(nil, second).BuildPack(context.Background(), "news", []string{"AAPL"})
+	got, ok := secondPack.EventDates["AAPL"]
+	if !ok {
+		t.Fatalf("second run on the same day did not carry EventDates: %v errors=%v", secondPack.EventDates, secondPack.Errors)
+	}
+	if !got.Equal(want) {
+		t.Errorf("second run's AAPL next earnings = %s, want %s", got.Format("2006-01-02"), soon)
+	}
+	if gotHits := atomic.LoadInt32(calHits); gotHits != 1 {
+		t.Errorf("fetched the calendar %d times across two runs, want exactly 1 — the second must hit the cache and spend nothing", gotHits)
 	}
 }
 

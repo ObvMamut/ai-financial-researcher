@@ -24,6 +24,12 @@ const EarningsFactLabel = "Next earnings"
 // narrowest, so there is no reason to ask for less.
 const earningsCalendarHorizon = "3month"
 
+// calendarReservedSlots is how many of the day's 25 requests
+// NewAlphaVantageProvider holds back for this calendar. One is enough: the
+// calendar is fetched and cached at most once per UTC day (load's loaded
+// flag plus the on-disk cache), so it only ever needs its turn once.
+const calendarReservedSlots = 1
+
 // earningsCalendar is the shared next-earnings lookup behind the AlphaVantage
 // provider.
 //
@@ -121,7 +127,11 @@ func (c *earningsCalendar) load(ctx context.Context) error {
 }
 
 func (c *earningsCalendar) fetch(ctx context.Context) (string, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
+	// WaitReserved, not Wait: the calendar is a single bulk request that
+	// outranks every per-ticker news call chasing the same daily budget, so it
+	// draws on the slot NewAlphaVantageProvider reserved for it rather than
+	// racing news for an ordinary one. See Limiter.WaitReserved.
+	if err := c.limiter.WaitReserved(ctx); err != nil {
 		return "", fmt.Errorf("%w: AlphaVantage earnings calendar: %v", ErrUnavailable, err)
 	}
 	v := url.Values{}

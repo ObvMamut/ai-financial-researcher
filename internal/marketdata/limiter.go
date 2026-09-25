@@ -33,6 +33,10 @@ type Limiter struct {
 	refillRate float64 // tokens per second
 	lastRefill time.Time
 	statePath  string // "" = in-memory only
+
+	// reserved holds back this many of today's daily slots for WaitReserved.
+	// Every other limiter leaves this at zero, so it changes nothing for them.
+	reserved int
 }
 
 // NewLimiter builds an in-memory limiter for one provider tier. burst is how
@@ -105,6 +109,16 @@ func (l *Limiter) save() {
 	_ = os.WriteFile(l.statePath, data, 0o644)
 }
 
+// Reserve holds back n of today's daily slots for WaitReserved: an ordinary
+// Wait/Allow caller stops being admitted once dailyLimit-n requests are
+// spent, leaving those n slots for a caller that cannot afford to lose the
+// race for the day's last one. Zero (the default) reserves nothing.
+func (l *Limiter) Reserve(n int) {
+	l.mu.Lock()
+	l.reserved = n
+	l.mu.Unlock()
+}
+
 // ExhaustForDay remembers a provider-confirmed daily quota refusal across runs.
 // Local counts alone cannot account for calls made by another application.
 func (l *Limiter) ExhaustForDay() {
@@ -150,16 +164,24 @@ func (l *Limiter) DailyBudget() (used, limit int) {
 	return l.dailyCount, l.dailyLimit
 }
 
-// tryAllow attempts one admission. exhausted reports that the *daily* budget is
-// spent — the caller must not retry, unlike a merely empty token bucket.
-func (l *Limiter) tryAllow() (ok bool, exhausted bool) {
+// tryAllow attempts one admission. exhausted reports that the caller's own
+// share of the *daily* budget is spent — the caller must not retry, unlike a
+// merely empty token bucket. A privileged caller (allowReserved) may also
+// spend the slots a prior Reserve call held back; an ordinary caller may not,
+// so it never gets the chance to spend the last one out from under a
+// privileged caller that has not had its turn yet.
+func (l *Limiter) tryAllow(allowReserved bool) (ok bool, exhausted bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := time.Now()
 	l.resetIfNewDayLocked(now)
 
-	if l.dailyCount >= l.dailyLimit {
+	limit := l.dailyLimit
+	if !allowReserved {
+		limit -= l.reserved
+	}
+	if l.dailyCount >= limit {
 		return false, true
 	}
 
@@ -184,7 +206,7 @@ func (l *Limiter) tryAllow() (ok bool, exhausted bool) {
 // Allow admits one request without waiting. Prefer Wait for anything whose data
 // is worth a short delay; Allow discards it instead.
 func (l *Limiter) Allow() bool {
-	ok, _ := l.tryAllow()
+	ok, _ := l.tryAllow(false)
 	return ok
 }
 
@@ -192,9 +214,24 @@ func (l *Limiter) Allow() bool {
 // error when ctx expires, when the daily budget is exhausted, or when the wait
 // exceeds maxLimiterWait — never blocking indefinitely.
 func (l *Limiter) Wait(ctx context.Context) error {
+	return l.waitFor(ctx, false)
+}
+
+// WaitReserved is Wait, but may also spend the slots a prior Reserve call held
+// back. It exists for a single caller: the AlphaVantage earnings calendar
+// (avcalendar.go), whose one bulk request must not lose the daily-budget race
+// to a burst of per-ticker news calls scheduled in the same run. On
+// 2026-09-24 every one of 8 runs spent the AlphaVantage key's full 25-request
+// budget on per-ticker news before the calendar's turn ever came, so all 8
+// shipped with no verified earnings calendar at all.
+func (l *Limiter) WaitReserved(ctx context.Context) error {
+	return l.waitFor(ctx, true)
+}
+
+func (l *Limiter) waitFor(ctx context.Context, allowReserved bool) error {
 	deadline := time.Now().Add(maxLimiterWait)
 	for {
-		ok, exhausted := l.tryAllow()
+		ok, exhausted := l.tryAllow(allowReserved)
 		if ok {
 			return nil
 		}

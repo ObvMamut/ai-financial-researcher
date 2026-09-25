@@ -43,6 +43,13 @@ func NewAlphaVantageProvider(apiKey, dataDir string) Provider {
 	// One limiter, shared: the daily budget belongs to the key, so the news
 	// requests and the calendar request must draw from the same count.
 	limiter := NewPersistentLimiter(25, 30, 1, dataDir, "alphavantage")
+	// Hold back one of the 25 for the calendar (WaitReserved in
+	// avcalendar.go). Specialists fetch news per ticker concurrently, and
+	// without a reservation a shortlist of enough names spends the whole
+	// budget on news before the calendar's single bulk request ever gets
+	// scheduled — the cause of all 8 runs on 2026-09-24 shipping with no
+	// verified earnings calendar at all.
+	limiter.Reserve(calendarReservedSlots)
 	var cache *Cache
 	if dataDir != "" {
 		cache = NewCache(dataDir)

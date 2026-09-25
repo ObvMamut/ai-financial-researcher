@@ -1709,6 +1709,100 @@ func TestNoAlphaVantageKeyNeitherLogsNorWarnsAboutABudget(t *testing.T) {
 	}
 }
 
+// TestCalendarSurvivesTwoRunsSameDayEvenWhenNewsSpentTheBudget is Task 1's own
+// acceptance test (F1, 2026-09-24): every one of that day's 8 runs spent the
+// AlphaVantage key's whole 25-request daily budget on per-ticker news before
+// the calendar's one bulk request ever got a turn, so all 8 shipped with no
+// verified earnings calendar at all.
+//
+// It runs the real pipeline (not marketdata.BuildPack in isolation) and reads
+// data/news.json — the artifact the orchestrator's own specialist loop
+// populates EventDates into before persisting (orchestrator.go's "the
+// verified earnings dates ride in on the news pack" loop) — so the assertion
+// is on the orchestrator's population of it, not just on a marketdata return
+// value. Two runs share one data dir (persisted limiter + on-disk cache) on
+// one UTC day: the first proves the reserved slot wins the race against an
+// almost-spent budget, the second proves it then costs nothing at all.
+func TestCalendarSurvivesTwoRunsSameDayEvenWhenNewsSpentTheBudget(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+
+	soon := time.Now().AddDate(0, 0, 5).Format("2006-01-02")
+	var calHits int32
+	avSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("function") == "EARNINGS_CALENDAR" {
+			atomic.AddInt32(&calHits, 1)
+			w.Write([]byte("symbol,name,reportDate,fiscalDateEnding,estimate,currency\nAAPL,Apple Inc," + soon + ",2026-10-31,1.20,USD\n"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"feed":[]}`))
+	}))
+	t.Cleanup(avSrv.Close)
+	t.Setenv("CFR_AV_BASE", avSrv.URL)
+
+	// One data dir for both runs: the persisted limiter state and the per-day
+	// cache both live here, exactly as they would across two `cfr run`
+	// invocations against the same ./cfr.toml on the same day.
+	dataDir := t.TempDir()
+	state, err := json.Marshal(map[string]any{
+		// 24 of today's 25 already spent on per-ticker news, one shy of the
+		// cap — the exact shape the 2026-09-24 incident left behind.
+		"daily_count": 24,
+		"last_reset":  time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "limiter-alphavantage.json"), state, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	want, err := time.Parse("2006-01-02", soon)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runOnce := func() {
+		cfg := testConfig(t, model.ModeSingle)
+		cfg.Ticker = "AAPL"
+		cfg.DataDir = dataDir
+		cfg.Providers.AlphaVantageKey = "test-key-not-a-real-credential"
+
+		complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+		if runErr != nil {
+			t.Fatalf("unexpected EventError: %s", runErr.Message)
+		}
+		if complete == nil {
+			t.Fatal("no EventComplete received")
+		}
+
+		raw, err := os.ReadFile(filepath.Join(runDir(t, cfg.RunsDir), "data", "news.json"))
+		if err != nil {
+			t.Fatalf("data/news.json: %v", err)
+		}
+		var pack struct {
+			EventDates map[string]time.Time `json:"event_dates"`
+		}
+		if err := json.Unmarshal(raw, &pack); err != nil {
+			t.Fatalf("data/news.json: %v", err)
+		}
+		got, ok := pack.EventDates["AAPL"]
+		if !ok {
+			t.Fatalf("data/news.json carries no EventDates for AAPL: %s", raw)
+		}
+		if !got.Equal(want) {
+			t.Errorf("AAPL next earnings = %s, want %s", got.Format("2006-01-02"), soon)
+		}
+	}
+
+	runOnce() // the reserved slot must win the race against the near-exhausted budget
+	runOnce() // same UTC day, budget now fully spent: must come from the cache alone
+
+	if got := atomic.LoadInt32(&calHits); got != 1 {
+		t.Errorf("fetched the calendar %d times across two runs, want exactly 1 — the second must hit the cache and spend nothing", got)
+	}
+}
+
 // fakeAlpaca stands up a bars endpoint and counts requests. Returns the
 // counter and the largest symbol count seen in one call, which is what
 // distinguishes a batched pre-screen from the per-ticker loop it replaces.
