@@ -22,17 +22,30 @@ type Loader interface {
 
 // Config is one replay's settings.
 type Config struct {
-	Years       int           // rebalance span; default 4
+	Years       int           // rebalance span; default DefaultYears
 	Indices     []string      // default: all four
 	CacheMaxAge time.Duration // how old a cached long series may be; default 7 days
 	Now         time.Time     // the replay ends on the last Friday on or before it
 	Log         func(string)  // progress lines; may be nil
 }
 
+// DefaultYears is Config.Years' default, and the threshold LongHistorySurvivorship
+// is measured against: past it, the per-year report (E1) is showing more history
+// than the halves above it do.
+const DefaultYears = 4
+
 // Survivorship is printed on every report: the universe files are today's
 // constituents, so names that fell out of the indices over the replay — the
 // losers, disproportionately — are missing from every past cross-section.
 const Survivorship = "SURVIVORSHIP: the universe is today's constituents only. Names that left the indices during the replay are absent from every past date, which flatters momentum and long-side returns. Treat every positive number here as an upper bound."
+
+// LongHistorySurvivorship is printed alongside the per-year table whenever
+// --years exceeds DefaultYears: Survivorship above worsens the further back the
+// replay goes, because the names missing from an older cross-section are
+// disproportionately past losers, not a random sample of departures (plan §7,
+// E1's risk note). It says to read the per-year IC and beta-adjusted top-5
+// excess over the raw long-only returns in the barrier study, not on their own.
+const LongHistorySurvivorship = "LONG HISTORY: --years exceeds the default, so the survivorship above is worse than in the standard replay — the deeper a cross-section sits in the past, the more its missing names are past losers rather than a random sample. Weight the per-year IC and beta-adjusted top-5 excess over the barrier study's raw long-only returns; a good early year built mostly of today's survivors is a weaker signal than the same year would be with its casualties still in it."
 
 // Departures lists where the lab's pre-screen knowingly differs from a live run.
 var Departures = []string{
@@ -60,11 +73,15 @@ type Result struct {
 	// Signals maps a slice label (all, US, EU, Asia, H1, H2) to every signal's
 	// stats against benchmark-excess returns; BetaAdjusted is the same against
 	// r − β·r_bench (C4).
-	Signals       map[string][]SignalStats `json:"signals"`
-	BetaAdjusted  map[string][]SignalStats `json:"beta_adjusted"`
-	Barrier       BarrierReport            `json:"barrier"`
-	Preregistered []TestResult             `json:"preregistered"`
-	TestsRun      int                      `json:"tests_run"`
+	Signals      map[string][]SignalStats `json:"signals"`
+	BetaAdjusted map[string][]SignalStats `json:"beta_adjusted"`
+	// PerYear is the composite's IC10/IC15 (plain and beta-adjusted) and the
+	// barrier study's top-5 excess (plain and beta-adjusted), one entry per
+	// calendar year (E1, docs/workflow/backtest.md).
+	PerYear       []YearStats   `json:"per_year"`
+	Barrier       BarrierReport `json:"barrier"`
+	Preregistered []TestResult  `json:"preregistered"`
+	TestsRun      int           `json:"tests_run"`
 }
 
 const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
@@ -85,7 +102,7 @@ func yahooRange(years int) string {
 // and analyses it.
 func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config) (*Result, error) {
 	if cfg.Years <= 0 {
-		cfg.Years = 4
+		cfg.Years = DefaultYears
 	}
 	if len(cfg.Indices) == 0 {
 		cfg.Indices = universe.AllIndices()
@@ -190,7 +207,9 @@ func Analyze(recs []Record, series map[string]*quant.Series) *Result {
 		res.Signals[sl.Label] = summarize(cells, sl.Keep, false)
 		res.BetaAdjusted[sl.Label] = summarize(cells, sl.Keep, true)
 	}
-	res.Barrier = barrierStudy(recs, series, mid)
+	trades := pickTrades(recs, series)
+	res.Barrier = barrierStudy(trades, mid)
+	res.PerYear = perYearStats(cells, trades)
 	res.Preregistered = preregistered(cells, mid)
 	for _, t := range res.Preregistered {
 		if t.Status == "run" {
@@ -245,6 +264,20 @@ func (r *Result) Text() string {
 	}
 	table("beta-adjusted excess (C4), all", r.BetaAdjusted["all"])
 	sb.WriteString(r.CostNote + "\n\n")
+
+	if len(r.PerYear) > 0 {
+		fmt.Fprintf(&sb, "=== Per-calendar-year (E1: long history) ===\n")
+		fmt.Fprintf(&sb, "%-6s %8s %7s %9s %7s %9s %7s %8s %10s\n",
+			"year", "n_dates", "IC10", "IC10beta", "IC15", "IC15beta", "top5n", "top5%", "top5beta%")
+		for _, y := range r.PerYear {
+			fmt.Fprintf(&sb, "%-6s %8d %7.3f %9.3f %7.3f %9.3f %7d %8.3f %10.3f\n",
+				y.Year, y.NDates, y.IC10, y.IC10Beta, y.IC15, y.IC15Beta, y.Top5N, y.Top5Pct, y.Top5BetaPct)
+		}
+		if r.Years > DefaultYears {
+			sb.WriteString(LongHistorySurvivorship + "\n")
+		}
+		sb.WriteString("\n")
+	}
 
 	b := r.Barrier
 	fmt.Fprintf(&sb, "=== Barrier study: top-%d |composite| per index per week, next-open entry, H=%d, 30bp ===\n", picksPerIndex, barrierHorizon)

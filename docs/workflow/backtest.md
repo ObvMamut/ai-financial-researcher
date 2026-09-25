@@ -54,6 +54,16 @@ arms, because a model cannot be replayed without look-ahead.
     windows overlap.
   - Each is reported for all indices, per region (US = sp500 + nq100, EU, Asia)
     and per half. The second half starts at the median date.
+- **Per-calendar-year slices (E1).** Alongside the halves, the composite's IC10
+  and IC15 (plain and beta-adjusted) are also reported for every calendar year
+  the sample covers, each with its date count. A default 4-year run shows two
+  halves; `--years 10` shows ten years, which is what lets E1 (below) ask
+  whether an edge holds across regimes rather than only across one split.
+  Survivorship (above) gets worse the further back a year sits, because its
+  missing names are disproportionately past losers rather than a random sample
+  — so whenever `--years` exceeds the default, the report adds a further
+  caveat to weight this table, and the top-5 excess below, over the barrier
+  study's raw long-only returns.
 - **Quintile spread.** The mean excess of the top fifth minus the bottom fifth,
   at 10 and 15 sessions. It is shown gross and net of 30bp round trip on each
   leg. The top fifth alone is shown net of 30bp.
@@ -65,6 +75,9 @@ arms, because a model cannot be replayed without look-ahead.
     exit, a stop at 2σ·√15 only, and the live 9% stop with a 15% target.
   - A gap through a barrier exits at the open. A bar that touches both barriers
     counts as the stop.
+  - The same picks' directional 15-session benchmark-excess return ("top-5
+    excess"), gross of cost, is also reported per calendar year, plain and
+    beta-adjusted, alongside the per-year IC above (E1).
 - **Survivorship.** The universe is today's constituents only. Names that left
   the indices during the replay are missing from every past date. That flatters
   momentum and long-side returns, so every report prints this caveat, and every
@@ -102,6 +115,16 @@ result.
 | **C3**: news-conditioned residual reversal | Residual moves without news revert, and moves with news continue. The residual 5-day move is `log(c/c₋₅) − β·log(b/b₋₅)`. The news proxy is abnormal volume: one of the last 5 sessions traded ≥ 2× the mean volume of the 20 sessions before them. Signal: `+resid` with news, `−resid` without. | Per-date IC10 of the C3 signal |
 | **C4**: beta-adjusted targets | The composite's edge is selection rather than bull-market beta, so it survives when the target is `r − β·r_bench` instead of `r − r_bench`. This measures, and does not change, the screen. Every signal's IC is also reported against this target. | Per-date IC10 of the shipped composite against the beta-adjusted target |
 | **C5**: breadth | The composite's t-stat holds on a wider liquid US universe. | **Runs only if** that universe exists without a new list of several hundred names from paid sources. Otherwise it is skipped and noted. |
+
+## Pre-registered lab tests (Wave B, registered 2026-09-25)
+
+Tests below are pre-registered here, before they are run, the same way C1–C5
+were. Each still runs once and adds to the tests-run count above; a test
+changed after it has been seen counts as a new one.
+
+| Test | Hypothesis | Statistic and decision |
+|---|---|---|
+| **E1**: long history | The edge is a property of the composite, not of the one regime the default 4-year window happens to sample. `cfr backtest --years 10` reaches back through 2018 Q4, 2020 and 2022 as well as the sample already covered. | Composite IC10/IC15 (plain and beta-adjusted) and the top-5 picks' 15-session excess (plain and beta-adjusted), one figure per calendar year, from a `--years 10` run. **E1 does not use the adoption bar above** — ten years does not split into two non-overlapping halves and three regions the way the four-year sample does, so the decision is by calendar year instead. Decision, verbatim from the plan (§4): *"if the composite's beta-adjusted top-5 excess is not positive in a majority of years, the docs stop describing the screen as having an edge, and the TUI says so."* **Not yet run** — a later task runs the `--years 10` replay and applies this decision; that run is what will add E1 to the tests-run count. |
 
 ## Results
 
