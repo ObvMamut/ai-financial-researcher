@@ -31,6 +31,12 @@
 #                 not count (merit_veto selection)
 #   chief-veto  - the merit_veto Chief Writer vetoes the first name of the book
 #                 it was handed (the app must refill from the reserves)
+#   sector-cap  - adds MSFT to the sp500 nominations and gives AMD, MSFT and
+#                 XOM the same news+quant coverage as NVDA/JPM/NKE/TSLA, so
+#                 Information Technology carries three eligible names against
+#                 a default cap of two, and quant vetoes 6758.T outright — the
+#                 persisted selection record must then show sector_cap,
+#                 below_cut and vetoed together (merit_veto selection)
 #
 # Specialists always emit a structured `labels` array; outside `veto` mode it
 # carries no veto. The merit_veto Chief Writer honours chief-fail and badjson
@@ -68,6 +74,22 @@ Screened the S&P 500 constituent list for 1-4 week swing setups.
 ]}
 ```
 EOF
+    if [ "$mode" = "sector-cap" ]; then
+      # A third Information Technology nomination (with NVDA, AMD): the last
+      # fenced block wins, so this replaces the one above for sp500 only.
+      cat <<'EOF'
+
+```json
+{"index": "sp500", "candidates": [
+  {"ticker": "NVDA", "name": "NVIDIA Corporation", "bias": "bullish", "reason": "Pullback to prior breakout zone ahead of earnings"},
+  {"ticker": "JPM", "name": "JPMorgan Chase & Co.", "bias": "bullish", "reason": "Post-earnings drift after Q2 beat"},
+  {"ticker": "NKE", "name": "Nike Inc.", "bias": "bearish", "reason": "Guidance cut, inventory overhang"},
+  {"ticker": "XOM", "name": "Exxon Mobil Corporation", "bias": "bullish", "reason": "Crude strength, base building"},
+  {"ticker": "MSFT", "name": "Microsoft Corporation", "bias": "bullish", "reason": "Base building, cloud backlog steady — a third Information Technology name"}
+]}
+```
+EOF
+    fi
   elif has "**Index:** nq100"; then
     cat <<'EOF'
 Screened the Nasdaq 100 constituent list.
@@ -315,9 +337,27 @@ spec_scores() {
   has "### Verified price context" && echo "saw-price-context"
   nvda_veto='"veto": false'
   jpm_veto='"veto": false'
+  extra_scores=""
+  extra_labels=""
   if [ "$mode" = "veto" ]; then
     [ "$1" = "news" ] && nvda_veto='"veto": true, "veto_reason": "binary_event_inside_window", "note": "prints inside the window"'
     [ "$1" = "quant" ] && jpm_veto='"veto": true, "veto_reason": "does not like it"'
+  fi
+  if [ "$mode" = "sector-cap" ]; then
+    # AMD, MSFT and XOM get the same news+quant coverage NVDA/JPM/NKE/TSLA
+    # already have (plain US tickers, so the synthetic news fixture tags
+    # them): three eligible Information Technology names against a default
+    # cap of two, plus a fourth non-IT eligible name to leave one shortlisted
+    # name below the cut once the book and the sector cap are both full.
+    extra_scores=',
+  {"ticker": "AMD", "bias": "bullish", "strength": 6, "note": "share gains"},
+  {"ticker": "MSFT", "bias": "bullish", "strength": 6, "note": "steady backlog"},
+  {"ticker": "XOM", "bias": "bullish", "strength": 5, "note": "base building"}'
+    # Quant always has verified price data for a shortlisted name, so its
+    # veto label survives labels.go's grounding check even though 6758.T
+    # never got a news/fundamentals/sentiment score.
+    [ "$1" = "quant" ] && extra_labels=',
+  {"ticker": "6758.T", "move_driver": "none", "veto": true, "veto_reason": "halted_or_illiquid", "note": "fake liquidity halt"}'
   fi
   cat <<EOF
 Fake $1 report covering the shortlist. Findings per ticker follow.
@@ -333,11 +373,11 @@ Fake $1 report covering the shortlist. Findings per ticker follow.
   {"ticker": "7203.T", "bias": "bullish", "strength": 6, "note": "tailwind"},
   {"ticker": "NKE", "bias": "bearish", "strength": 7, "note": "weak"},
   {"ticker": "TSLA", "bias": "bearish", "strength": 4, "note": "mixed"},
-  {"ticker": "AAPL", "bias": "bullish", "strength": 6, "note": "steady"}
+  {"ticker": "AAPL", "bias": "bullish", "strength": 6, "note": "steady"}$extra_scores
 ], "missing": [], "labels": [
   {"ticker": "NVDA", "move_driver": "news", "pending_binary_event": {"present": false}, "corporate_action": false, $nvda_veto},
   {"ticker": "JPM", "move_driver": "earnings", "corporate_action": false, $jpm_veto},
-  {"ticker": "NKE", "move_driver": "none"}
+  {"ticker": "NKE", "move_driver": "none"}$extra_labels
 ]}
 \`\`\`
 EOF

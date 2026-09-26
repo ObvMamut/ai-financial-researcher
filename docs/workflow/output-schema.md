@@ -406,8 +406,8 @@ reserves; a `direction` that differs from the scout's is ignored and warned abou
 ## Run metadata (`runs/<ts>/metadata.json`)
 
 `model.RunMeta` — the run's account of itself. `orchestration.md` tables the provenance
-fields (`engine`, `synthesis_model`, `stages`, `data_errors`, `persona_sha`) and the
-shape-change warnings `data_errors` carries; the two the scoring path reads are:
+fields (`engine`, `synthesis_model`, `stages`, `data_errors`, `persona_sha`, `build_revision`)
+and the shape-change warnings `data_errors` carries; the two the scoring path reads are:
 
 - `thinly_covered`: the shortlisted tickers the run's sources could ground **less than 0.6
   of the total domain weight** for (`thinCoverage`, `basescore.go`) — the same threshold

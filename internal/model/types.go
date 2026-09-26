@@ -738,4 +738,20 @@ type RunMeta struct {
 	// "agents.v1"). The hashes identify the prompts; this says which arm of an
 	// A/B comparison a run belongs to in words a person can read.
 	PersonaSet string `json:"persona_set,omitempty"`
+
+	// BuildRevision, BuildDirty and BuildTime are the *cfr* binary's own build
+	// provenance (CurrentBuildInfo, from runtime/debug.ReadBuildInfo's
+	// vcs.revision/vcs.modified/vcs.time), not the run's config — which
+	// commit, and whether the working tree was clean, produced this artifact.
+	// The 2026-09-25 investigation into plan finding F4 — was an artifact
+	// produced by the untracked, stale `./cfr` binary — had to reconstruct
+	// this by hand from `go version -m ./cfr` plus `git log`, because nothing
+	// in metadata.json said which binary wrote it. `go build` embeds these
+	// settings from a git checkout; `go run`/`go test` binaries typically do
+	// not carry them at all. That absence is recorded honestly — BuildRevision
+	// and BuildTime empty (omitempty), BuildDirty nil — never a substituted
+	// value that could pass for a real answer.
+	BuildRevision string `json:"build_revision,omitempty"`
+	BuildDirty    *bool  `json:"build_dirty,omitempty"`
+	BuildTime     string `json:"build_time,omitempty"`
 }

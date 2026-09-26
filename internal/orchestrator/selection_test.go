@@ -200,6 +200,76 @@ func TestMeritVetoChiefFailureShipsTheSelectionWithoutProse(t *testing.T) {
 	assertMeritOrder(t, rec, complete.Ideas.Ideas)
 }
 
+// The 2026-09-25 investigation into plan finding F4 (data/selection.json on
+// the 2026-09-24T12-58-48 artifact appearing to lack `excluded`) found the
+// merit_veto code path sound — runMeritVeto mutates the same rows slice that
+// becomes SelectionRecord.Rows, and that artifact's own file, read back byte
+// for byte, does carry excluded="sector_cap" on its sector-capped name — but
+// also found no test exercised sector_cap or below_cut through the real
+// pipeline (`grep excludedSectorCap *_test.go` found nothing before this
+// test). This one drives all three reasons through one run and reads the
+// persisted file back, the way the shortlist actually behaves: three
+// Information Technology names (NVDA, MSFT and AMD, cap 2) so the third is
+// sector-capped, a lowest-merit otherwise-eligible name (TSLA) left below the
+// cut, and a quant veto (6758.T, which only quant — always priced — can see)
+// so a genuine veto is recorded too.
+func TestMeritVetoRecordsSectorCapBelowCutAndVetoed(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "sector-cap")
+	cfg := meritVetoConfig(t)
+	// MSFT is a fourth sp500 nomination on top of the usual three; without
+	// one more shortlist slot the merge's own trim, not merit_veto, would be
+	// what dropped the weakest name (TSLA) before selection ever saw it.
+	cfg.MaxShortlist = 13
+
+	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if complete == nil || complete.Ideas == nil {
+		t.Fatal("no EventComplete with ideas")
+	}
+	dir := runDir(t, cfg.RunsDir)
+	rec := readSelection(t, dir)
+
+	wantShipped := map[string]bool{"XOM": true, "NVDA": true, "MSFT": true, "JPM": true, "NKE": true}
+	if len(complete.Ideas.Ideas) != len(wantShipped) {
+		t.Fatalf("shipped %d ideas, want %d: %+v", len(complete.Ideas.Ideas), len(wantShipped), complete.Ideas.Ideas)
+	}
+	for _, idea := range complete.Ideas.Ideas {
+		if !wantShipped[idea.Ticker] {
+			t.Errorf("shipped %s, not one of the expected book", idea.Ticker)
+		}
+	}
+
+	if amd, ok := rowFor(rec, "AMD"); !ok || amd.Excluded != excludedSectorCap || amd.Selected {
+		t.Errorf("AMD (the third Information Technology name, after NVDA and MSFT) = %+v, want excluded=%q", amd, excludedSectorCap)
+	}
+	if tsla, ok := rowFor(rec, "TSLA"); !ok || tsla.Excluded != excludedBelowCut || tsla.Selected {
+		t.Errorf("TSLA (lowest merit, otherwise eligible) = %+v, want excluded=%q", tsla, excludedBelowCut)
+	}
+	vetoed, ok := rowFor(rec, "6758.T")
+	if !ok || vetoed.Excluded != excludedVetoed || vetoed.Selected || !vetoed.Vetoed ||
+		len(vetoed.Vetoes) != 1 || vetoed.Vetoes[0].Source != "quant" || vetoed.Vetoes[0].Reason != model.VetoHaltedOrIlliquid {
+		t.Errorf("6758.T = %+v, want excluded=%q vetoed by quant/%s", vetoed, excludedVetoed, model.VetoHaltedOrIlliquid)
+	}
+	assertMeritOrder(t, rec, complete.Ideas.Ideas)
+
+	// readSelection above already went through store.Run.WriteDataPack (the
+	// pipeline's own persistence call) and read data/selection.json back from
+	// disk into model.SelectionRecord; confirm the raw bytes on disk carry
+	// all three reasons literally, not just a struct field that survived
+	// marshal/unmarshal in memory.
+	raw, err := os.ReadFile(filepath.Join(dir, "data", "selection.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"excluded": "sector_cap"`, `"excluded": "below_cut"`, `"excluded": "vetoed"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("data/selection.json does not contain %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestAChiefVetoIsRefilledFromTheReserves(t *testing.T) {
 	t.Setenv("CFR_FAKE_MODE", "chief-veto")
 	cfg := meritVetoConfig(t)
