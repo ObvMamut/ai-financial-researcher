@@ -156,11 +156,14 @@ the split.
   scoreboard numbers come from `cfr scoreboard --control`. Report every number from its artifact,
   never asserted.
 
-## Status (2026-09-25)
+## Status (2026-09-26)
 
 | Wave | State |
 |---|---|
-| A1–A4 | proposed |
-| B E1–E3 | proposed, pre-registered above |
+| A1 | done: one AlphaVantage daily slot is reserved for the calendar; proved by a hermetic two-runs-same-day test, not yet by a live run |
+| A2 | done: news counts as coverage only when the item is about the company (exact-case tickers, proper-noun names, `aliases.csv`). Re-derived on 28 saved runs: 1 shipped idea (SAP.DE) would have failed the floor; 39 of 45 news-scored ideas rest on AlphaVantage coverage, outside A2's scope (`docs/research/2026-09-25-news-relevance.md`) |
+| A3 | done: F4's premise was false — `runs/2026-09-24T12-58-48/data/selection.json` carries `excluded` on all 7 unshipped rows; the gap was a missing test, now added. `metadata.json` records the build commit and dirty flag |
+| A4 | done: `shipped` split by selection policy (plus single-stock and pre-field buckets); `sector-capped` arm added (0 closed calls so far) |
+| B E1–E3 | run once (`docs/research/2026-09-25-lab-e1-e3.md`). A bug had to be fixed first: `--years` > 9 fetched 3-month Yahoo bars. **E1 fires** read net of the lab's 30bp cost (positive in 5 of 11 years, 3 of 9 full; gross would pass at 7 of 11 — the net reading was pinned after the gross result was seen); docs and TUI now say the screen shows no edge net of cost. E2: no cap beats 2 (paired t −0.50/−0.61/+0.82); `max_per_sector` unchanged. E3: shorts not ≤0 in both halves; no long-only test registered |
 | C | on hold until ≈2026-10-15 |
 
