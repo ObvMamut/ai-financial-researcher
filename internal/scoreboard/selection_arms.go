@@ -10,21 +10,28 @@ import (
 // The selection shadow arms (docs/workflow/scoreboard.md, "Selection arms").
 //
 // Under merit_veto selection the models stopped ranking: Go ships the top of the
-// shortlist by merit, and the specialists and the Chief may only veto. Two
-// questions decide whether that was right, and both are answered from
+// shortlist by merit, and the specialists and the Chief may only veto. Three
+// questions decide whether that was right, and all three are answered from
 // data/selection.json, which records every shortlisted name whether it shipped
 // or not:
 //
-//	chief-shadow  the Chief's own top names by its recorded shadow_rank, at the
-//	              scout's direction — the book it would have shipped. shipped −
-//	              chief-shadow is what taking the ranking away from it cost or
-//	              saved.
-//	vetoed        every shortlisted name a specialist or the Chief vetoed, at the
-//	              scout's direction. vetoed − shipped below zero is a veto that
-//	              removes losers; at or above zero it is removing nothing.
+//	chief-shadow   the Chief's own top names by its recorded shadow_rank, at the
+//	               scout's direction — the book it would have shipped. shipped −
+//	               chief-shadow is what taking the ranking away from it cost or
+//	               saved.
+//	vetoed         every shortlisted name a specialist or the Chief vetoed, at the
+//	               scout's direction. vetoed − shipped below zero is a veto that
+//	               removes losers; at or above zero it is removing nothing.
+//	sector-capped  every shortlisted name max_per_sector dropped, at the scout's
+//	               direction — the live counterpart of experiment E2, which
+//	               modelled the cap as a mechanical cut over the composite
+//	               ranking rather than over what the scouts actually nominated
+//	               (plan §7). sector-capped − shipped-merit_veto at or above zero
+//	               is a cap giving up return it did not need to.
 //
 // A veto is recorded under either policy, so the vetoed arm fills from chief
-// runs too; the chief-shadow arm only exists where a shadow ranking was asked for.
+// runs too; the chief-shadow and sector-capped arms only exist under merit_veto
+// (only merit_veto records a shadow rank or excludes on the sector cap).
 
 // readSelection loads a run's data/selection.json, or nil when it has none —
 // every run before merit_veto existed, and every thesis or single-stock run.
@@ -59,18 +66,40 @@ func chiefShadowCalls(rec *model.SelectionRecord) []call {
 	return selectionCalls(ranked)
 }
 
-// vetoedCalls is every vetoed shortlisted name with a scout direction.
-func vetoedCalls(rec *model.SelectionRecord) []call {
+// rowsWithDirection filters rec's rows by match, keeping only rows the scouts
+// gave a direction — a neutral nomination is not a call either arm can score.
+// vetoedCalls and sectorCappedCalls share this rather than each re-walking
+// rec.Rows with their own copy of the same guard.
+func rowsWithDirection(rec *model.SelectionRecord, match func(model.SelectionRow) bool) []model.SelectionRow {
 	if rec == nil {
 		return nil
 	}
 	var rows []model.SelectionRow
 	for _, r := range rec.Rows {
-		if r.Vetoed && r.Direction != "" {
+		if match(r) && r.Direction != "" {
 			rows = append(rows, r)
 		}
 	}
-	return selectionCalls(rows)
+	return rows
+}
+
+// vetoedCalls is every vetoed shortlisted name with a scout direction.
+func vetoedCalls(rec *model.SelectionRecord) []call {
+	return selectionCalls(rowsWithDirection(rec, func(r model.SelectionRow) bool { return r.Vetoed }))
+}
+
+// ExcludedSectorCap mirrors internal/orchestrator/selection.go's unexported
+// excludedSectorCap constant, which scoreboard cannot import directly:
+// orchestrator already imports scoreboard (calibration.go, postmortem.go),
+// and the reverse would cycle. Exported so orchestrator can assert the two
+// stay equal instead of drifting silently — see
+// TestExcludedSectorCapMatchesScoreboard in internal/orchestrator.
+const ExcludedSectorCap = "sector_cap"
+
+// sectorCappedCalls is every shortlisted name max_per_sector excluded, at the
+// scout's direction — the live counterpart of experiment E2 (plan §7).
+func sectorCappedCalls(rec *model.SelectionRecord) []call {
+	return selectionCalls(rowsWithDirection(rec, func(r model.SelectionRow) bool { return r.Excluded == ExcludedSectorCap }))
 }
 
 func selectionCalls(rows []model.SelectionRow) []call {

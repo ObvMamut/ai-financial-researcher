@@ -162,7 +162,8 @@ same benchmark arithmetic:
 | --- | --- |
 | `composite` | the pre-screen's own strongest rows, direction = the sign of its score. No model involved at any point. |
 | `shortlist` | the twelve names the funnel passed, at the bias the scouts gave them. Scouts and merge included; specialists and Chief not. |
-| `shipped` | what `ideas.json` actually contains, for **legacy-mode** runs only. |
+| `shipped` | what `ideas.json` actually contains, for **legacy-mode** runs only, every selection policy pooled. |
+| `shipped-merit_veto`, `shipped-chief`, `shipped-single`, `shipped-unrecorded` | `shipped`, split by run kind: `merit_veto` and `chief` read `ideas.json`'s own `selection` field (Go ranks by merit; the Chief ranks and picks, the A/B control). `single` is single-stock mode — it never stamps a selection policy at all, because that field only exists for independent-mode runs, so it gets its own bucket rather than being read as an "unrecorded" independent run. `unrecorded` is left to mean exactly that: an **independent-mode** run that predates the field. Same calls, same procedure, as `shipped`; only the grouping differs. |
 | `thesis` | what `ideas.json` contains for thesis-mode runs (mode from `ideas.json`, else `metadata.json`). |
 | `thesis-lean` | every researched name in a thesis run at its dossier `lean` (`BUY`/`SELL`), read by key from `runs/<run>/data/research-<hexticker>.json` → `dossier.lean`, with `dossier.conviction` (1–5) recorded per call. Absent or `NONE` leans are counted as `non_directional`, not scored. Anchored at the pre-screen close, as the shortlist is. Scored even when the run shipped nothing. |
 | `thesis-lean-backfill` | the hand-judged leans in `docs/research/2026-09-23-evidence/thesis/leans.csv` (runs that predate the lean field). `BUY (weak)` → BUY with `lean_strength: weak`; `none evident` is non-directional. Anchored at the run's generation close (`closeOnOrBefore`), measured against the benchmark of the index the run screened the name under. A missing file leaves the arm empty. |
@@ -181,20 +182,29 @@ judgement of old dossiers, not the researcher's own lean, and is never pooled wi
 
 Under `selection = "merit_veto"` (`independent-research.md`, Stage 3) the models stopped
 ranking: Go ships the top of the shortlist by merit, and the specialists and the Chief may
-only veto. Two arms, read from each legacy run's `data/selection.json`
+only veto. Three arms, read from each legacy run's `data/selection.json`
 (`selection_arms.go`), measure whether that was right:
 
 | arm | what it is |
 | --- | --- |
 | `chief-shadow` | the Chief's own top-`top_n` names by its recorded `shadow_rank`, at the scout's direction — the book it would have shipped. Names without a scout direction are skipped. Anchored at the row's recorded close. Only `merit_veto` runs have a shadow ranking. |
 | `vetoed` | every shortlisted name any specialist (or, under `merit_veto`, the Chief) vetoed with a closed-enum reason, at the scout's direction. Filled under **both** policies: the labels are parsed and recorded under `chief` too, just not acted on. |
+| `sector-capped` | every shortlisted name `max_per_sector` excluded (`excluded: "sector_cap"` in `selection.json`), at the scout's direction. Only `merit_veto` excludes on the sector cap. This is the live counterpart of the lab's experiment E2 (plan §4, §7): E2 models the cap as a mechanical cut over the composite ranking; this arm scores what the cap actually dropped from the scouts' own nominations. |
 
-The report adds two differences: **`shipped − chief-shadow`** (what taking the ranking away
-from the Chief cost or saved) and **`vetoed − shipped`** (below zero: the vetoes remove
-losers; at or above zero: they remove nothing and should go). Both use the same
-week-clustered interval as every other difference. Plan §6 retires a stage whose interval
-does not exclude zero in its favour after about six weeks of shadow. Two caveats: `shipped`
-pools both selection policies (group by `selection` in `ideas.json` to split them), and the
+`vetoedCalls` and `sectorCappedCalls` share one filter (`rowsWithDirection`) over
+`selection.json`'s rows — they differ only in which field they read, not in how a row becomes
+a call.
+
+The report adds three differences: **`shipped − chief-shadow`** (what taking the ranking away
+from the Chief cost or saved), **`vetoed − shipped`** (below zero: the vetoes remove
+losers; at or above zero: they remove nothing and should go), and **`sector-capped −
+shipped-merit_veto`** (at or above zero: the cap is giving up return it did not need to — the
+question Lead 2's single ORCL/SAP.DE anecdote could not answer on its own). The third reads
+against `shipped-merit_veto` rather than the pooled `shipped` arm, because the sector cap only
+ever fires under `merit_veto`: pooling in `chief`-policy runs the cap never touched would
+compare across regimes the two arms do not share. All three differences use the same
+week-clustered interval as every other difference. Plan §6 retires a stage whose interval does
+not exclude zero in its favour after about six weeks of shadow. One caveat remains: the
 per-label-value arms the plan also names are not built yet — the labels are in
 `selection.json` for when they are.
 
