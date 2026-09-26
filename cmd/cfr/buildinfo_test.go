@@ -28,7 +28,32 @@ import (
 // binary shape that matters. This builds the real cfr binary, runs it as a
 // real subprocess against the hermetic fakebin CLIs and a fake Yahoo server
 // (never the network, never a model), and reads metadata.json back.
+//
+// External endpoints the subprocess can reach, after HOME is pointed at an
+// empty scratch dir below: none. internal/config.Load's only two config
+// sources are filepath.Join(os.UserHomeDir(), ".config", "cfr", "config.toml")
+// and "./cfr.toml" (cwd) — both resolve to nonexistent files here (the run's
+// own cwd is also a fresh t.TempDir()), so no ambient key of any kind, keyed
+// or not, reaches this process; the subprocess's env is an explicit list
+// below, never inherited os.Environ(), so a key sitting in the actual shell's
+// environment cannot leak in either. CFR_YAHOO_BASE covers both the chart and
+// the news-search calls (single handler below), and also disables the
+// separate cookie+crumb handshake the option chain would otherwise need
+// (yahoocrumb.go's newYahooAuth sets skip=true whenever the base URL is
+// rerouted, so the hardcoded https://fc.yahoo.com/ request is never made).
+// CFR_SEC_BASE/CFR_AV_BASE/CFR_FRED_BASE/CFR_ALPACA_BASE are pointed at a
+// closed local port rather than left unset: EDGAR, AlphaVantage, FRED and
+// Alpaca are all unconfigured (no contact email, no keys) so every call site
+// gates on Provider.Available() before making a request (pack.go:306/351,
+// fred.go:63, alphavantage.go:102, edgarreports.go:76, prices.go's Alpaca
+// routing) and none of these should ever be dialed — routing them at a closed
+// port instead of a real host turns a future regression that bypasses that
+// gate into an immediate connection-refused failure instead of a silent call
+// to a live provider.
 func TestBuildRevisionIsRecordedWhenBuiltWithGoBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a real cfr binary as a subprocess (~15-20s); skipped with -short")
+	}
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -59,17 +84,38 @@ func TestBuildRevisionIsRecordedWhenBuiltWithGoBuild(t *testing.T) {
 	defer srv.Close()
 
 	scratch := t.TempDir()
+	// A fresh, empty HOME: internal/config.Load resolves the global config at
+	// filepath.Join(os.UserHomeDir(), ".config", "cfr", "config.toml") before
+	// it ever looks at cwd's ./cfr.toml, so the real $HOME would let this
+	// subprocess pick up whatever the operator's actual ~/.config/cfr/
+	// config.toml carries — a provider key there would then make this test
+	// dial a live, possibly metered, provider on every `go test ./...`.
+	// XDG_CONFIG_HOME is set for the same reason defensively; Load only reads
+	// $HOME today (verified in internal/config/config.go), never
+	// XDG_CONFIG_HOME, but setting it costs nothing and keeps this fixture
+	// inert if that ever changes.
+	fakeHome := t.TempDir()
+	// A closed local port: never a real host, so a provider call that
+	// bypasses its Available() gate fails fast instead of reaching a live
+	// endpoint. See the endpoint inventory in the function doc comment above.
+	const closedPort = "http://127.0.0.1:1"
 
-	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
-	env = append(env,
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + fakeHome,
+		"XDG_CONFIG_HOME=" + filepath.Join(fakeHome, ".config"),
 		"CFR_CHEAP_ENGINE=gemini",
 		"CFR_CHIEF_ENGINE=claude",
-		"CFR_GEMINI_BIN="+agy,
-		"CFR_CLAUDE_BIN="+claudeBin,
-		"CFR_AGENTS_DIR="+agentsDir,
-		"CFR_YAHOO_BASE="+srv.URL,
+		"CFR_GEMINI_BIN=" + agy,
+		"CFR_CLAUDE_BIN=" + claudeBin,
+		"CFR_AGENTS_DIR=" + agentsDir,
+		"CFR_YAHOO_BASE=" + srv.URL,
+		"CFR_SEC_BASE=" + closedPort,
+		"CFR_AV_BASE=" + closedPort,
+		"CFR_FRED_BASE=" + closedPort,
+		"CFR_ALPACA_BASE=" + closedPort,
 		"CFR_FAKE_MODE=ok",
-	)
+	}
 
 	run := exec.Command(binPath, "run", "--ticker", "AAPL", "--json", "--quiet")
 	run.Dir = scratch
