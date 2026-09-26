@@ -170,6 +170,96 @@ func summarize(cells []cell, keep func(cell) bool, beta bool) []SignalStats {
 	return out
 }
 
+// calendarYears returns every calendar year present in cells, in ascending
+// order. Reusable wherever a per-year slice is needed: E1's per-year report
+// below, and E3's long/short split.
+func calendarYears(cells []cell) []string {
+	seen := map[string]bool{}
+	for _, c := range cells {
+		seen[c.date[:4]] = true
+	}
+	years := make([]string, 0, len(seen))
+	for y := range seen {
+		years = append(years, y)
+	}
+	sort.Strings(years)
+	return years
+}
+
+// yearSlices turns calendarYears into Slice values, the same shape slices()
+// builds for regions and halves, so a year filters through the same
+// dateSeries/summarize machinery as everything else.
+func yearSlices(cells []cell) []Slice {
+	years := calendarYears(cells)
+	out := make([]Slice, len(years))
+	for i, y := range years {
+		y := y
+		out[i] = Slice{y, func(c cell) bool { return c.date[:4] == y }}
+	}
+	return out
+}
+
+// YearStats is the composite's headline numbers for one calendar year: rank IC
+// at 10 and 15 sessions (plain and beta-adjusted) and the barrier study's
+// top-5 picks' 15-session excess (plain and beta-adjusted, gross of cost) —
+// what E1 (docs/workflow/backtest.md) reports so a longer replay can show
+// whether the edge is a feature of the screen or of one regime, rather than
+// only of the two halves the default 4-year window can show.
+type YearStats struct {
+	Year        string `json:"year"`
+	NDates      int    `json:"n_dates"`
+	IC10        Num    `json:"ic10"`
+	IC10Beta    Num    `json:"ic10_beta_adjusted"`
+	IC15        Num    `json:"ic15"`
+	IC15Beta    Num    `json:"ic15_beta_adjusted"`
+	Top5N       int    `json:"top5_n"`
+	Top5Pct     Num    `json:"top5_excess_gross_pct"`
+	Top5BetaPct Num    `json:"top5_excess_beta_adjusted_gross_pct"`
+}
+
+// perYearStats computes YearStats for every calendar year in cells. trades is
+// barrier.go's picks (pickTrades' output): the same trades the barrier study
+// reports on, here re-cut by year instead of by half/side.
+func perYearStats(cells []cell, trades []trade) []YearStats {
+	out := make([]YearStats, 0, len(calendarYears(cells)))
+	for _, sl := range yearSlices(cells) {
+		st := YearStats{Year: sl.Label}
+		_, ic10 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.ic[SigScore][1] })
+		_, bic10 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.bic[SigScore][1] })
+		_, ic15 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.ic[SigScore][2] })
+		_, bic15 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.bic[SigScore][2] })
+		st.NDates = len(finite(ic10))
+		m, _ := meanSD(ic10)
+		st.IC10 = Num(m)
+		m, _ = meanSD(bic10)
+		st.IC10Beta = Num(m)
+		m, _ = meanSD(ic15)
+		st.IC15 = Num(m)
+		m, _ = meanSD(bic15)
+		st.IC15Beta = Num(m)
+
+		var xs, bxs []float64
+		for _, t := range trades {
+			if t.date[:4] != sl.Label {
+				continue
+			}
+			st.Top5N++
+			if !math.IsNaN(t.xs15) {
+				xs = append(xs, t.dir*t.xs15)
+			}
+			if !math.IsNaN(t.bx15) {
+				bxs = append(bxs, t.dir*t.bx15)
+			}
+		}
+		m, _ = meanSD(xs)
+		st.Top5Pct = Num(100 * m)
+		m, _ = meanSD(bxs)
+		st.Top5BetaPct = Num(100 * m)
+		out = append(out, st)
+	}
+	return out
+}
+
 // midDate splits the sample into halves the way the spec did: the date at
 // position len/2 of the sorted unique dates starts the second half.
 func midDate(cells []cell) string {

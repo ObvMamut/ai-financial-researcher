@@ -196,6 +196,12 @@ type Config struct {
 	ChiefAPI model.APIConfig
 }
 
+// DefaultMaxPerIndex is applyDefaults' zero-value default for MaxPerIndex,
+// exported so other packages — the backtest lab's live-book replay
+// (internal/backtest) — can build a live-shaped funnel without hard-copying
+// the number.
+const DefaultMaxPerIndex = 5
+
 func (c *Config) applyDefaults() {
 	if c.ResearchMode == "" {
 		c.ResearchMode = "legacy"
@@ -308,7 +314,7 @@ func (c *Config) applyDefaults() {
 		c.MaxShortlist = 12
 	}
 	if c.MaxPerIndex <= 0 {
-		c.MaxPerIndex = 5
+		c.MaxPerIndex = DefaultMaxPerIndex
 	}
 	// None, and the reason is that such a name cannot reach the output at all.
 	//

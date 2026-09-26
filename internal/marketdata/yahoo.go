@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,6 +79,16 @@ const yahooRange = "2y" // 12-1 momentum needs 252+21 bars; 2y covers it with sl
 type yahooChartResp struct {
 	Chart struct {
 		Result []struct {
+			Meta struct {
+				// DataGranularity is empty on old fixtures and on every canned
+				// range this client sends ("2y"/"5y"/"10y"), which always answer
+				// daily. It matters for the backtest lab's long spans: Yahoo
+				// answers range=max&interval=1d with 3-month bars regardless of
+				// interval (meta.dataGranularity="3mo", verified 2026-09-25),
+				// which is why long spans are requested with period1/period2
+				// instead (see chartSpan).
+				DataGranularity string `json:"dataGranularity"`
+			} `json:"meta"`
 			Timestamp  []int64 `json:"timestamp"`
 			Indicators struct {
 				Quote []struct {
@@ -105,13 +116,17 @@ func (y *YahooClient) History(ctx context.Context, symbol string) (*quant.Series
 	return y.history(ctx, symbol, yahooRange, y.ttl)
 }
 
-// HistoryRange returns daily bars over a longer Yahoo range ("5y", "10y",
-// "max") — the backtest lab's read, which needs years of history the live
-// two-year series does not carry. It is cache-first: an entry written within
-// maxAge on any of the last few calendar days is served without a request,
-// because a replay of years of history does not need this afternoon's bar and
-// a re-run should not re-download the universe. Each range is its own cache
-// entry, so this never serves or overwrites the live two-year series.
+// HistoryRange returns daily bars over a longer span than the live pipeline's
+// own "2y" — the backtest lab's read. rng is either a canned Yahoo keyword
+// ("5y", "10y") or, for a span those cannot cover, an explicit "<years>y"
+// spelling (see chartSpan) that is sent as a period1/period2 window instead of
+// range=max, which answers with 3-month bars, not daily ones. It is
+// cache-first: an entry written within maxAge on any of the last few calendar
+// days is served without a request, because a replay of years of history does
+// not need this afternoon's bar and a re-run should not re-download the
+// universe. Each rng is its own cache entry, so this never serves or
+// overwrites the live two-year series, nor one span's series in place of
+// another's.
 func (y *YahooClient) HistoryRange(ctx context.Context, symbol, rng string, maxAge time.Duration) (*quant.Series, error) {
 	if y.cache != nil && maxAge > 0 {
 		days := int(maxAge / (24 * time.Hour))
@@ -146,8 +161,8 @@ func (y *YahooClient) history(ctx context.Context, symbol, rng string, ttl time.
 		return nil, err
 	}
 
-	u := fmt.Sprintf("%s/v8/finance/chart/%s?range=%s&interval=1d&includeAdjustedClose=true",
-		y.baseURL, url.PathEscape(yahooSymbol(symbol)), rng)
+	u := fmt.Sprintf("%s/v8/finance/chart/%s?%s&interval=1d&includeAdjustedClose=true",
+		y.baseURL, url.PathEscape(yahooSymbol(symbol)), chartSpan(rng))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -177,6 +192,13 @@ func (y *YahooClient) history(ctx context.Context, symbol, rng string, ttl time.
 	}
 
 	res := parsed.Chart.Result[0]
+	// A non-daily granularity must fail loudly rather than silently feed a
+	// 12-1 momentum window three-month bars: range=max answers range=max&
+	// interval=1d with meta.dataGranularity="3mo" (verified 2026-09-25), and
+	// every downstream stage assumes one bar is one session.
+	if g := res.Meta.DataGranularity; g != "" && g != "1d" {
+		return nil, fmt.Errorf("yahoo %s: got %s bars, not daily (requested %s)", symbol, g, rng)
+	}
 	q := res.Indicators.Quote[0]
 	var adj []float64
 	if len(res.Indicators.Adjclose) > 0 {
@@ -312,6 +334,53 @@ func (y *YahooClient) wait(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// yahooCannedRanges are the range values every caller other than the backtest
+// lab's long spans ever passes — the live pipeline's own "2y" and the lab's
+// "5y"/"10y" — and are sent through Yahoo's range= keyword exactly as before.
+var yahooCannedRanges = map[string]bool{"2y": true, "5y": true, "10y": true}
+
+// chartSpan returns the range/period query parameters for rng. A canned
+// keyword is sent as range= unchanged; anything else is parsed as "<years>y"
+// (backtest.yahooRange's spelling for a span "5y"/"10y" cannot cover, e.g.
+// "13y") and sent as an explicit period1/period2 window in unix seconds
+// instead, computed from the moment of the request. range=max was tried first
+// and rejected: probed 2026-09-25, it answers with meta.dataGranularity="3mo"
+// (169 monthly-ish bars back to 1984) where range=10y and an explicit
+// period1/period2 window both answer daily.
+//
+// The years count is never baked into the cache key (that would carry today's
+// date into "chart"+rng and break HistoryRange's multi-day cache lookback,
+// which re-derives the same fn string for each of the last few days); only the
+// span's length is, exactly like the canned keywords already do.
+func chartSpan(rng string) string {
+	if yahooCannedRanges[rng] {
+		return "range=" + rng
+	}
+	if years, ok := explicitSpanYears(rng); ok {
+		end := time.Now()
+		start := end.AddDate(-years, 0, 0)
+		return fmt.Sprintf("period1=%d&period2=%d", start.Unix(), end.Unix())
+	}
+	// Defensive fallback: every caller today passes a canned keyword or an
+	// "<years>y" span; pass anything else through as a range keyword verbatim
+	// rather than fail closed on a value this client doesn't yet recognize.
+	return "range=" + rng
+}
+
+// explicitSpanYears parses backtest.yahooRange's "<years>y" spelling for a
+// span too long for a canned Yahoo keyword.
+func explicitSpanYears(rng string) (int, bool) {
+	n, ok := strings.CutSuffix(rng, "y")
+	if !ok {
+		return 0, false
+	}
+	years, err := strconv.Atoi(n)
+	if err != nil || years <= 0 {
+		return 0, false
+	}
+	return years, true
 }
 
 // yahooSymbol spells a ticker the way the chart endpoint wants it. Yahoo writes

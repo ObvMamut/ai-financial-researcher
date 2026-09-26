@@ -183,6 +183,121 @@ func TestPlantedSignalIsRecovered(t *testing.T) {
 	}
 }
 
+// TestCalendarYears checks that calendarYears/yearSlices bucket cells by the
+// four-digit year prefix of their date, sorted ascending, and that each year's
+// Slice.Keep admits only that year's cells — the same shape slices() returns
+// for regions and halves, reused for E1's per-year report (and E3's later
+// long/short split).
+func TestCalendarYears(t *testing.T) {
+	cells := []cell{
+		{date: "2022-01-07"}, {date: "2022-12-30"},
+		{date: "2023-01-06"}, {date: "2024-06-01"},
+	}
+	if got := strings.Join(calendarYears(cells), ","); got != "2022,2023,2024" {
+		t.Fatalf("calendarYears = %v, want 2022,2023,2024", got)
+	}
+	want := map[string]int{"2022": 2, "2023": 1, "2024": 1}
+	sls := yearSlices(cells)
+	if len(sls) != 3 {
+		t.Fatalf("yearSlices returned %d slices, want 3", len(sls))
+	}
+	for _, sl := range sls {
+		var n int
+		for _, c := range cells {
+			if sl.Keep(c) {
+				n++
+				if c.date[:4] != sl.Label {
+					t.Errorf("%s slice admitted %s", sl.Label, c.date)
+				}
+			}
+		}
+		if n != want[sl.Label] {
+			t.Errorf("%s slice admitted %d cells, want %d", sl.Label, n, want[sl.Label])
+		}
+	}
+}
+
+// TestPerYearStats plants a signal in one calendar year only and leaves a
+// second year pure noise: the per-year composite IC10 must tell the two
+// years apart, each year's date count must be nonzero, and the barrier
+// study's top-5 excess (plain and beta-adjusted) must average only the
+// trades dated inside that year, ignoring a NaN beta-adjusted leg the plain
+// leg still counts (E1, docs/workflow/backtest.md).
+func TestPerYearStats(t *testing.T) {
+	rng := rand.New(rand.NewPCG(21, 22))
+	var recs []Record
+	build := func(year int, planted bool) {
+		day := time.Date(year, 1, 7, 0, 0, 0, 0, time.UTC)
+		for w := 0; w < 40; w++ {
+			ds := day.AddDate(0, 0, 7*w).Format("2006-01-02")
+			if !strings.HasPrefix(ds, fmt.Sprint(year)) {
+				continue // stay inside the calendar year being built
+			}
+			for i := 0; i < 30; i++ {
+				r := Record{Date: ds, Index: "sp500", Ticker: fmt.Sprintf("T%d", i), Region: "US"}
+				for s := range r.Sig {
+					r.Sig[s] = rng.NormFloat64()
+				}
+				signal := rng.NormFloat64()
+				r.Sig[SigScore] = signal
+				for h := range Horizons {
+					if planted {
+						r.XS[h] = 0.01*signal + 0.03*rng.NormFloat64()
+					} else {
+						r.XS[h] = 0.03 * rng.NormFloat64()
+					}
+					r.BX[h] = r.XS[h]
+				}
+				r.SigmaDaily = math.NaN()
+				recs = append(recs, r)
+			}
+		}
+	}
+	build(2022, true)
+	build(2023, false)
+
+	cells := crossSections(recs)
+	stats := perYearStats(cells, nil)
+	if len(stats) != 2 || stats[0].Year != "2022" || stats[1].Year != "2023" {
+		t.Fatalf("years = %+v, want 2022 then 2023", stats)
+	}
+	if !(stats[0].IC10 > 0.1) {
+		t.Errorf("2022 (planted) IC10 = %v, want > 0.1", stats[0].IC10)
+	}
+	if math.Abs(float64(stats[1].IC10)) > 0.1 {
+		t.Errorf("2023 (noise) IC10 = %v, want near zero", stats[1].IC10)
+	}
+	if stats[0].NDates == 0 || stats[1].NDates == 0 {
+		t.Errorf("expected a nonzero date count for both years, got %+v", stats)
+	}
+	// With no trades passed, the top-5 fields must be absent (NaN → JSON null),
+	// not zero, and not mistaken for "no excess".
+	if !math.IsNaN(float64(stats[0].Top5Pct)) || stats[0].Top5N != 0 {
+		t.Errorf("no trades: top5 = %+v, want n=0 and NaN pct", stats[0])
+	}
+
+	trades := []trade{
+		{date: "2022-03-04", dir: 1, xs15: 0.05, bx15: 0.04},
+		{date: "2022-03-11", dir: -1, xs15: -0.02, bx15: math.NaN()},
+		{date: "2023-04-01", dir: 1, xs15: 0.01, bx15: 0.02},
+	}
+	stats2 := perYearStats(cells, trades)
+	if stats2[0].Top5N != 2 {
+		t.Errorf("2022 top5 n = %d, want 2", stats2[0].Top5N)
+	}
+	if wantPct := 100 * ((1*0.05 + -1*-0.02) / 2); math.Abs(float64(stats2[0].Top5Pct)-wantPct) > 1e-9 {
+		t.Errorf("2022 top5 pct = %v, want %v", stats2[0].Top5Pct, wantPct)
+	}
+	// Only one of 2022's two trades has a finite bx15; the NaN leg must be
+	// dropped from the mean rather than poisoning it.
+	if wantBeta := 100 * 0.04; math.Abs(float64(stats2[0].Top5BetaPct)-wantBeta) > 1e-9 {
+		t.Errorf("2022 top5 beta pct = %v, want %v", stats2[0].Top5BetaPct, wantBeta)
+	}
+	if stats2[1].Top5N != 1 {
+		t.Errorf("2023 top5 n = %d, want 1", stats2[1].Top5N)
+	}
+}
+
 func TestNeweyWestT(t *testing.T) {
 	rng := rand.New(rand.NewPCG(11, 12))
 	iid := make([]float64, 500)
@@ -305,8 +420,8 @@ func TestWeeklyDatesAndRange(t *testing.T) {
 	if lf := lastFriday(time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)); lf.Format("2006-01-02") != "2026-09-18" {
 		t.Errorf("lastFriday = %s", lf)
 	}
-	if yahooRange(4) != "5y" || yahooRange(6) != "10y" || yahooRange(12) != "max" {
-		t.Error("yahooRange must pick the shortest covering range")
+	if yahooRange(4) != "5y" || yahooRange(6) != "10y" || yahooRange(12) != "13y" {
+		t.Error("yahooRange must pick the shortest covering range, and spell anything past 10y as an explicit <years>y span rather than range=max")
 	}
 }
 
@@ -354,5 +469,79 @@ func TestDropWarmupDates(t *testing.T) {
 	}
 	if len(got) != 20 {
 		t.Errorf("kept %d rows, want 20", len(got))
+	}
+}
+
+// checkShortfall must fire when a replay comes back much shorter than
+// --years asked for — the Task 5b bug: range=max answered 3-month bars, so
+// only names past the first ~2.3 years of data (not the ordinary first year of
+// warm-up) ever reached the 253-bar minimum and DropWarmupDates left just the
+// tail of the requested window. Reproduced here with a synthetic panel whose
+// series carry far fewer daily bars than the requested span needs, rather than
+// with a live long-span fetch (no live fetch in tests).
+func TestShortfallWarningFiresWhenTheReplayComesBackShort(t *testing.T) {
+	end := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	years := 4
+	rng := rand.New(rand.NewPCG(51, 6))
+	start := end.AddDate(0, 0, -560) // ~400 weekdays: under a fifth of the ~1460 the 4-year request implies
+	data := Data{Series: map[string]*quant.Series{}, Bench: map[string]*quant.Series{}}
+	data.Bench["^A"] = synthSeries("^A", start, 400, 0.0002, 0.01, rng)
+	var members []Member
+	for i := 0; i < 20; i++ {
+		tk := fmt.Sprintf("S%02d", i)
+		data.Series[tk] = synthSeries(tk, start, 400, 0.0003*rng.NormFloat64(), 0.01+0.01*rng.Float64(), rng)
+		members = append(members, Member{
+			Constituent: model.Constituent{Ticker: tk, Name: tk, Sector: "Tech", Index: "sp500"},
+			Bench:       "^A",
+		})
+	}
+	dates := WeeklyDates(end.AddDate(-years, 0, 0), end)
+	recs := DropWarmupDates(BuildPanel(members, data, dates))
+	if len(recs) == 0 {
+		t.Fatal("panel is empty; the synthetic series must still produce at least one scorable week")
+	}
+	res := Analyze(recs, data.Series)
+	checkShortfall(res, years, end)
+
+	if !res.Shortfall {
+		t.Fatalf("replay runs %s..%s (%d rebalances) against a %d-year request ending %s — want it flagged short",
+			res.Start, res.End, res.Dates, years, end.Format("2006-01-02"))
+	}
+	if res.ShortfallNote == "" {
+		t.Error("Shortfall is true but ShortfallNote is empty")
+	}
+	if res.RequestedStart != end.AddDate(-years, 0, 0).Format("2006-01-02") {
+		t.Errorf("RequestedStart = %s, want %s", res.RequestedStart, end.AddDate(-years, 0, 0).Format("2006-01-02"))
+	}
+	if !strings.Contains(res.ShortfallNote, res.Start) || !strings.Contains(res.ShortfallNote, res.End) {
+		t.Errorf("ShortfallNote = %q, want it to name the actual span %s..%s", res.ShortfallNote, res.Start, res.End)
+	}
+}
+
+// checkShortfall must not fire on an ordinary replay: the first rebalance
+// naturally lands a little after end-years (holidays, DropWarmupDates'
+// threshold) — the 2026-09-23 run's default 4-year replay missed it by only 19
+// days — so a few weeks of slop must stay under the grace window and clearing
+// it (here, 9 weeks) must still fire.
+func TestNoShortfallWarningWithinTheOrdinaryWarmupSlop(t *testing.T) {
+	end := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	res := &Result{
+		Start: end.AddDate(-4, 0, 0).AddDate(0, 0, 4*7).Format("2006-01-02"), // 4 weeks late
+		End:   end.Format("2006-01-02"),
+		Dates: 200,
+	}
+	checkShortfall(res, 4, end)
+	if res.Shortfall {
+		t.Errorf("shortfall flagged at %s, only 4 weeks after the requested start — want it within the grace window", res.Start)
+	}
+
+	res2 := &Result{
+		Start: end.AddDate(-4, 0, 0).AddDate(0, 0, 9*7).Format("2006-01-02"), // 9 weeks late
+		End:   end.Format("2006-01-02"),
+		Dates: 20,
+	}
+	checkShortfall(res2, 4, end)
+	if !res2.Shortfall {
+		t.Errorf("shortfall not flagged at %s, 9 weeks after the requested start — want it past the grace window", res2.Start)
 	}
 }

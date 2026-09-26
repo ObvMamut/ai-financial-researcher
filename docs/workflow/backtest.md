@@ -15,10 +15,22 @@ arms, because a model cannot be replayed without look-ahead.
 
 - **Data.** Each constituent's and each benchmark's daily bars come from Yahoo's
   keyless chart endpoint over the shortest range that covers the replay plus one
-  year of warm-up (`5y` for the default 4 years). Reads go through the shared
-  data cache and are cache-first: a series younger than `--cache-age` (default 7
-  days) is not re-requested. The lab makes no model call and reads no
-  credential.
+  year of warm-up (`5y` for the default 4 years, `10y` up to 9 years). Beyond
+  that — `--years 10` and up — `range=max` is not used: probed 2026-09-25, Yahoo
+  answers `range=max&interval=1d` with **3-month bars** regardless of
+  `interval` (`meta.dataGranularity="3mo"`, 169 bars back to 1984 for AAPL),
+  where `range=10y` and an explicit window both still answer daily. Spans past
+  10 years are instead requested with an explicit `period1`/`period2` window
+  (unix seconds) and `interval=1d`, computed at the moment of the request so the
+  cache key itself never carries an absolute date
+  (`marketdata.YahooClient.chartSpan`); a response whose `meta.dataGranularity`
+  is present and isn't `1d` is refused with an error rather than silently fed to
+  the pipeline (`internal/marketdata/yahoo.go`). Before this, a `--years 10`
+  replay silently shrank to 20 weekly rebalances spanning about 2.3 years,
+  because almost no name ever reached the 253 daily bars the 12-1 term needs.
+  Reads go through the shared data cache and are cache-first: a series younger
+  than `--cache-age` (default 7 days) is not re-requested. The lab makes no
+  model call and reads no credential.
 - **Rebalance dates.** Every Friday from `--years` before the most recent Friday
   up to that Friday.
 - **Point in time.** At each date *d*, each series is cut at its last bar on or
@@ -31,6 +43,15 @@ arms, because a model cannot be replayed without look-ahead.
   12-1 term needs and printed a bar within 5 days of *d*. A date is dropped when
   any index has fewer than 70% of the most names it ever has scorable, which
   removes the warm-up weeks.
+- **Shortfall warning.** The extra year fetched above is warm-up for the 253-bar
+  requirement, not slack in the replay window: the first surviving rebalance
+  should land within a few weeks of `end - years` (what `--years` asked for),
+  the gap being holidays and the 70% eligibility threshold above, not a whole
+  year. The report compares the two, and if the actual first date falls more
+  than 8 weeks later — the sign of a genuine data problem such as the one above,
+  not ordinary warm-up — the text report prints a `WARNING:` line and the JSON
+  result carries `requested_start`, `shortfall` and `shortfall_note` alongside
+  the actual `first_date`/`last_date`/`dates` it always records.
 - **Known departures from a live run.** There is no liquidity floor, because a
   USD turnover needs each past date's FX rate. There is no drift archetype,
   because no point-in-time filing dates are cached. The composite does not use
@@ -54,6 +75,16 @@ arms, because a model cannot be replayed without look-ahead.
     windows overlap.
   - Each is reported for all indices, per region (US = sp500 + nq100, EU, Asia)
     and per half. The second half starts at the median date.
+- **Per-calendar-year slices (E1).** Alongside the halves, the composite's IC10
+  and IC15 (plain and beta-adjusted) are also reported for every calendar year
+  the sample covers, each with its date count. A default 4-year run shows two
+  halves; `--years 10` shows ten years, which is what lets E1 (below) ask
+  whether an edge holds across regimes rather than only across one split.
+  Survivorship (above) gets worse the further back a year sits, because its
+  missing names are disproportionately past losers rather than a random sample
+  — so whenever `--years` exceeds the default, the report adds a further
+  caveat to weight this table, and the top-5 excess below, over the barrier
+  study's raw long-only returns.
 - **Quintile spread.** The mean excess of the top fifth minus the bottom fifth,
   at 10 and 15 sessions. It is shown gross and net of 30bp round trip on each
   leg. The top fifth alone is shown net of 30bp.
@@ -65,6 +96,9 @@ arms, because a model cannot be replayed without look-ahead.
     exit, a stop at 2σ·√15 only, and the live 9% stop with a 15% target.
   - A gap through a barrier exits at the open. A bar that touches both barriers
     counts as the stop.
+  - The same picks' directional 15-session benchmark-excess return ("top-5
+    excess"), gross of cost, is also reported per calendar year, plain and
+    beta-adjusted, alongside the per-year IC above (E1).
 - **Survivorship.** The universe is today's constituents only. Names that left
   the indices during the replay are missing from every past date. That flatters
   momentum and long-side returns, so every report prints this caveat, and every
@@ -102,6 +136,18 @@ result.
 | **C3**: news-conditioned residual reversal | Residual moves without news revert, and moves with news continue. The residual 5-day move is `log(c/c₋₅) − β·log(b/b₋₅)`. The news proxy is abnormal volume: one of the last 5 sessions traded ≥ 2× the mean volume of the 20 sessions before them. Signal: `+resid` with news, `−resid` without. | Per-date IC10 of the C3 signal |
 | **C4**: beta-adjusted targets | The composite's edge is selection rather than bull-market beta, so it survives when the target is `r − β·r_bench` instead of `r − r_bench`. This measures, and does not change, the screen. Every signal's IC is also reported against this target. | Per-date IC10 of the shipped composite against the beta-adjusted target |
 | **C5**: breadth | The composite's t-stat holds on a wider liquid US universe. | **Runs only if** that universe exists without a new list of several hundred names from paid sources. Otherwise it is skipped and noted. |
+
+## Pre-registered lab tests (Wave B, registered 2026-09-25)
+
+Tests below are pre-registered here, before they are run, the same way C1–C5
+were. Each still runs once and adds to the tests-run count above; a test
+changed after it has been seen counts as a new one.
+
+| Test | Hypothesis | Statistic and decision |
+|---|---|---|
+| **E1**: long history | The edge is a property of the composite, not of the one regime the default 4-year window happens to sample. `cfr backtest --years 10` reaches back through 2018 Q4, 2020 and 2022 as well as the sample already covered. | Composite IC10/IC15 (plain and beta-adjusted) and the top-5 picks' 15-session excess (plain and beta-adjusted), one figure per calendar year, from a `--years 10` run. **E1 does not use the adoption bar above** — ten years does not split into two non-overlapping halves and three regions the way the four-year sample does, so the decision is by calendar year instead. Decision, verbatim from the plan (§4): *"if the composite's beta-adjusted top-5 excess is not positive in a majority of years, the docs stop describing the screen as having an edge, and the TUI says so."* **Not yet run** — a later task runs the `--years 10` replay and applies this decision; that run is what will add E1 to the tests-run count. |
+| **E3**: which side carries the result | The 2026-09-23 run's Top-5 row split the barrier study's picks into longs (+1.316%) and shorts (+0.111%) on *plain* excess only; that split does not say whether the short side is real selection or C4's market-beta exposure in reverse. | Same picks' 15-session directional excess (`internal/backtest/sides.go`'s `Result.Sides`), split long vs short, plain and beta-adjusted, for the whole sample and each half. **E3 does not use the adoption bar above** either — it is a diagnostic split of the barrier study's own picks, not a new signal test. Decision, registered before this runs on real data: *"if shorts are ≤0 beta-adjusted in both halves, pre-register 'long-only merit_veto' as a config test for the live shipped arm."* **Not yet run** — see [E3: which side carries the result](#e3-which-side-carries-the-result-registered-2026-09-25-before-this-ran) below for the detail this row summarizes. |
+| **E2**: sector-cap grid | One run's default `max_per_sector` (2) held MSFT and SAP.DE to the two IT slots and dropped ORCL on a 0.5% merit gap; one run cannot say whether that cap costs or saves the book. `internal/backtest/book.go` replays a live-shaped weekly book (mechanically standing in for the scout call and the Chief) under `SectorCaps = {1, 2, 3, off}` across every week the panel has. | Per-week difference in beta-adjusted book excess (candidate cap minus the live default's arm, paired by date), Newey-West t at `nwLags(15)`, plus its halves and regions (`BookGrid.PairedTests`). **E2 does not use the adoption bar above** either — like E3, it is a diagnostic replay of the live funnel's own construction, not a new signal test, so its own bar is two-sided: **`|t| > 2.5`, same sign in both halves and every region**, since a departure from the live cap could plausibly help or hurt rather than propose one direction. Decision, registered before this runs on real data: *"a candidate `max_per_sector` value is adopted over the live default only if it clears that bar; otherwise the live default stands."* **Not yet run** — see [E2: live-book replay with a sector-cap grid](#e2-live-book-replay-with-a-sector-cap-grid-pre-registered-2026-09-25) below for the detail this row summarizes. |
 
 ## Results
 
@@ -160,3 +206,145 @@ excess:
   beta, not stock selection.
 
 Most of what the screen appeared to earn is exposure to a rising market.
+
+## E3: which side carries the result (registered 2026-09-25, before this ran)
+
+E3 is registered as a row in the Wave B table above; this section is the
+detail behind it. The 2026-09-23 run's Top-5 row above already split the barrier study's five
+largest-|score| picks per index per week into longs and shorts on *plain*
+15-session excess: +1.316% long against +0.111% short, gross. That split does
+not say whether the short side is real selection or just C4's market-beta
+exposure in reverse — the same question C4 asked of the composite's IC.
+
+`internal/backtest/sides.go` answers it by adding the beta-adjusted split
+those two numbers were missing, for the whole sample and each half. It reuses
+`pickTrades`'s selection and `observe`'s `BX` unchanged — it does not
+re-select trades or recompute beta adjustment — and reports, per slice (all,
+H1, H2), the picks' mean directional 15-session excess, gross, split long vs
+short, plain and beta-adjusted: `Result.Sides` (`SidesReport`/`SideStats`),
+the `--json` output's `sides` key, and one `=== E3 ===` table in the text
+report. No per-region breakdown: the task asked only for overall and per
+half.
+
+**Decision rule, registered before this runs on real data:**
+
+> If shorts are ≤0 beta-adjusted in both halves, pre-register "long-only
+> merit_veto" as a config test for the live `shipped` arm.
+
+This has not run yet. Task 7 lands only the reporting code; a later task runs
+the lab and applies the rule to what it prints.
+
+## E2: live-book replay with a sector-cap grid (pre-registered 2026-09-25)
+
+**Why.** On one run, the default `max_per_sector` (2, `riskgate.go`'s
+`defaultMaxPerSector`) held MSFT and SAP.DE to the two IT slots and dropped ORCL on a
+merit gap of 0.5% (1.4924 vs 1.4847). Neither that ORCL was the better trade (the
+Chief's shadow rank has no measured value) nor that either idea's base score (66) meant
+much (a separately established measurement problem with the base score itself) can be
+claimed from one run. One run cannot size a cap that binds on a coin-flip-sized gap;
+this experiment replays the question across every week the panel has instead.
+
+**Question.** Across ~500 weekly books (the panel's date count × close to one book per
+date), does `max_per_sector` = 1, 3 or "off" (no cap) change the book's beta-adjusted
+excess, its week-to-week variability, or its worst stretch, relative to the live
+default of 2 — and if so, which direction?
+
+**Method (`internal/backtest/book.go`).** Each Friday's book is built to mirror the
+live construction, mechanically standing in for the two model-dependent steps the lab
+cannot call (no scouts, no Chief):
+
+1. **Per index, the top `scoutNominationsPerIndex` (8) names by |composite|** stand in
+   for a scout's nominations. `agents/scout.md` asks each scout for "5–10 candidate
+   tickers" and no per-run nomination count is recorded to read a measured average
+   from instead, so this takes the middle of that range rounded *up*. Rounding up
+   matters: at 5 (the range's floor) the next step would never bind, since it defaults
+   to 5 itself, collapsing two nomination-capping steps into one.
+2. **`max_per_index`** (`orchestrator.DefaultMaxPerIndex`, live default 5, read from
+   the orchestrator rather than copied) trims each index's contribution again.
+3. **The per-index survivors are merged and deduped by ticker**, keeping the higher
+   |composite| reading: 35 of nq100's 56 names also sit in sp500, each standardised —
+   and so scored — within its own index's cross-section, so a cross-listed name
+   generally carries two different composite values. Pooling per-index survivors
+   without this let one ticker take two book slots and two sector-cap slots; the live
+   merge step dedupes cross-listings the same way before ranking (CLAUDE.md step 1),
+   and the lab already does this for sector momentum (`addIndustryMomentum`'s
+   `a.seen[r.Ticker]`, `panel.go`).
+4. The deduped pool is walked once in descending |composite| order; a name is skipped
+   once its sector already holds `max_per_sector` picks (0 means no cap — "off"),
+   exactly how the live `merit_veto` selection's `pickBook`
+   (`internal/orchestrator/selection.go`) walks its own merit-ordered list.
+5. **The first 5 survivors are the week's book** — reusing `picksPerIndex` and the
+   15-session horizon convention from the barrier study (`barrier.go`), since a book
+   pick is the same trade the barrier study already prices: top-|composite|, next-open
+   entry, held 15 sessions. Each pick carries the direction of its own composite's
+   sign and its region, recorded per pick (`BookPick.Dir`, `BookPick.Region`) rather
+   than assumed for the whole book, so a later long/short split can read it directly
+   and the region leg of the adoption rule below can restrict to one region's picks.
+
+The grid is `SectorCaps = {1, 2, 3, off}` — the live default and its two neighbouring
+integers, plus the uncapped baseline.
+
+**What this does not model.** Beside standing in for the scout call itself, two further
+live steps are skipped rather than approximated: `max_shortlist` (12 — the merged
+shortlist is capped *before* `max_per_index`/`max_per_sector` ever see it, live
+independent-research.md step 1) and the shortlist's own `max_per_sector`+1 reservation
+(the "one spare per sector" buffer the merit sort carries so the risk gate has
+something to choose between). Both are shortlist-construction details the mechanical
+top-|composite| stand-in already replaces wholesale — there is no separate shortlist
+object in this replay for either cap to act on — so leaving them out does not add a
+distinct source of error beyond the one already disclosed above; it is recorded here
+for completeness, alongside the "scouts as a composite cut" simplification.
+
+**Metrics**, per cap value and per half (H1/H2, split at the same `mid` date as every
+other table here): the number of weeks that produced a book **with a known
+beta-adjusted return** (a tail week whose 15-session forward window runs past the data
+has a book but no return, and does not count); the mean beta-adjusted excess per book
+(r − β·r_bench at 15 sessions, C4's target — the headline figure, since C4 already
+found the plain benchmark-excess target overstates this screen's edge); the sd of that
+weekly series; and the plain benchmark-excess mean, shown for reference only.
+
+*Worst 4-week figure.* `worst_4wk_overlap_pct` is the most negative sum of any 4
+consecutive weekly book returns (`worst4WeekPct` — a rolling worst-month check, not a
+peak-to-trough drawdown off a compounded curve, since nothing in this lab compounds
+weekly returns into a NAV). Each weekly value is itself a 15-session (~3-week) hold, so
+4 consecutive weekly values span holds that already overlap: at any moment roughly 3
+weekly cohorts are concurrently open. Turning this into a true capital-scaled
+portfolio-level drawdown would require a further, unverified modelling choice (how
+much of each cohort's capital is still at risk while the next two are open, e.g. an
+even one-third-per-cohort split) that this lab does not make anywhere else. Rather than
+introduce that choice quietly, the figure is named and documented for exactly what it
+sums — 4 overlapping cohorts' raw returns — and read as a stress indicator, not a
+book-level drawdown number.
+
+**Adoption rule.** The Wave B bar applies in full, exactly as the plan's controller
+ruling states it: a candidate cap is adopted over the live default only if the
+per-week difference in beta-adjusted book excess (candidate minus the live default's
+arm, paired by date — a date either side lacks, or where the difference cannot be
+computed, is dropped rather than treated as zero — Newey-West t at `nwLags(15)` = 4
+lags) clears **|t| > 2.5** and is the **same sign in both halves and every region**.
+This bar is two-sided (`|t|`), unlike the one-sided pre-registered signal tests above:
+those each propose a specific directional improvement, while a departure from the live
+`max_per_sector` could plausibly help or hurt, so both directions must be eligible to
+pass, provided the sign is internally consistent everywhere it is checked.
+
+The "every region" leg is computed without rebuilding the grid on region-filtered
+panels: a book pools all four indices in one basket by construction, so there is no
+single region per week the way a per-index cross-section has one. Instead, each week's
+book contributes one *region-restricted* value per region it has a pick in — the mean
+beta-adjusted return of just that week's picks in that region — and the region leg of
+the adoption bar is checked on that narrower series. `internal/backtest/book.go`'s
+`BuildBookGrid` computes one `TestResult` per non-default cap (`BookGrid.PairedTests`,
+IDs `E2-1`/`E2-3`/`E2-off`) with this statistic, its overall mean and t, its halves,
+and its regions — the same shape the `TestResult` type already gives C1–C5, so the
+`--json` output and the text report render it the same way. Every cap comparison
+actually run against live data will be recorded here as its own test, exactly as
+C1–C5 were, with this rule fixed before that run happens.
+
+**Status.** Code and the unit tests that check the builder (`book_test.go`: the
+sector cap, `max_per_index` and the nomination stand-in each independently bind; a
+ticker cross-listed in two indices is counted once, keeping the higher |composite|
+reading; `off` is exactly the plain top-5 by |composite| with sector composition
+ignored; a tail week with a book but no known return does not inflate `Weeks`; and the
+paired adoption test's two-sided sign check fails when only one region's sign flips)
+are in place. Running the grid against the live panel and recording results against
+the rule above is a later task's job, as for E1 and E3.
