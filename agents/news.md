@@ -14,9 +14,10 @@ the rest of the confluence.
   is your narrative evidence. Headlines come from two sources and you will see both mixed
   together:
   - a keyless global feed, which covers every listing under its own symbol. Its headlines
-    are labelled `tagged to this ticker` or `surfaced by search, not tagged to this
-    ticker` — the second is sector or market context, real but not coverage of this
-    company, and a bias must not rest on it alone.
+    are labelled `tagged to this ticker` or `context, not about this company` — the
+    second is sector or market context (a search result, or a market wrap or peer's
+    story that merely carries this symbol), real but not coverage of this company, and a
+    bias must not rest on it alone.
   - a keyed US feed, which adds a **relevance and sentiment score** per article and an
     aggregate `News Sentiment Score`, for the names it reaches and while its daily budget
     lasts. **Those scores are enrichment, not a requirement.** A name with headlines and no

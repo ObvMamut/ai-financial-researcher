@@ -26,7 +26,9 @@ membership is still required first: dropping it would let a short tag list on a 
 against) count as coverage for whichever ticker happened to be fetched. A short root or ADR symbol (≤2
 letters — "ON", "A", "T") only counts spelled the way a ticker actually is (case-sensitive, which also
 catches a cashtag like `$ON` for free); a plain case-insensitive match would tag "shares moved **on**
-Tuesday" to ON Semiconductor.
+Tuesday" to ON Semiconductor. Fix round 2 below extends the exact-case rule to *every* root and ADR
+symbol, and reads company names and aliases as proper nouns, because many longer roots are ordinary
+words too.
 
 The rule is shared by both feeds (`alpacanews.go:130`, `yahoonews.go`), as the controller ruling required.
 Company names and aliases are not reachable inside `internal/marketdata` directly — `internal/universe`
@@ -87,7 +89,8 @@ these tickers have no other route to a match.
 Per the controller ruling, this is a new committed data file, `internal/universe/data/aliases.csv`
 (`ticker,alias`, one row per alias), loaded the same way `internal/marketdata/data/adr_map.csv` is, and fed
 into the same `WithCompanyNames` lookup as the primary CSV name — every alias goes through
-`mentionsCompanyName`/`mentionsSymbol`, the identical word-boundary and ≤2-letter rule as the ticker root.
+`mentionsCompanyName`, the same word-boundary rule as the primary name, read as a proper noun since fix
+round 2 (below).
 A new universe test, `TestAliasTickersExistInTheUniverse`, rejects an alias row for a ticker not in any
 universe file, mirroring `TestConstituentFieldsAreInTheRightColumns`'s existing guard against a
 shifted/mistyped ticker.
@@ -124,6 +127,37 @@ still flip an AlphaVantage-only ticker's coverage to true the way SAP.DE's tag m
 the acceptance sample below shows this happening (every AlphaVantage-grounded idea's headlines carry
 `relevance 1.00`), but it is a possible future finding, not something this task closes off.
 
+### Word-like ticker roots and common-word aliases (fix round 2, final branch review)
+
+The whole-branch review probed the rule with a market wrap tagging seven symbols and found three of them
+counted as coverage through ordinary words: NOW ("Stocks **now** higher…"), COST ("…input **cost** for
+retailers") and LOW ("…record **low** volatility"). The exact-case rule covered only roots of two letters or
+fewer; NOW, COST and LOW are three and four. The universe carries more of the same shape — NET, TEAM, SNOW,
+CAT, DIS, META — and each is the F3 defect again, reached through a word instead of a tag list.
+
+- **Ticker roots and ADR symbols now always match case-sensitively** (`mentionsSymbol`). Reporters write a
+  ticker in capitals — "ServiceNow (NOW)", "NASDAQ:COST", a `$LOW` cashtag — so nothing real is lost. An
+  all-capitals headline ("STOCKS NOW HIGHER") would still match; a residual, named below.
+- **Company names and aliases match as proper nouns** (`mentionsCompanyName`): any case except the first
+  letter, which must be as given. `aliases.csv`'s "Meta" is the case that needed it — "meta-analysis"
+  otherwise names Meta — and the universe's own names carry the same risk ("Apple", "Target", "Visa").
+  "Trade desk" and an all-capitals "SAMSUNG" still match. A name of two letters or fewer must match exactly
+  (none today). Residual: a sentence-initial common word ("Meta-analysis finds…") still reads as the name;
+  the rule cannot tell a capital that starts a sentence from one that marks a name.
+
+`TestIsSubjectRelevantRequiresExactCaseForAWordLikeRoot` holds the reviewer's three probe sentences under a
+seven-symbol tag list (none relates) and "ServiceNow (NOW) shares…" and "$NOW…" (both relate);
+`TestIsSubjectRelevantReadsANameAsAProperNoun` holds "meta-analysis" (does not relate) against "Meta
+unveils…" and an all-capitals "FACEBOOK…" (both relate). Both fail on the previous rule.
+
+The item label and the all-failed warning were also made true of both feeds. A non-subject item used to be
+labelled `surfaced by search, not tagged to this ticker`, which is false for an Alpaca item that *is* tagged
+but is about another company; it is now `context, not about this company`, and `agents/news.md` names the
+new label with the same instruction (context, not coverage; a bias must not rest on it alone). The warning
+for a feed where no item is about the company no longer calls every such case "a search fallback" — SAP.DE's
+was four tagged Alpaca stories — and says instead that each item was either untagged or tagged on a story
+about other companies.
+
 ## Acceptance analysis: re-deriving shipped history
 
 **Method.** A throwaway Go test (`internal/orchestrator`, not committed — gated behind
@@ -148,9 +182,13 @@ the acceptance sample below shows this happening (every AlphaVantage-grounded id
    nothing was re-derived for them regardless.
 
 No model was called; the only I/O is reading saved JSON already on disk and running pure functions. Run
-twice: once against the rule as first shipped, once after the fix round below (leading `"The"`, trailing
-`&`/`and`, parenthetical aliases, `SpA`/`KGaA`, and `aliases.csv`); both produced the identical table
-below.
+three times: against the rule as first shipped; after fix round 1 (leading `"The"`, trailing `&`/`and`,
+parenthetical aliases, `SpA`/`KGaA`, and `aliases.csv`); and after fix round 2 (exact-case roots,
+proper-noun names). The third run called the production matching code itself — a temporary exported
+wrapper around `isSubjectRelevant`'s text branches (`mentionsSymbol`, `mentionsCompanyName`), deleted after
+use — rather than local copies. All three produced the identical table below. Saved runs predate the label
+rename, so the audit still reads the old `tagged to this ticker` label to find what the old rule called
+coverage.
 
 **Limits.** A saved `news.json` keeps only the *rendered* `Fact` (headline, summary, label), never the
 provider's raw `symbols`/`relatedTickers` array a fact came from. The "≤3 symbols" branch of
@@ -179,7 +217,9 @@ Residual classes the fixed rule still misses, named rather than silently absorbe
   this round to keep the file to the reviewer-named, individually-verified set (see above). A future
   conservative addition, not a defect in the mechanism.
 - **AlphaVantage's own `relevance_score` has no enforced threshold** (already noted above) — unchanged by
-  this task either round.
+  this task in every round.
+- **A sentence-initial common word reads as a proper-noun name** ("Meta-analysis finds…" names Meta), and an
+  all-capitals headline reads a word-like root as the ticker ("STOCKS NOW HIGHER"). See fix round 2.
 - **The raw `symbols`/`relatedTickers` array isn't preserved in saved `news.json`** (already noted above)
   — the acceptance method's own structural limit, unrelated to the relevance rule itself.
 
@@ -193,8 +233,18 @@ Residual classes the fixed rule still misses, named rather than silently absorbe
 
 The other 44 shipped ideas with a news score keep their coverage: 39 have at least one AlphaVantage
 headline fact for that ticker (untouched by this task) and are excluded from re-derivation by design;
-the remaining 5 are Alpaca/Yahoo-only cases where at least one fact still names the ticker root, the ADR
-symbol or the company name in its headline or summary, so nothing is lost for them.
+the remaining 5 (CRWD on 2026-09-04; MRK, MSFT, REGN and TTD on 2026-09-24) are Alpaca/Yahoo-only cases
+where at least one fact still names the ticker root, the ADR symbol or the company name in its headline or
+summary, so nothing is lost for them.
+
+**What this table cannot say.** 39 of the 45 — the large majority — are carried by AlphaVantage, which A2
+does not touch: its coverage is decided by `articlesFor`'s own per-ticker `ticker_sentiment` entry, with no
+relevance threshold. The acceptance result re-derives only 6 of 45 ideas, and "one flip" is a statement
+about those 6, not about how often shipped coverage rested on items that were not about the company. As a
+supplementary check only (no change to AlphaVantage, and not part of the result), fix round 2's audit also
+ran the same text rule over each of the 39 tickers' AlphaVantage headlines and summaries: every one has at
+least one that names the company under the new rule, so none of the 39 rests solely on items this rule
+would call context.
 
 **One idea, in one run, flips — and it is exactly the SAP.DE case F3 documented.** `SAP.DE` shipped at
 `domain_scores: {news: 0, quant: -4}` on 2026-09-24; with `news` correctly re-derived as uncovered, only
@@ -204,10 +254,10 @@ existing floor drops it (quant alone)."* No other historical idea's evidence flo
 this method. Given the conservative bias above, a live re-run could show this count as low as it is here
 but not lower.
 
-**The fix round changed no number in this table**, which is worth explaining rather than leaving
+**Neither fix round changed a number in this table**, which is worth explaining rather than leaving
 implicit: MRK, TTD and REGN — the three tickers whose real headlines the fix-round review found — all ship
 in the *same* 2026-09-24 run as SAP.DE, all carry a `news` domain score, and none flips, before or after
-the round. Each of the three has a *different* saved headline for the same ticker that already matches on
+either round. Each of the three has a *different* saved headline for the same ticker that already matches on
 the bare ticker root, independent of any normalizeCompanyName fix: "Merck **(MRK)** Declines More Than
 Market..." (Zacks), "Trade Desk **(TTD)** Stock May Be 33% Undervalued..." (Simply Wall St.), and
 "Regeneron Pharmaceuticals **(NASDAQ:REGN)** has outperformed the market..." (Benzinga, in the summary of
@@ -258,3 +308,14 @@ Fix round 1 (this section):
   `TestIsSubjectRelevantMatchesACuratedAlias` in `internal/marketdata/newsfilter_test.go`; the
   `WithCompanyNames` call sites in `internal/marketdata/alpacanews_test.go` and
   `internal/marketdata/newsfilter_test.go` updated for the `[]string` signature.
+
+Fix round 2 (final branch review):
+
+- `internal/marketdata/newsfilter.go` — `mentionsSymbol` matches every root and ADR symbol exactly;
+  `mentionsCompanyName` (via `mentionsName`) matches names and aliases as proper nouns; the non-subject
+  label and the none-about-the-company warning reworded to be true of both feeds.
+- `agents/news.md` — names the new label, same instruction.
+- `docs/workflow/output-schema.md` — the case rule added to the subject-relevance paragraph.
+- Tests: `TestIsSubjectRelevantRequiresExactCaseForAWordLikeRoot`,
+  `TestIsSubjectRelevantReadsANameAsAProperNoun` (new); label and warning substrings in
+  `alpacanews_test.go` and `yahoonews_test.go` updated.

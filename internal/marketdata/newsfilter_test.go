@@ -222,3 +222,55 @@ func TestIsSubjectRelevantMatchesACuratedAlias(t *testing.T) {
 		t.Error("the curated alias 'Google' did not count as coverage for GOOGL")
 	}
 }
+
+// TestIsSubjectRelevantRequiresExactCaseForAWordLikeRoot is the final branch
+// review's probe: a market wrap tagging seven symbols, three of them spelled
+// like ordinary words. Matched case-insensitively, each wrap sentence counted
+// as coverage of NOW, COST or LOW — the F3 defect again, through a word
+// rather than a tag list. A ticker is only ever written in capitals, so it
+// only counts spelled that way.
+func TestIsSubjectRelevantRequiresExactCaseForAWordLikeRoot(t *testing.T) {
+	symbols := []string{"NOW", "COST", "LOW", "AAPL", "MSFT", "NVDA", "AMZN"}
+	ctx := context.Background()
+	for _, c := range []struct{ ticker, headline string }{
+		{"NOW", "Stocks now higher as Treasury yields ease"},
+		{"COST", "Tariffs raise the input cost for retailers, economists say"},
+		{"LOW", "Market wrap: record low volatility as the S&P 500 drifts higher"},
+	} {
+		if isSubjectRelevant(ctx, symbols, c.headline, "", c.ticker) {
+			t.Errorf("%s: a lowercase word in a wrap counted as coverage: %q", c.ticker, c.headline)
+		}
+	}
+	for _, headline := range []string{
+		"ServiceNow (NOW) shares jump after subscription revenue beat",
+		"$NOW rallies into the close",
+	} {
+		if !isSubjectRelevant(ctx, symbols, headline, "", "NOW") {
+			t.Errorf("an exact-case ticker mention did not count as coverage: %q", headline)
+		}
+	}
+}
+
+// TestIsSubjectRelevantReadsANameAsAProperNoun covers the rule company names
+// and aliases.csv rows match under: any case except the first letter. "Meta"
+// is an alias and an ordinary prefix; the capital is what makes it the name.
+func TestIsSubjectRelevantReadsANameAsAProperNoun(t *testing.T) {
+	symbols := []string{"META", "GOOGL", "MSFT", "AMZN"}
+	ctx := WithCompanyNames(context.Background(), func(ticker string) []string {
+		if ticker == "META" {
+			return []string{"Meta Platforms Inc.", "Meta", "Facebook"}
+		}
+		return nil
+	})
+	if isSubjectRelevant(ctx, symbols, "Tech stocks slip as a new meta-analysis questions AI productivity gains", "", "META") {
+		t.Error("a lowercase 'meta-analysis' counted as coverage of Meta")
+	}
+	for _, headline := range []string{
+		"Meta unveils a new open-weights model",
+		"FACEBOOK PARENT SHARES CLIMB", // an all-caps headline still names it
+	} {
+		if !isSubjectRelevant(ctx, symbols, headline, "", "META") {
+			t.Errorf("a capitalised name or alias did not count as coverage: %q", headline)
+		}
+	}
+}

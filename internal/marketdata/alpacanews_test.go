@@ -62,7 +62,7 @@ func TestAlpacaNewsGroundsTheDomain(t *testing.T) {
 	}
 	// The symbols array is the only relevance signal, and it is printed rather
 	// than filtered on — same contract as the Yahoo provider.
-	if !strings.Contains(joined, "tagged to this ticker") || !strings.Contains(joined, "not tagged to this ticker") {
+	if !strings.Contains(joined, "tagged to this ticker") || !strings.Contains(joined, "not about this company") {
 		t.Errorf("relevance is not distinguishable:\n%s", joined)
 	}
 	if !HasDomainEvidence("news", td) {
@@ -244,7 +244,7 @@ func TestAlpacaNewsWrapItemsAreNotCoverage(t *testing.T) {
 	if HasDomainEvidence("news", td) {
 		t.Error("four items that merely tag SAP must not ground the news domain — this is exactly what carried SAP.DE past the evidence floor in F3")
 	}
-	if w := strings.Join(td.Warnings, " | "); !strings.Contains(w, "tagged none of them") {
+	if w := strings.Join(td.Warnings, " | "); !strings.Contains(w, "not one of them is about this company") {
 		t.Errorf("no warning explaining why the feed produced no facts: %q", w)
 	}
 }

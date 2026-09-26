@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The news domain carries 0.25 of the score and is served by two providers with
@@ -165,18 +166,22 @@ func normalizeCompanyName(name string) (normalized string, alias string) {
 // mentionsText reports whether needle appears in haystack as a whole word or
 // phrase: the characters immediately before and after it, if any, are not
 // letters or digits — so "SAP" matches "$SAP soared" and "SAP SE reported"
-// but not "SAPient" or "ASAP". caseSensitive additionally requires the exact
-// spelling given; see mentionsSymbol for why a short symbol needs that.
-func mentionsText(haystack, needle string, caseSensitive bool) bool {
+// but not "SAPient" or "ASAP". exact requires the spelling given, letter for
+// letter (mentionsSymbol); otherwise only the needle's first letter must match
+// as given and the rest may be in any case (mentionsCompanyName).
+func mentionsText(haystack, needle string, exact bool) bool {
 	needle = strings.TrimSpace(needle)
 	if needle == "" || haystack == "" {
 		return false
 	}
-	pattern := `\b` + regexp.QuoteMeta(needle) + `\b`
-	if !caseSensitive {
-		pattern = "(?i)" + pattern
+	pattern := regexp.QuoteMeta(needle)
+	if !exact {
+		_, size := utf8.DecodeRuneInString(needle)
+		if rest := needle[size:]; rest != "" {
+			pattern = regexp.QuoteMeta(needle[:size]) + "(?i:" + regexp.QuoteMeta(rest) + ")"
+		}
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := regexp.Compile(`\b` + pattern + `\b`)
 	if err != nil {
 		return false
 	}
@@ -184,29 +189,49 @@ func mentionsText(haystack, needle string, caseSensitive bool) bool {
 }
 
 // mentionsSymbol reports whether text names this ticker root or ADR symbol as
-// its subject. A root of two letters or fewer ("ON", "A", "T") collides with
-// ordinary words and mid-sentence abbreviations — "shares moved on Tuesday" —
-// so it only counts spelled in the same case a ticker actually is: "ON
-// Semiconductor" or "$ON", never "on". mentionsText's word boundary treats a
-// leading "$" as a boundary for free, so a cashtag needs no separate check.
+// its subject, spelled exactly as the ticker is. Reporters write a ticker in
+// capitals — "ServiceNow (NOW)", "NASDAQ:COST", a "$LOW" cashtag — and a large
+// part of the universe is spelled like an ordinary word: NOW, COST, LOW, NET,
+// TEAM, SNOW, CAT, DIS, META, ON, A, T. Matched case-insensitively, a market
+// wrap tagging NOW, COST and LOW said "Stocks now higher", "input cost for
+// retailers" and "record low volatility" and counted as coverage of all three
+// (final branch review, 2026-09-25) — the F3 defect this filter exists to
+// close. mentionsText's word boundary treats a leading "$" as a boundary for
+// free, so a cashtag needs no separate check.
 func mentionsSymbol(text, symbol string) bool {
 	if symbol == "" {
 		return false
 	}
-	return mentionsText(text, symbol, len(symbol) <= 2)
+	return mentionsText(text, symbol, true)
 }
 
 // mentionsCompanyName reports whether text names the company: its normalized
 // legal name, or the parenthetical alias its raw name carries (see
-// normalizeCompanyName). Both go through mentionsSymbol's own rule, so a
-// short alias would need the same exact-case match a short ticker root does
-// — none in the universe today, but the rule should not depend on that.
+// normalizeCompanyName), each as the proper noun a headline writes it as.
+//
+// A name matches in any case except its first letter, which must be spelled as
+// given: "Trade desk" and "SAMSUNG" still name the company, "meta-analysis"
+// and "an apple a day" do not name Meta or Apple. The capital is what makes a
+// word a name, and several names and aliases here are ordinary words
+// (aliases.csv's "Meta"; "Apple", "Target", "Visa" in the universe itself).
+// The rule cannot tell a sentence-initial common word from the name —
+// "Meta-analysis finds..." still reads as Meta — which is a residual limit
+// named in docs/research/2026-09-25-news-relevance.md. A name of two letters
+// or fewer must match exactly, like a ticker: none in the universe today, but
+// the rule should not depend on that.
 func mentionsCompanyName(text, name string) bool {
 	normalized, alias := normalizeCompanyName(name)
-	if mentionsSymbol(text, normalized) {
+	if mentionsName(text, normalized) {
 		return true
 	}
-	return alias != "" && mentionsSymbol(text, alias)
+	return alias != "" && mentionsName(text, alias)
+}
+
+func mentionsName(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	return mentionsText(text, name, utf8.RuneCountInString(name) <= 2)
 }
 
 // relatesTo reports whether a feed's tag list names this ticker at all. Both
@@ -280,15 +305,21 @@ func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary,
 // symbol somewhere. A mix of subject and non-subject items is still printed
 // rather than filtered: an item about the sector, or one that only mentions
 // this name in passing, is real context, as long as an agent can tell it from
-// coverage of the company itself.
+// coverage of the company itself. The label says which is which, and says only
+// what is true of both feeds: a non-subject item may be an untagged Yahoo search
+// result or an Alpaca story that does carry this symbol in its tag list, so it
+// is "not about this company", not "not tagged".
 //
-// *None* of them tagged is a different thing. yahoonews.go's own comment
+// *None* of them about the company is a different thing, and has two sources. yahoonews.go's own comment
 // promised a relevance filter that was never written, and on 2026-09-03 the
 // search endpoint answered five foreign listings with a canned set — the same
 // eight oil, Namibia and photonics stories for a Korean chat app, a Taiwanese
 // chip designer and a Singapore bank, byte-identical across all five. The news
 // domain carries 0.25 of the score. Spending eight of its slots on a fallback
 // payload is worse than reporting the name as uncovered, which is what it is.
+// The second is F3's (isSubjectRelevant): Alpaca's per-symbol query returned
+// SAP.DE four stories that all carried SAP in their tag list and were about
+// AMD, NVIDIA, Micron and a European market close.
 func headlineFacts(arts []newsArticle, note string) ([]Fact, string) {
 	tagged := 0
 	for _, a := range arts {
@@ -298,7 +329,7 @@ func headlineFacts(arts []newsArticle, note string) ([]Fact, string) {
 	}
 	if len(arts) > 0 && tagged == 0 {
 		return nil, fmt.Sprintf(
-			"news feed returned %d %s and tagged none of them to this ticker%s — a feed that knows the symbol tags at least one story to it, so this is a search fallback answering a query it could not resolve, not coverage of this company",
+			"news feed returned %d %s and not one of them is about this company%s — each was either untagged to this ticker or tagged on a story about other companies that never names it (a market wrap, a peer's note), so the feed has no coverage of this company",
 			len(arts), plural(len(arts), "item", "items"), note)
 	}
 
@@ -309,7 +340,7 @@ func headlineFacts(arts []newsArticle, note string) ([]Fact, string) {
 		}
 		rel := "tagged to this ticker"
 		if !a.Related {
-			rel = "surfaced by search, not tagged to this ticker"
+			rel = "context, not about this company"
 		}
 		publisher := a.Publisher
 		if publisher == "" {

@@ -185,7 +185,9 @@ A label for a ticker off the shortlist, or for one the domain had no verified da
 `chief` is `accepted` | `failed` | `unparseable` | `skipped` under `merit_veto` and absent
 under `chief`; `shadow_rank` and `chief_shadow_rank` exist only under `merit_veto`. A
 row's `excluded` says why an unshipped name did not ship: `no_direction`, `vetoed`,
-`risk_gate` (with the finding in `risk_gate`), `sector_cap` or `below_cut`. `vetoes[].source`
+`risk_gate` (with the finding in `risk_gate`), `sector_cap` or `below_cut`. It is set only
+under `merit_veto`, where Go makes the selection; under `chief` the Chief's choice has no
+recorded per-name reason, so `excluded` is absent on every row. `vetoes[].source`
 is the specialist domain or `chief`. Rows are in merit order.
 
 The legacy `technicals` domain is gone: the quant stage computes everything its
@@ -268,7 +270,11 @@ that company — a market wrap or a peer's premarket note tags every name it men
 passing. An item counts as coverage only if its headline or summary names the ticker
 root, the ADR symbol, the company name (or one of its curated aliases,
 `internal/universe/data/aliases.csv` — "Google" for GOOGL, "TSMC" for 2330.TW), or its tag
-list is short enough (≤3 symbols) that being tagged at all is informative. A ticker whose
+list is short enough (≤3 symbols) that being tagged at all is informative. A ticker root or
+ADR symbol counts only spelled exactly, in capitals, as reporters and cashtags write it —
+NOW, COST, LOW, NET, CAT and META are also ordinary words, and a market wrap saying "stocks
+now higher" is not about ServiceNow. A company name or alias counts in any case except its
+first letter, which must be capitalised as a name is ("meta-analysis" is not Meta). A ticker whose
 every tagged item fails all four checks is uncovered for news exactly as if the feed had
 returned nothing — which is what pulled SAP.DE past the evidence floor on four items that
 were never about SAP. Full method, the real-run regression cases and the residual gaps

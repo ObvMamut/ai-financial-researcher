@@ -59,7 +59,7 @@ func TestYahooNewsReachesAForeignListingUnderItsOwnSymbol(t *testing.T) {
 	}
 	// An untagged item is context, not coverage of the company, and the agent
 	// has to be able to tell them apart rather than have one filtered silently.
-	if !strings.Contains(joined, "tagged to this ticker") || !strings.Contains(joined, "not tagged to this ticker") {
+	if !strings.Contains(joined, "tagged to this ticker") || !strings.Contains(joined, "not about this company") {
 		t.Errorf("relevance is not distinguishable:\n%s", joined)
 	}
 	// And this is what makes it count as news coverage at all.
@@ -227,7 +227,7 @@ func TestYahooNewsRefusesAFeedThatTagsNothingToTheTicker(t *testing.T) {
 		t.Errorf("%d untagged headlines were printed as facts:\n%+v", len(td.Facts), td.Facts)
 	}
 	joined := strings.Join(td.Warnings, " | ")
-	if !strings.Contains(joined, "tagged none of them") {
+	if !strings.Contains(joined, "not one of them is about this company") {
 		t.Errorf("no warning naming the failure: %q", joined)
 	}
 }
@@ -264,8 +264,8 @@ func TestPackFlagsTwoTickersServedTheSameHeadlines(t *testing.T) {
 	// their own; together they are one fallback payload answering two queries.
 	p := NewDataPack("news")
 	same := []Fact{
-		{Label: "Headline 1 (surfaced by search, not tagged to this ticker)", Value: "Oil edges down — Reuters"},
-		{Label: "Headline 2 (surfaced by search, not tagged to this ticker)", Value: "TotalEnergies enters PEL83 — GlobeNewswire"},
+		{Label: "Headline 1 (context, not about this company)", Value: "Oil edges down — Reuters"},
+		{Label: "Headline 2 (context, not about this company)", Value: "TotalEnergies enters PEL83 — GlobeNewswire"},
 	}
 	p.ByTicker["O39.SI"] = TickerData{Ticker: "O39.SI", Facts: same}
 	p.ByTicker["035720.KS"] = TickerData{Ticker: "035720.KS", Facts: same}
