@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
@@ -88,7 +89,12 @@ type Result struct {
 	Barrier BarrierReport `json:"barrier"`
 	// Sides is E3: the barrier study's own picks, split long vs short, plain
 	// and beta-adjusted, overall and per half (docs/workflow/backtest.md).
-	Sides         SidesReport  `json:"sides"`
+	Sides SidesReport `json:"sides"`
+	// BookGrid is E2's live-shaped weekly book replayed under a grid of
+	// max_per_sector values (book.go): lead 2 asked whether the sector cap
+	// that dropped ORCL for SAP.DE costs or saves the book, and one run cannot
+	// answer that — this replays the question across every week in the panel.
+	BookGrid      BookGrid     `json:"book_grid"`
 	Preregistered []TestResult `json:"preregistered"`
 	TestsRun      int          `json:"tests_run"`
 }
@@ -263,6 +269,7 @@ func Analyze(recs []Record, series map[string]*quant.Series) *Result {
 	res.Barrier = barrierStudy(trades, mid)
 	res.PerYear = perYearStats(cells, trades)
 	res.Sides = sidesStudy(trades, mid)
+	res.BookGrid = BuildBookGrid(recs, mid)
 	res.Preregistered = preregistered(cells, mid)
 	for _, t := range res.Preregistered {
 		if t.Status == "run" {
@@ -355,6 +362,26 @@ func (r *Result) Text() string {
 	sideRow("all", r.Sides.All)
 	sideRow("H1", r.Sides.H1)
 	sideRow("H2", r.Sides.H2)
+	sb.WriteString("\n")
+
+	g := r.BookGrid
+	fmt.Fprintf(&sb, "=== E2: sector-cap grid (nominations/index %d, max_per_index %d, top %d, H=%d) ===\n",
+		g.NominationsPerIndex, g.MaxPerIndex, picksPerIndex, Horizons[bookHorizon])
+	fmt.Fprintf(&sb, "%-14s %6s %10s %10s %13s %10s %10s %10s\n",
+		"max_per_sector", "weeks", "mean_bx%", "sd_bx%", "worst4wkOvl%", "mean_bx%H1", "mean_bx%H2", "mean_xs%")
+	for _, a := range g.Arms {
+		fmt.Fprintf(&sb, "%-14s %6d %10.3f %10.3f %13.3f %10.3f %10.3f %10.3f\n",
+			capLabel(a.MaxPerSector), a.All.Weeks, a.All.MeanBetaAdjPct, a.All.WeeklySDPct, a.All.Worst4WkOverlapPct,
+			a.H1.MeanBetaAdjPct, a.H2.MeanBetaAdjPct, a.All.MeanExcessPct)
+	}
+	fmt.Fprintf(&sb, "worst4wkOvl%% sums 4 consecutive weekly 15-session-hold returns, which already overlap — not a capital-scaled book drawdown.\n")
+	fmt.Fprintf(&sb, "paired vs the live default (max_per_sector=%d), bar: |t| > %.1f, same sign in both halves and every region:\n",
+		orchestrator.DefaultMaxPerSector, adoptionT)
+	for _, t := range g.PairedTests {
+		fmt.Fprintf(&sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n",
+			t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
+			t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict)
+	}
 	sb.WriteString("\n")
 
 	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run; bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
