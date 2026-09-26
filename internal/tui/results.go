@@ -86,6 +86,14 @@ func (m resultsModel) Update(msg tea.Msg) (resultsModel, tea.Cmd) {
 	return m, nil
 }
 
+// screenNoEdgeLine is E1's registered consequence (docs/workflow/backtest.md):
+// in legacy independent research the ideas, their order and their confidence
+// all come out of the pre-screen funnel, and the 10-year lab replay finds its
+// beta-adjusted top-5 excess positive in only 5 of 11 years once its own 30bp
+// cost is paid. The screen is what picks these names; the reader should know
+// the lab cannot show that it picks well.
+const screenNoEdgeLine = "  The backtest lab finds no edge in the pre-screen that ranked these ideas, net of cost."
+
 func (m resultsModel) View() string {
 	if m.detail != nil {
 		return m.detail.View()
@@ -118,6 +126,9 @@ func (m resultsModel) View() string {
 		for _, issue := range model.ResearchRunIssues(m.meta) {
 			sb.WriteString(issue + "\n")
 		}
+	}
+	if m.ideas.Mode == "independent" && m.ideas.ResearchMode != "thesis" && len(m.ideas.Ideas) > 0 {
+		sb.WriteString(mutedStyle.Render(screenNoEdgeLine) + "\n\n")
 	}
 	if len(m.ideas.Ideas) == 0 {
 		sb.WriteString(mutedStyle.Render("  No ideas returned."))

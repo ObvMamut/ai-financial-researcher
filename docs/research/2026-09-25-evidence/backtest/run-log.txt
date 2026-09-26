@@ -1,32 +1,32 @@
-# cfr backtest --years 10 --json (binary built from b5c955e; env -u ALPHAVANTAGE_API_KEY -u FRED_API_KEY -u DEEPSEEK_API_KEY -u CFR_API_KEY)
+# cfr backtest --years 10 --json (binary built from 30cbb62; env -u ALPHAVANTAGE_API_KEY -u FRED_API_KEY -u DEEPSEEK_API_KEY -u CFR_API_KEY)
 prices: 50 of 268 members
 prices: 150 of 268 members
 prices: 200 of 268 members
 prices: 250 of 268 members
 prices: 244 symbols, 0 unavailable
 panel: 136478 rows
-report written to .data/backtest/2026-09-26T15-03-02.json
-# cfr backtest --years 10
+report written to .data/backtest/2026-09-26T18-23-37.json
+# cfr backtest --years 10 (binary built from 30cbb62; env -u ALPHAVANTAGE_API_KEY -u FRED_API_KEY -u DEEPSEEK_API_KEY -u CFR_API_KEY)
 prices: 50 of 268 members
 prices: 150 of 268 members
 prices: 200 of 268 members
 prices: 250 of 268 members
 prices: 244 symbols, 0 unavailable
 panel: 136478 rows
-report written to .data/backtest/2026-09-26T15-14-13.json
-# cfr backtest --json
+report written to .data/backtest/2026-09-26T18-23-54.json
+# cfr backtest --json (binary built from 30cbb62; env -u ALPHAVANTAGE_API_KEY -u FRED_API_KEY -u DEEPSEEK_API_KEY -u CFR_API_KEY)
 prices: 50 of 268 members
 prices: 150 of 268 members
 prices: 200 of 268 members
 prices: 250 of 268 members
 prices: 244 symbols, 0 unavailable
 panel: 55612 rows
-report written to .data/backtest/2026-09-26T15-14-29.json
-# cfr backtest
+report written to .data/backtest/2026-09-26T18-24-09.json
+# cfr backtest (binary built from 30cbb62; env -u ALPHAVANTAGE_API_KEY -u FRED_API_KEY -u DEEPSEEK_API_KEY -u CFR_API_KEY)
 prices: 50 of 268 members
 prices: 150 of 268 members
 prices: 200 of 268 members
 prices: 250 of 268 members
 prices: 244 symbols, 0 unavailable
 panel: 55612 rows
-report written to .data/backtest/2026-09-26T15-15-35.json
+report written to .data/backtest/2026-09-26T18-24-14.json

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-26T15:03:02Z",
+  "generated_at": "2026-09-26T18:23:37Z",
   "yahoo_range": "11y",
   "years": 10,
   "first_date": "2016-10-07",
@@ -4853,6 +4853,7 @@
   "per_year": [
     {
       "year": "2016",
+      "full_year": false,
       "n_dates": 13,
       "ic10": 0.010439184672734213,
       "ic10_beta_adjusted": -0.014413792451428572,
@@ -4860,10 +4861,13 @@
       "ic15_beta_adjusted": -0.00922238659182462,
       "top5_n": 260,
       "top5_excess_gross_pct": 0.7177145486655303,
-      "top5_excess_beta_adjusted_gross_pct": 0.4281750596369354
+      "top5_excess_beta_adjusted_gross_pct": 0.4281750596369354,
+      "top5_excess_net_pct": 0.4177145486655303,
+      "top5_excess_beta_adjusted_net_pct": 0.1281750596369354
     },
     {
       "year": "2017",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.04468142329383102,
       "ic10_beta_adjusted": 0.020753498485418173,
@@ -4871,10 +4875,13 @@
       "ic15_beta_adjusted": 0.015373213713988667,
       "top5_n": 1040,
       "top5_excess_gross_pct": 0.3871464687122514,
-      "top5_excess_beta_adjusted_gross_pct": 0.03520319778856436
+      "top5_excess_beta_adjusted_gross_pct": 0.03520319778856436,
+      "top5_excess_net_pct": 0.0871464687122514,
+      "top5_excess_beta_adjusted_net_pct": -0.26479680221143564
     },
     {
       "year": "2018",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.01801223937757813,
       "ic10_beta_adjusted": 0.012124462806559199,
@@ -4882,10 +4889,13 @@
       "ic15_beta_adjusted": 0.01610402155250614,
       "top5_n": 1040,
       "top5_excess_gross_pct": 0.4191954302411446,
-      "top5_excess_beta_adjusted_gross_pct": 0.2862999576738081
+      "top5_excess_beta_adjusted_gross_pct": 0.2862999576738081,
+      "top5_excess_net_pct": 0.1191954302411446,
+      "top5_excess_beta_adjusted_net_pct": -0.013700042326191897
     },
     {
       "year": "2019",
+      "full_year": true,
       "n_dates": 52,
       "ic10": -0.0029102320526236125,
       "ic10_beta_adjusted": -0.006513104002652313,
@@ -4893,10 +4903,13 @@
       "ic15_beta_adjusted": -0.009015910006623891,
       "top5_n": 1040,
       "top5_excess_gross_pct": 0.023926557260806273,
-      "top5_excess_beta_adjusted_gross_pct": -0.08986427156829854
+      "top5_excess_beta_adjusted_gross_pct": -0.08986427156829854,
+      "top5_excess_net_pct": -0.2760734427391937,
+      "top5_excess_beta_adjusted_net_pct": -0.38986427156829856
     },
     {
       "year": "2020",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.05191181136018344,
       "ic10_beta_adjusted": 0.05753667846393413,
@@ -4904,10 +4917,13 @@
       "ic15_beta_adjusted": 0.0705722123247898,
       "top5_n": 1040,
       "top5_excess_gross_pct": 1.7372089756951488,
-      "top5_excess_beta_adjusted_gross_pct": 2.171097850008964
+      "top5_excess_beta_adjusted_gross_pct": 2.171097850008964,
+      "top5_excess_net_pct": 1.437208975695149,
+      "top5_excess_beta_adjusted_net_pct": 1.8710978500089643
     },
     {
       "year": "2021",
+      "full_year": true,
       "n_dates": 53,
       "ic10": -0.010541590447596231,
       "ic10_beta_adjusted": -0.029496171824959547,
@@ -4915,10 +4931,13 @@
       "ic15_beta_adjusted": -0.03698424102937446,
       "top5_n": 1060,
       "top5_excess_gross_pct": -0.05291873172734628,
-      "top5_excess_beta_adjusted_gross_pct": -0.2709164839524324
+      "top5_excess_beta_adjusted_gross_pct": -0.2709164839524324,
+      "top5_excess_net_pct": -0.3529187317273463,
+      "top5_excess_beta_adjusted_net_pct": -0.5709164839524324
     },
     {
       "year": "2022",
+      "full_year": true,
       "n_dates": 52,
       "ic10": -0.010812268673866723,
       "ic10_beta_adjusted": -0.0209982811156183,
@@ -4926,10 +4945,13 @@
       "ic15_beta_adjusted": -0.027904705498529556,
       "top5_n": 1040,
       "top5_excess_gross_pct": -0.571664764428917,
-      "top5_excess_beta_adjusted_gross_pct": -0.5749645909156803
+      "top5_excess_beta_adjusted_gross_pct": -0.5749645909156803,
+      "top5_excess_net_pct": -0.8716647644289169,
+      "top5_excess_beta_adjusted_net_pct": -0.8749645909156802
     },
     {
       "year": "2023",
+      "full_year": true,
       "n_dates": 52,
       "ic10": -0.029518528270918058,
       "ic10_beta_adjusted": -0.038804705637586465,
@@ -4937,10 +4959,13 @@
       "ic15_beta_adjusted": -0.03106145809674725,
       "top5_n": 1040,
       "top5_excess_gross_pct": -0.05465893252911244,
-      "top5_excess_beta_adjusted_gross_pct": -0.1910652431088831
+      "top5_excess_beta_adjusted_gross_pct": -0.1910652431088831,
+      "top5_excess_net_pct": -0.35465893252911246,
+      "top5_excess_beta_adjusted_net_pct": -0.4910652431088831
     },
     {
       "year": "2024",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.04837938889219099,
       "ic10_beta_adjusted": 0.04075247972854615,
@@ -4948,10 +4973,13 @@
       "ic15_beta_adjusted": 0.0378771702057574,
       "top5_n": 1040,
       "top5_excess_gross_pct": 1.0889344336145614,
-      "top5_excess_beta_adjusted_gross_pct": 0.9054218263361958
+      "top5_excess_beta_adjusted_gross_pct": 0.9054218263361958,
+      "top5_excess_net_pct": 0.7889344336145614,
+      "top5_excess_beta_adjusted_net_pct": 0.6054218263361958
     },
     {
       "year": "2025",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.01565502775821188,
       "ic10_beta_adjusted": 0.00866766296523806,
@@ -4959,10 +4987,13 @@
       "ic15_beta_adjusted": 0.010830891265509034,
       "top5_n": 1040,
       "top5_excess_gross_pct": 1.2302055492822819,
-      "top5_excess_beta_adjusted_gross_pct": 1.0487674182930429
+      "top5_excess_beta_adjusted_gross_pct": 1.0487674182930429,
+      "top5_excess_net_pct": 0.9302055492822817,
+      "top5_excess_beta_adjusted_net_pct": 0.7487674182930428
     },
     {
       "year": "2026",
+      "full_year": false,
       "n_dates": 37,
       "ic10": 0.034139979029579354,
       "ic10_beta_adjusted": 0.028480434806026272,
@@ -4970,7 +5001,9 @@
       "ic15_beta_adjusted": 0.020217573952478488,
       "top5_n": 708,
       "top5_excess_gross_pct": 2.110656646465201,
-      "top5_excess_beta_adjusted_gross_pct": 1.3729053257842003
+      "top5_excess_beta_adjusted_gross_pct": 1.3729053257842003,
+      "top5_excess_net_pct": 1.8106566464652012,
+      "top5_excess_beta_adjusted_net_pct": 1.0729053257842003
     }
   ],
   "barrier": {
@@ -5394,5 +5427,34 @@
       "verdict": "not run"
     }
   ],
-  "tests_run": 3
+  "decisions": [
+    {
+      "id": "E1",
+      "title": "long history: is the screen's top-5 edge a majority-of-years property, net of the lab's 30bp",
+      "statistic": "calendar years whose beta-adjusted top-5 15-session excess, net of 30bp, is \u003e 0",
+      "status": "run",
+      "note": "positive in 5 of 11 calendar years (3 of 9 full years)",
+      "mean": null,
+      "t_nw": null,
+      "pass": false,
+      "fired": true,
+      "verdict": "fires: positive in 5 of 11 calendar years (3 of 9 full years) — the screen shows no edge net of cost"
+    },
+    {
+      "id": "E3",
+      "title": "which side carries the result: are shorts ≤0 beta-adjusted in both halves",
+      "statistic": "the top-5 picks' short-side 15-session beta-adjusted excess (gross), per half",
+      "status": "run",
+      "note": "short side beta-adjusted H1 -1.046%, H2 +0.127%",
+      "mean": null,
+      "t_nw": null,
+      "halves": {
+        "H1": -1.0459098953587886,
+        "H2": 0.1273844194895519
+      },
+      "pass": false,
+      "verdict": "not triggered: short side beta-adjusted H1 -1.046%, H2 +0.127%"
+    }
+  ],
+  "tests_run": 8
 }

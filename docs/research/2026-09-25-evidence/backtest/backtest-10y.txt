@@ -139,18 +139,19 @@ c3_news_rev        0.010    2.35   0.007   0.070    1.75   0.005    1.17   0.066
 IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once.
 
 === Per-calendar-year (E1: long history) ===
-year    n_dates    IC10  IC10beta    IC15  IC15beta   top5n    top5%  top5beta%
-2016         13   0.010    -0.014   0.014    -0.009     260    0.718      0.428
-2017         52   0.045     0.021   0.045     0.015    1040    0.387      0.035
-2018         52   0.018     0.012   0.020     0.016    1040    0.419      0.286
-2019         52  -0.003    -0.007  -0.006    -0.009    1040    0.024     -0.090
-2020         52   0.052     0.058   0.055     0.071    1040    1.737      2.171
-2021         53  -0.011    -0.029  -0.022    -0.037    1060   -0.053     -0.271
-2022         52  -0.011    -0.021  -0.013    -0.028    1040   -0.572     -0.575
-2023         52  -0.030    -0.039  -0.021    -0.031    1040   -0.055     -0.191
-2024         52   0.048     0.041   0.049     0.038    1040    1.089      0.905
-2025         52   0.016     0.009   0.018     0.011    1040    1.230      1.049
-2026         37   0.034     0.028   0.023     0.020     708    2.111      1.373
+year    n_dates    IC10  IC10beta    IC15  IC15beta   top5n    top5%  top5beta%  top5net%  top5betanet%
+2016*        13   0.010    -0.014   0.014    -0.009     260    0.718      0.428     0.418         0.128
+2017         52   0.045     0.021   0.045     0.015    1040    0.387      0.035     0.087        -0.265
+2018         52   0.018     0.012   0.020     0.016    1040    0.419      0.286     0.119        -0.014
+2019         52  -0.003    -0.007  -0.006    -0.009    1040    0.024     -0.090    -0.276        -0.390
+2020         52   0.052     0.058   0.055     0.071    1040    1.737      2.171     1.437         1.871
+2021         53  -0.011    -0.029  -0.022    -0.037    1060   -0.053     -0.271    -0.353        -0.571
+2022         52  -0.011    -0.021  -0.013    -0.028    1040   -0.572     -0.575    -0.872        -0.875
+2023         52  -0.030    -0.039  -0.021    -0.031    1040   -0.055     -0.191    -0.355        -0.491
+2024         52   0.048     0.041   0.049     0.038    1040    1.089      0.905     0.789         0.605
+2025         52   0.016     0.009   0.018     0.011    1040    1.230      1.049     0.930         0.749
+2026*        37   0.034     0.028   0.023     0.020     708    2.111      1.373     1.811         1.073
+* partial year. top5% columns are gross; the net columns pay the barrier study's 30bp once.
 LONG HISTORY: --years exceeds the default, so the survivorship above is worse than in the standard replay — the deeper a cross-section sits in the past, the more its missing names are past losers rather than a random sample. Weight the per-year IC and beta-adjusted top-5 excess over the barrier study's raw long-only returns; a good early year built mostly of today's survivors is a weaker signal than the same year would be with its casualties still in it.
 
 === Barrier study: top-5 |composite| per index per week, next-open entry, H=15, 30bp ===
@@ -179,7 +180,11 @@ E2-1 mean -0.0008 t -0.50 (n=518) | H1 -0.0034 H2 +0.0018 | US +0.0001 EU +0.003
 E2-3 mean -0.0005 t -0.61 (n=518) | H1 -0.0008 H2 -0.0002 | US -0.0014 EU +0.0007 Asia +0.0014 → fails: |t| does not clear 2.5
 E2-off mean +0.0011 t 0.82 (n=518) | H1 -0.0005 H2 +0.0027 | US +0.0001 EU +0.0006 Asia +0.0052 → fails: |t| does not clear 2.5
 
-=== Pre-registered tests (3 run; bar: t > +2.5, positive in both halves and every region) ===
+=== Decision rules (E1, E3) ===
+E1 → fires: positive in 5 of 11 calendar years (3 of 9 full years) — the screen shows no edge net of cost
+E3 → not triggered: short side beta-adjusted H1 -1.046%, H2 +0.127%
+
+=== Pre-registered tests (8 run in all, counting E1, E2 and E3; C-series bar: t > +2.5, positive in both halves and every region) ===
 C1 mean +0.0063 t 1.44 (n=519) | H1 +0.0011 H2 +0.0116 | US +0.0059 EU +0.0097 Asia +0.0037 → fails: t does not clear +2.5
     raise mom12-1's weight relative to ret63d (1.0·z(mom12-1) + 0.5·z(ret63d), penalties and clamps unchanged)
 C2 untestable — earnings-announcement premium: tilt long into names reporting inside the window: no existing provider or cache holds point-in-time historical earnings-announcement dates: the Alpha Vantage calendar is forward-only and keyed, EDGAR's daily index gives 10-Q/10-K filing dates (weeks after the announcement) for US filers only, and nothing covers eu50 or asia100 — so the every-region bar could not be met even in principle

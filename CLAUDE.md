@@ -156,8 +156,14 @@ internal/
                 against those counts
   backtest/     the lab (`cfr backtest`): point-in-time weekly replay of the
                 pre-screen over every constituent with the shipping quant/scoring
-                code, no models; rank ICs, barrier grid and the pre-registered
-                signal tests; spec and results in docs/workflow/backtest.md
+                code, no models; rank ICs, barrier grid, per-calendar-year
+                slices (gross and net of its 30bp), the picks split long vs
+                short, a sector-cap grid over a live-shaped weekly book, and
+                the pre-registered tests, E1/E3's decisions applied in code;
+                spec and results in docs/workflow/backtest.md. E1 (10 years,
+                2026-09-26): net of cost the screen's beta-adjusted top-5
+                excess is positive in 5 of 11 years, so the lab finds no edge
+                in the screen and the TUI results view says so
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -216,7 +222,9 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    split on the drift rather than on the score. Illiquid and
    short-history names are excluded, against turnover **converted to USD**
    (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price series stay in the
-   data cache.
+   data cache. The composite is a ranking, not a demonstrated edge: the backtest lab's
+   10-year replay (E1, `docs/workflow/backtest.md`) finds its beta-adjusted top-5 excess
+   positive in only 5 of 11 years net of 30bp, and its beta-adjusted IC10 at t 0.66.
 1. **Scouts (cheap engine):** one call per index, each screening *eight disjoint ranked
    tables* — drift, pullback and base each split into a long and a short half, plus
    continuation and the bottom of the ranking — → ~5–10 nominations each. The counter-trend archetypes are

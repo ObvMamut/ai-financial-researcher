@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-26T15:14:29Z",
+  "generated_at": "2026-09-26T18:24:09Z",
   "yahoo_range": "5y",
   "years": 4,
   "first_date": "2022-10-07",
@@ -4853,6 +4853,7 @@
   "per_year": [
     {
       "year": "2022",
+      "full_year": false,
       "n_dates": 13,
       "ic10": -0.03526677341993037,
       "ic10_beta_adjusted": -0.04216290214892943,
@@ -4860,10 +4861,13 @@
       "ic15_beta_adjusted": -0.06600537763579595,
       "top5_n": 260,
       "top5_excess_gross_pct": -2.004710282704338,
-      "top5_excess_beta_adjusted_gross_pct": -1.4392486651558016
+      "top5_excess_beta_adjusted_gross_pct": -1.4392486651558016,
+      "top5_excess_net_pct": -2.3047102827043378,
+      "top5_excess_beta_adjusted_net_pct": -1.739248665155802
     },
     {
       "year": "2023",
+      "full_year": true,
       "n_dates": 52,
       "ic10": -0.029518528270918058,
       "ic10_beta_adjusted": -0.038804705637586465,
@@ -4871,10 +4875,13 @@
       "ic15_beta_adjusted": -0.031042481729431668,
       "top5_n": 1040,
       "top5_excess_gross_pct": -0.05465873800972801,
-      "top5_excess_beta_adjusted_gross_pct": -0.19106500362461756
+      "top5_excess_beta_adjusted_gross_pct": -0.19106500362461756,
+      "top5_excess_net_pct": -0.354658738009728,
+      "top5_excess_beta_adjusted_net_pct": -0.4910650036246175
     },
     {
       "year": "2024",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.04837626721790641,
       "ic10_beta_adjusted": 0.040747600852603656,
@@ -4882,10 +4889,13 @@
       "ic15_beta_adjusted": 0.03787074329985885,
       "top5_n": 1040,
       "top5_excess_gross_pct": 1.0889346416990695,
-      "top5_excess_beta_adjusted_gross_pct": 0.9054221480938823
+      "top5_excess_beta_adjusted_gross_pct": 0.9054221480938823,
+      "top5_excess_net_pct": 0.7889346416990694,
+      "top5_excess_beta_adjusted_net_pct": 0.6054221480938823
     },
     {
       "year": "2025",
+      "full_year": true,
       "n_dates": 52,
       "ic10": 0.01565481697206065,
       "ic10_beta_adjusted": 0.00866766296523806,
@@ -4893,10 +4903,13 @@
       "ic15_beta_adjusted": 0.010833226879945236,
       "top5_n": 1040,
       "top5_excess_gross_pct": 1.2302051872219188,
-      "top5_excess_beta_adjusted_gross_pct": 1.048766908772514
+      "top5_excess_beta_adjusted_gross_pct": 1.048766908772514,
+      "top5_excess_net_pct": 0.9302051872219188,
+      "top5_excess_beta_adjusted_net_pct": 0.748766908772514
     },
     {
       "year": "2026",
+      "full_year": false,
       "n_dates": 37,
       "ic10": 0.034139979029579354,
       "ic10_beta_adjusted": 0.028480434806026272,
@@ -4904,7 +4917,9 @@
       "ic15_beta_adjusted": 0.020217573952478488,
       "top5_n": 708,
       "top5_excess_gross_pct": 2.1106566040473127,
-      "top5_excess_beta_adjusted_gross_pct": 1.3729053755919807
+      "top5_excess_beta_adjusted_gross_pct": 1.3729053755919807,
+      "top5_excess_net_pct": 1.8106566040473127,
+      "top5_excess_beta_adjusted_net_pct": 1.0729053755919808
     }
   ],
   "barrier": {
@@ -5328,5 +5343,33 @@
       "verdict": "not run"
     }
   ],
-  "tests_run": 3
+  "decisions": [
+    {
+      "id": "E1",
+      "title": "long history: is the screen's top-5 edge a majority-of-years property, net of the lab's 30bp",
+      "statistic": "calendar years whose beta-adjusted top-5 15-session excess, net of 30bp, is \u003e 0",
+      "status": "run",
+      "note": "positive in 3 of 5 calendar years (2 of 3 full years)",
+      "mean": null,
+      "t_nw": null,
+      "pass": false,
+      "verdict": "not triggered: positive in 3 of 5 calendar years (2 of 3 full years)"
+    },
+    {
+      "id": "E3",
+      "title": "which side carries the result: are shorts ≤0 beta-adjusted in both halves",
+      "statistic": "the top-5 picks' short-side 15-session beta-adjusted excess (gross), per half",
+      "status": "run",
+      "note": "short side beta-adjusted H1 -0.246%, H2 +0.681%",
+      "mean": null,
+      "t_nw": null,
+      "halves": {
+        "H1": -0.24593344222301927,
+        "H2": 0.6812726491705619
+      },
+      "pass": false,
+      "verdict": "not triggered: short side beta-adjusted H1 -0.246%, H2 +0.681%"
+    }
+  ],
+  "tests_run": 8
 }
