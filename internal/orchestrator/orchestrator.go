@@ -1618,6 +1618,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if synthesisFallbackEngine != "" {
 		chiefModel = synthesisFallbackEngine
 	}
+	buildRevision, buildDirty, buildTime := model.CurrentBuildInfo()
 	meta := model.RunMeta{
 		Selection:     ideas.Selection,
 		Mode:          string(cfg.Mode),
@@ -1645,6 +1646,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		SourceDiagnostics:       sourceDiagnostics,
 		PersonaSHA:              reg.PersonaSHA(),
 		PersonaSet:              filepath.Base(cfg.AgentsDir),
+		BuildRevision:           buildRevision,
+		BuildDirty:              buildDirty,
+		BuildTime:               buildTime,
 	}
 	if err := run.WriteMeta(meta); err != nil {
 		log(ch, fmt.Sprintf("warn: write metadata.json: %v", err))

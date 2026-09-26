@@ -513,7 +513,8 @@ func runThesis(ctx context.Context, cfg Config, ch chan<- Event, run *store.Run,
 	for _, r := range research {
 		sourceDiagnostics = append(sourceDiagnostics, r.SourceDiagnostics...)
 	}
-	meta := model.RunMeta{SourceDiagnostics: sourceDiagnostics, ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: chiefModel, ChiefEngine: string(chiefE.CLI), ChiefModel: chiefModel, ChiefAttempted: strings.Join(chiefAttemptedEngines, ","), ChiefAccepted: chiefAcceptedEngine, PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir)}
+	buildRevision, buildDirty, buildTime := model.CurrentBuildInfo()
+	meta := model.RunMeta{SourceDiagnostics: sourceDiagnostics, ResearchOutcomes: outcomes, SchemaVersion: 2, ResearchMode: "thesis", Research: cfg.Research, Mode: string(cfg.Mode), Ticker: cfg.Ticker, Indices: indices, GeneratedAt: result.GeneratedAt, Shortlist: shortlist, Domains: statuses, Outcome: outcome, Warnings: warns, DataErrors: errs, Duration: time.Since(start).Milliseconds(), Stages: stages, Engine: string(cfg.CheapEngine), EngineModel: cheapModelName(cfg), SynthesisModel: chiefModel, ChiefEngine: string(chiefE.CLI), ChiefModel: chiefModel, ChiefAttempted: strings.Join(chiefAttemptedEngines, ","), ChiefAccepted: chiefAcceptedEngine, PersonaSHA: reg.PersonaSHA(), PersonaSet: filepath.Base(cfg.AgentsDir), BuildRevision: buildRevision, BuildDirty: buildDirty, BuildTime: buildTime}
 	for _, s := range statuses {
 		if s.Domain == "chief-analyst-fallback" {
 			meta.SynthesisFallbackEngine = cfg.ChiefFallback.Model

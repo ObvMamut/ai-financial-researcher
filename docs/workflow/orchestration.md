@@ -213,6 +213,7 @@ Beyond the outcome and per-domain statuses:
 | `stages` | wall-clock ms per stage: `prescreen`, `screening`, `quant`, `analysis`, `synthesis`. Only per-agent durations were kept before, leaving the in-process stages — most of a run's wall time — unaccounted for |
 | `data_errors` | every provider failure from every pack, prefixed by domain, **and every provider warning** — a figure or a whole leg a source withheld, and why. These previously lived only in `data/<domain>.json`, so a run that lost eight tickers to rate limiting read like one that lost none |
 | `persona_sha` | short hash per persona file. Personas are runtime data, editable with no code change, so nothing else makes a run's outcome attributable to the prompts that produced it |
+| `build_revision`, `build_dirty`, `build_time` | the *cfr* binary's own git commit, whether its working tree was clean, and when it was built (`model.CurrentBuildInfo`, `runtime/debug.ReadBuildInfo`) — which code produced this artifact, not which config. `go build` embeds these from a git checkout; `go run`/`go test` binaries generally carry none of them, and that is recorded honestly (empty/absent), never guessed |
 
 #### Shape-change warnings in `data_errors`
 
