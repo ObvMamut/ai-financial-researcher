@@ -96,7 +96,12 @@ type Result struct {
 	// answer that — this replays the question across every week in the panel.
 	BookGrid      BookGrid     `json:"book_grid"`
 	Preregistered []TestResult `json:"preregistered"`
-	TestsRun      int          `json:"tests_run"`
+	// Decisions is E1 and E3's registered rules applied to PerYear and Sides.
+	Decisions []TestResult `json:"decisions"`
+	// TestsRun counts every registered test this run performed — C-series,
+	// E2's paired tests and the E1/E3 decisions — so it equals the register in
+	// docs/workflow/backtest.md, one look each per run.
+	TestsRun int `json:"tests_run"`
 }
 
 const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
@@ -271,9 +276,12 @@ func Analyze(recs []Record, series map[string]*quant.Series) *Result {
 	res.Sides = sidesStudy(trades, mid)
 	res.BookGrid = BuildBookGrid(recs, mid)
 	res.Preregistered = preregistered(cells, mid)
-	for _, t := range res.Preregistered {
-		if t.Status == "run" {
-			res.TestsRun++
+	res.Decisions = []TestResult{e1Decision(res.PerYear), e3Decision(res.Sides)}
+	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions} {
+		for _, t := range list {
+			if t.Status == "run" {
+				res.TestsRun++
+			}
 		}
 	}
 	return res
@@ -330,12 +338,17 @@ func (r *Result) Text() string {
 
 	if len(r.PerYear) > 0 {
 		fmt.Fprintf(&sb, "=== Per-calendar-year (E1: long history) ===\n")
-		fmt.Fprintf(&sb, "%-6s %8s %7s %9s %7s %9s %7s %8s %10s\n",
-			"year", "n_dates", "IC10", "IC10beta", "IC15", "IC15beta", "top5n", "top5%", "top5beta%")
+		fmt.Fprintf(&sb, "%-6s %8s %7s %9s %7s %9s %7s %8s %10s %9s %13s\n",
+			"year", "n_dates", "IC10", "IC10beta", "IC15", "IC15beta", "top5n", "top5%", "top5beta%", "top5net%", "top5betanet%")
 		for _, y := range r.PerYear {
-			fmt.Fprintf(&sb, "%-6s %8d %7.3f %9.3f %7.3f %9.3f %7d %8.3f %10.3f\n",
-				y.Year, y.NDates, y.IC10, y.IC10Beta, y.IC15, y.IC15Beta, y.Top5N, y.Top5Pct, y.Top5BetaPct)
+			year := y.Year
+			if !y.FullYear {
+				year += "*"
+			}
+			fmt.Fprintf(&sb, "%-6s %8d %7.3f %9.3f %7.3f %9.3f %7d %8.3f %10.3f %9.3f %13.3f\n",
+				year, y.NDates, y.IC10, y.IC10Beta, y.IC15, y.IC15Beta, y.Top5N, y.Top5Pct, y.Top5BetaPct, y.Top5NetPct, y.Top5BetaNetPct)
 		}
+		sb.WriteString("* partial year. top5% columns are gross; the net columns pay the barrier study's 30bp once.\n")
 		if r.Years > DefaultYears {
 			sb.WriteString(LongHistorySurvivorship + "\n")
 		}
@@ -384,7 +397,13 @@ func (r *Result) Text() string {
 	}
 	sb.WriteString("\n")
 
-	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run; bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
+	sb.WriteString("=== Decision rules (E1, E3) ===\n")
+	for _, t := range r.Decisions {
+		fmt.Fprintf(&sb, "%s → %s\n", t.ID, t.Verdict)
+	}
+	sb.WriteString("\n")
+
+	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all, counting E1, E2 and E3; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {
 		if t.Status != "run" {
 			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)

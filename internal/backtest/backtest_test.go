@@ -178,8 +178,10 @@ func TestPlantedSignalIsRecovered(t *testing.T) {
 	if _, err := json.Marshal(res); err != nil {
 		t.Fatalf("report does not encode: %v", err)
 	}
-	if res.TestsRun != 3 {
-		t.Errorf("tests run = %d, want 3 (C1, C3, C4; C2 untestable, C5 skipped)", res.TestsRun)
+	// The register in docs/workflow/backtest.md: C1, C3, C4 (C2 untestable,
+	// C5 skipped), E2's three paired tests, and the E1 and E3 decisions.
+	if res.TestsRun != 8 {
+		t.Errorf("tests run = %d, want 8 (C1, C3, C4, E2-1, E2-3, E2-off, E1, E3)", res.TestsRun)
 	}
 }
 
@@ -295,6 +297,74 @@ func TestPerYearStats(t *testing.T) {
 	}
 	if stats2[1].Top5N != 1 {
 		t.Errorf("2023 top5 n = %d, want 1", stats2[1].Top5N)
+	}
+	// E1 decides on the net figures: each trade pays costPerLeg once, so the
+	// net mean is the gross mean less 30bp, plain and beta-adjusted alike.
+	if want := float64(stats2[0].Top5Pct) - 100*costPerLeg; math.Abs(float64(stats2[0].Top5NetPct)-want) > 1e-9 {
+		t.Errorf("2022 top5 net pct = %v, want %v", stats2[0].Top5NetPct, want)
+	}
+	if want := 100*0.04 - 30.0/100; math.Abs(float64(stats2[0].Top5BetaNetPct)-want) > 1e-9 {
+		t.Errorf("2022 top5 beta net pct = %v, want %v", stats2[0].Top5BetaNetPct, want)
+	}
+	// Fullness is read off the replay's span, not a year's own date count (a
+	// holiday week dropped for coverage must not demote a year): the replay
+	// runs from 7 January 2022 into October 2023, so 2022 is inside it and
+	// 2023 is where it stops.
+	if !stats2[0].FullYear || stats2[1].FullYear {
+		t.Errorf("full years = %v/%v, want 2022 full and 2023 partial", stats2[0].FullYear, stats2[1].FullYear)
+	}
+}
+
+// TestE1DecisionReadsNetOfCostAcrossEveryCalendarYear pins the rule the
+// 2026-09-26 ruling fixed: net of 30bp, a majority of every calendar year in
+// the replay, the full-year count reported beside it. The 10-year run's own
+// gross figures are the fixture: 7 of 11 positive gross, 5 of 11 (3 of 9
+// full years) positive net — so the gross reading would pass and the net
+// reading fires.
+func TestE1DecisionReadsNetOfCostAcrossEveryCalendarYear(t *testing.T) {
+	gross := []float64{0.428, 0.035, 0.286, -0.090, 2.171, -0.271, -0.575, -0.191, 0.905, 1.049, 1.373}
+	var years []YearStats
+	for i, g := range gross {
+		years = append(years, YearStats{
+			Year: fmt.Sprint(2016 + i), FullYear: i > 0 && i < len(gross)-1,
+			Top5BetaPct: Num(g), Top5BetaNetPct: Num(g - 100*costPerLeg),
+		})
+	}
+	d := e1Decision(years)
+	if !d.Fired || d.Status != "run" {
+		t.Fatalf("E1 = %+v, want fired", d)
+	}
+	if !strings.Contains(d.Note, "5 of 11 calendar years (3 of 9 full years)") {
+		t.Errorf("E1 note = %q, want the net counts 5 of 11 and 3 of 9", d.Note)
+	}
+	// The same table with no cost passes: the rule is what makes it fire.
+	for i := range years {
+		years[i].Top5BetaNetPct = years[i].Top5BetaPct
+	}
+	if d := e1Decision(years); d.Fired || !strings.Contains(d.Note, "7 of 11") {
+		t.Errorf("gross-as-net E1 = %+v, want not triggered at 7 of 11", d)
+	}
+	// An undefined year is not a positive one.
+	if d := e1Decision([]YearStats{{Year: "2020", Top5BetaNetPct: Num(math.NaN())}}); !d.Fired {
+		t.Errorf("a NaN-only table did not fire: %+v", d)
+	}
+}
+
+func TestE3DecisionFiresOnlyWhenBothHalvesAreNonPositive(t *testing.T) {
+	cases := []struct {
+		h1, h2 float64
+		fired  bool
+	}{
+		{-1.046, 0.127, false}, // the 10-year run
+		{-0.2, 0, true},
+		{0.1, -0.3, false},
+		{math.NaN(), -0.3, false},
+	}
+	for _, c := range cases {
+		d := e3Decision(SidesReport{H1: SideStats{ShortBetaPct: Num(c.h1)}, H2: SideStats{ShortBetaPct: Num(c.h2)}})
+		if d.Fired != c.fired || d.Status != "run" {
+			t.Errorf("E3 on H1 %v H2 %v = %+v, want fired=%v", c.h1, c.h2, d, c.fired)
+		}
 	}
 }
 

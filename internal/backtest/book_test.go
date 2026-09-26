@@ -2,8 +2,11 @@ package backtest
 
 import (
 	"math"
+	"math/rand/v2"
 	"testing"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
 )
 
 // pick is a shorthand for one week's synthetic Record: only the fields
@@ -295,47 +298,84 @@ func TestBuildBookGridWeeksExcludeUnknownReturns(t *testing.T) {
 // two-sided sign-consistency logic (fix for the dropped "every region" leg)
 // can be checked independently of buildWeeklyBook.
 func TestPairedCapTestConsistentShiftPasses(t *testing.T) {
-	dates, cand, def := syntheticBookWeeks(12, 0.03, 0.01, 0.03, 0.01) // candidate consistently +0.02 over the default everywhere
-	mid := dates[6]
-	r := pairedCapTest("E2-test", "test", cand, def, dates, mid)
+	// A genuinely noisy paired difference (sd 1%) around a +0.8% shift, over
+	// 200 weeks: the t is large because the shift is, not because a constant
+	// series has a variance of rounding noise (the fixture this replaced had
+	// sd 0 and passed on t ≈ 1e16).
+	dates, cand, def := noisyBookWeeks(200, 0.008, 0.01, rand.New(rand.NewPCG(31, 32)))
+	r := pairedCapTest("E2-test", "test", cand, def, dates, dates[100])
 	if !r.Pass {
-		t.Fatalf("expected a consistent +0.02 shift to pass the adoption bar, got verdict %q (t=%v)", r.Verdict, r.T)
+		t.Fatalf("expected a consistent +0.8%% shift to pass the adoption bar, got verdict %q (t=%v)", r.Verdict, r.T)
+	}
+	if !(float64(r.T) > 2.5 && float64(r.T) < 100) {
+		t.Errorf("t = %v, want a real statistic well above 2.5, not a degenerate one", r.T)
 	}
 	if float64(r.Mean) <= 0 {
 		t.Errorf("mean = %v, want positive", r.Mean)
 	}
 }
 
+// A small shift buried in noise must fail on |t|, whatever its signs do.
+func TestPairedCapTestSmallNoisyShiftFails(t *testing.T) {
+	dates, cand, def := noisyBookWeeks(60, 0.0005, 0.03, rand.New(rand.NewPCG(33, 34)))
+	r := pairedCapTest("E2-test", "test", cand, def, dates, dates[30])
+	if r.Pass {
+		t.Fatalf("a 0.05%% shift in 3%% noise passed: t=%v verdict=%q", r.T, r.Verdict)
+	}
+	if r.Verdict != "fails: |t| does not clear 2.5" {
+		t.Errorf("verdict = %q, want the |t| failure", r.Verdict)
+	}
+}
+
+// noisyBookWeeks builds n weekly dates where the default arm's beta-adjusted
+// return varies week to week and the candidate's is the default's plus shift
+// plus independent noise of sd noise — overall and in every region.
+func noisyBookWeeks(n int, shift, noise float64, rng *rand.Rand) (dates []string, cand, def map[string]bookWeek) {
+	cand, def = map[string]bookWeek{}, map[string]bookWeek{}
+	day := time.Date(2022, 1, 7, 0, 0, 0, 0, time.UTC)
+	for w := 0; w < n; w++ {
+		d := day.AddDate(0, 0, 7*w).Format("2006-01-02")
+		dates = append(dates, d)
+		dw := bookWeek{beta: 0.03 * rng.NormFloat64(), betaByRegion: map[string]float64{}}
+		cw := bookWeek{beta: dw.beta + shift + noise*rng.NormFloat64(), betaByRegion: map[string]float64{}}
+		for _, reg := range Regions {
+			dw.betaByRegion[reg] = 0.03 * rng.NormFloat64()
+			cw.betaByRegion[reg] = dw.betaByRegion[reg] + shift + noise*rng.NormFloat64()
+		}
+		def[d], cand[d] = dw, cw
+	}
+	return dates, cand, def
+}
+
+// The paired tests compare every cap against the live default's arm; a grid
+// without that arm would pair against nothing and report NaN for every test.
+func TestSectorCapsContainsTheLiveDefault(t *testing.T) {
+	for _, c := range SectorCaps {
+		if c == orchestrator.DefaultMaxPerSector {
+			return
+		}
+	}
+	t.Fatalf("SectorCaps %v does not contain the live default max_per_sector %d", SectorCaps, orchestrator.DefaultMaxPerSector)
+}
+
 // A sign flip confined to one region must fail the "every region" leg even
 // though the overall series and both halves still look strongly positive.
 func TestPairedCapTestRegionSignFlipFails(t *testing.T) {
-	dates, cand, def := syntheticBookWeeks(12, 0.03, 0.01, 0.03, 0.01)
+	rng := rand.New(rand.NewPCG(35, 36))
+	dates, cand, def := noisyBookWeeks(200, 0.008, 0.01, rng)
 	for _, d := range dates {
 		w := cand[d]
-		w.betaByRegion = map[string]float64{"US": 0.03, "EU": -0.03, "Asia": 0.03}
+		w.betaByRegion["EU"] = def[d].betaByRegion["EU"] - 0.008 + 0.01*rng.NormFloat64()
 		cand[d] = w
 	}
-	mid := dates[6]
-	r := pairedCapTest("E2-test", "test", cand, def, dates, mid)
+	r := pairedCapTest("E2-test", "test", cand, def, dates, dates[100])
+	if !(float64(r.T) > 2.5) {
+		t.Fatalf("overall t = %v; the fixture needs a real overall shift for the region leg to be what fails", r.T)
+	}
 	if r.Pass {
 		t.Errorf("expected the EU sign flip to fail the every-region leg, got Pass=true verdict=%q", r.Verdict)
 	}
 	if r.Verdict != "fails: sign not the same in both halves and every region" {
 		t.Errorf("verdict = %q, want the region-consistency failure", r.Verdict)
 	}
-}
-
-// syntheticBookWeeks builds n weekly dates (7 days apart) with a constant
-// candidate and default beta value (and the same value in every region), for
-// pairedCapTest's own unit tests.
-func syntheticBookWeeks(n int, candBeta, defBeta, candRegion, defRegion float64) (dates []string, cand, def map[string]bookWeek) {
-	cand, def = map[string]bookWeek{}, map[string]bookWeek{}
-	day := time.Date(2022, 1, 7, 0, 0, 0, 0, time.UTC)
-	for w := 0; w < n; w++ {
-		d := day.AddDate(0, 0, 7*w).Format("2006-01-02")
-		dates = append(dates, d)
-		def[d] = bookWeek{beta: defBeta, betaByRegion: map[string]float64{"US": defRegion, "EU": defRegion, "Asia": defRegion}}
-		cand[d] = bookWeek{beta: candBeta, betaByRegion: map[string]float64{"US": candRegion, "EU": candRegion, "Asia": candRegion}}
-	}
-	return dates, cand, def
 }

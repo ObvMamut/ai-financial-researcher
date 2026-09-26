@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"fmt"
 	"math"
 )
 
@@ -83,4 +84,26 @@ func sidesStudy(trades []trade, mid string) SidesReport {
 		H1:  side(func(t trade) bool { return t.date < mid }),
 		H2:  side(func(t trade) bool { return t.date >= mid }),
 	}
+}
+
+// e3Decision applies E3's registered rule to the sides report: it fires when
+// the short side is ≤0 beta-adjusted in both halves. A half with no computable
+// figure cannot show that, so it does not fire.
+func e3Decision(s SidesReport) TestResult {
+	r := TestResult{
+		ID:        "E3",
+		Title:     "which side carries the result: are shorts ≤0 beta-adjusted in both halves",
+		Statistic: "the top-5 picks' short-side 15-session beta-adjusted excess (gross), per half",
+		Status:    "run", Mean: Num(math.NaN()), T: Num(math.NaN()),
+		Halves: map[string]Num{"H1": s.H1.ShortBetaPct, "H2": s.H2.ShortBetaPct},
+	}
+	h1, h2 := float64(s.H1.ShortBetaPct), float64(s.H2.ShortBetaPct)
+	r.Note = fmt.Sprintf("short side beta-adjusted H1 %+.3f%%, H2 %+.3f%%", h1, h2)
+	if h1 <= 0 && h2 <= 0 {
+		r.Fired = true
+		r.Verdict = "fires: " + r.Note + " — pre-register long-only merit_veto as a config test"
+		return r
+	}
+	r.Verdict = "not triggered: " + r.Note
+	return r
 }

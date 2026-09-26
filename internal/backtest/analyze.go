@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 )
@@ -171,8 +172,7 @@ func summarize(cells []cell, keep func(cell) bool, beta bool) []SignalStats {
 }
 
 // calendarYears returns every calendar year present in cells, in ascending
-// order. Reusable wherever a per-year slice is needed: E1's per-year report
-// below, and E3's long/short split.
+// order: the years E1's per-year report below is cut by.
 func calendarYears(cells []cell) []string {
 	seen := map[string]bool{}
 	for _, c := range cells {
@@ -201,20 +201,29 @@ func yearSlices(cells []cell) []Slice {
 
 // YearStats is the composite's headline numbers for one calendar year: rank IC
 // at 10 and 15 sessions (plain and beta-adjusted) and the barrier study's
-// top-5 picks' 15-session excess (plain and beta-adjusted, gross of cost) —
-// what E1 (docs/workflow/backtest.md) reports so a longer replay can show
-// whether the edge is a feature of the screen or of one regime, rather than
-// only of the two halves the default 4-year window can show.
+// top-5 picks' 15-session excess (plain and beta-adjusted), gross and net of
+// the 30bp every barrier trade pays once — what E1 (docs/workflow/backtest.md)
+// reports so a longer replay can show whether the edge is a feature of the
+// screen or of one regime, rather than only of the two halves the default
+// 4-year window can show. E1 decides on the net beta-adjusted figure: every
+// other top-trade number in this lab is quoted net, and an edge the lab's own
+// cost erases is not one.
 type YearStats struct {
-	Year        string `json:"year"`
-	NDates      int    `json:"n_dates"`
-	IC10        Num    `json:"ic10"`
-	IC10Beta    Num    `json:"ic10_beta_adjusted"`
-	IC15        Num    `json:"ic15"`
-	IC15Beta    Num    `json:"ic15_beta_adjusted"`
-	Top5N       int    `json:"top5_n"`
-	Top5Pct     Num    `json:"top5_excess_gross_pct"`
-	Top5BetaPct Num    `json:"top5_excess_beta_adjusted_gross_pct"`
+	Year string `json:"year"`
+	// FullYear is false for a year the replay enters after its first week or
+	// leaves before its last (the first and last years of any replay that does
+	// not start and end on a year boundary).
+	FullYear       bool `json:"full_year"`
+	NDates         int  `json:"n_dates"`
+	IC10           Num  `json:"ic10"`
+	IC10Beta       Num  `json:"ic10_beta_adjusted"`
+	IC15           Num  `json:"ic15"`
+	IC15Beta       Num  `json:"ic15_beta_adjusted"`
+	Top5N          int  `json:"top5_n"`
+	Top5Pct        Num  `json:"top5_excess_gross_pct"`
+	Top5BetaPct    Num  `json:"top5_excess_beta_adjusted_gross_pct"`
+	Top5NetPct     Num  `json:"top5_excess_net_pct"`
+	Top5BetaNetPct Num  `json:"top5_excess_beta_adjusted_net_pct"`
 }
 
 // perYearStats computes YearStats for every calendar year in cells. trades is
@@ -222,8 +231,19 @@ type YearStats struct {
 // reports on, here re-cut by year instead of by half/side.
 func perYearStats(cells []cell, trades []trade) []YearStats {
 	out := make([]YearStats, 0, len(calendarYears(cells)))
+	first, last := "", ""
+	for _, c := range cells {
+		if first == "" || c.date < first {
+			first = c.date
+		}
+		if c.date > last {
+			last = c.date
+		}
+	}
 	for _, sl := range yearSlices(cells) {
-		st := YearStats{Year: sl.Label}
+		// Weekly rebalances fall on Fridays: a replay that covers a whole year
+		// has one in its first seven days and one in its last seven.
+		st := YearStats{Year: sl.Label, FullYear: first <= sl.Label+"-01-07" && last >= sl.Label+"-12-25"}
 		_, ic10 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.ic[SigScore][1] })
 		_, bic10 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.bic[SigScore][1] })
 		_, ic15 := dateSeries(cells, sl.Keep, func(c cell) float64 { return c.ic[SigScore][2] })
@@ -252,12 +272,47 @@ func perYearStats(cells []cell, trades []trade) []YearStats {
 			}
 		}
 		m, _ = meanSD(xs)
-		st.Top5Pct = Num(100 * m)
+		st.Top5Pct, st.Top5NetPct = Num(100*m), Num(100*(m-costPerLeg))
 		m, _ = meanSD(bxs)
-		st.Top5BetaPct = Num(100 * m)
+		st.Top5BetaPct, st.Top5BetaNetPct = Num(100*m), Num(100*(m-costPerLeg))
 		out = append(out, st)
 	}
 	return out
+}
+
+// e1Decision applies E1's registered rule (docs/workflow/backtest.md) to the
+// per-year table: it fires when the net beta-adjusted top-5 excess is not
+// positive in a majority of the replay's calendar years. The full-year count
+// is reported beside it and decides nothing; a year with no computable figure
+// counts as not positive.
+func e1Decision(years []YearStats) TestResult {
+	r := TestResult{
+		ID:        "E1",
+		Title:     "long history: is the screen's top-5 edge a majority-of-years property, net of the lab's 30bp",
+		Statistic: "calendar years whose beta-adjusted top-5 15-session excess, net of 30bp, is > 0",
+		Status:    "run", Mean: Num(math.NaN()), T: Num(math.NaN()),
+	}
+	pos, full, fullPos := 0, 0, 0
+	for _, y := range years {
+		up := float64(y.Top5BetaNetPct) > 0
+		if up {
+			pos++
+		}
+		if y.FullYear {
+			full++
+			if up {
+				fullPos++
+			}
+		}
+	}
+	r.Note = fmt.Sprintf("positive in %d of %d calendar years (%d of %d full years)", pos, len(years), fullPos, full)
+	if 2*pos > len(years) {
+		r.Verdict = "not triggered: " + r.Note
+		return r
+	}
+	r.Fired = true
+	r.Verdict = "fires: " + r.Note + " — the screen shows no edge net of cost"
+	return r
 }
 
 // midDate splits the sample into halves the way the spec did: the date at
@@ -298,7 +353,11 @@ type TestResult struct {
 	Halves  map[string]Num `json:"halves,omitempty"`
 	Regions map[string]Num `json:"regions,omitempty"`
 	Pass    bool           `json:"pass"`
-	Verdict string         `json:"verdict"`
+	// Fired is set by a decision rule (E1, E3) rather than a signal test: it
+	// has no t and no adoption bar, only a registered condition that either
+	// triggers its consequence or does not.
+	Fired   bool   `json:"fired,omitempty"`
+	Verdict string `json:"verdict"`
 }
 
 // evaluate applies the adoption bar to one per-cell statistic whose
