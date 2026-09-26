@@ -160,3 +160,72 @@ excess:
   beta, not stock selection.
 
 Most of what the screen appeared to earn is exposure to a rising market.
+
+## E2: live-book replay with a sector-cap grid (pre-registered 2026-09-25)
+
+**Why.** On one run, the default `max_per_sector` (2, `riskgate.go`'s
+`defaultMaxPerSector`) held MSFT and SAP.DE to the two IT slots and dropped ORCL on a
+merit gap of 0.5% (1.4924 vs 1.4847). Neither that ORCL was the better trade (the
+Chief's shadow rank has no measured value) nor that either idea's base score (66) meant
+much (a separately established measurement problem with the base score itself) can be
+claimed from one run. One run cannot size a cap that binds on a coin-flip-sized gap;
+this experiment replays the question across every week the panel has instead.
+
+**Question.** Across ~500 weekly books (the panel's date count × close to one book per
+date), does `max_per_sector` = 1, 3 or "off" (no cap) change the book's beta-adjusted
+excess, its week-to-week variability, or its worst stretch, relative to the live
+default of 2 — and if so, which direction?
+
+**Method (`internal/backtest/book.go`).** Each Friday's book is built to mirror the
+live construction, mechanically standing in for the two model-dependent steps the lab
+cannot call (no scouts, no Chief):
+
+1. **Per index, the top `scoutNominationsPerIndex` (8) names by |composite|** stand in
+   for a scout's nominations. `agents/scout.md` asks each scout for "5–10 candidate
+   tickers" and no per-run nomination count is recorded to read a measured average
+   from instead, so this takes the middle of that range rounded *up*. Rounding up
+   matters: at 5 (the range's floor) the next step would never bind, since it defaults
+   to 5 itself, collapsing two nomination-capping steps into one.
+2. **`max_per_index`** (`orchestrator.DefaultMaxPerIndex`, live default 5, read from
+   the orchestrator rather than copied) trims each index's contribution again.
+3. The per-index survivors are merged and walked once in descending |composite| order;
+   a name is skipped once its sector already holds `max_per_sector` picks (0 means no
+   cap — "off"), exactly how the live `merit_veto` selection's `pickBook`
+   (`internal/orchestrator/selection.go`) walks its own merit-ordered list.
+4. **The first 5 survivors are the week's book** — reusing `picksPerIndex` and the
+   15-session horizon convention from the barrier study (`barrier.go`), since a book
+   pick is the same trade the barrier study already prices: top-|composite|, next-open
+   entry, held 15 sessions. Each pick carries the direction of its own composite's
+   sign, recorded per pick (`BookPick.Dir`) rather than assumed for the whole book, so
+   a later long/short split can read it directly.
+
+The grid is `SectorCaps = {1, 2, 3, off}` — the live default and its two neighbouring
+integers, plus the uncapped baseline.
+
+**Metrics**, per cap value and per half (H1/H2, split at the same `mid` date as every
+other table here): the number of weeks that produced a non-empty book; the mean
+beta-adjusted excess per book (r − β·r_bench at 15 sessions, C4's target — the
+headline figure, since C4 already found the plain benchmark-excess target overstates
+this screen's edge); the sd of that weekly series; the most negative sum of any 4
+consecutive weeks in it (`worst4WeekPct` — a rolling worst-month check, not a
+peak-to-trough drawdown off a compounded curve, since nothing in this lab compounds
+weekly returns into a NAV); and the plain benchmark-excess mean, shown for reference
+only.
+
+**Adoption rule.** The Wave B bar applies: a candidate cap is adopted over the live
+default only if the per-week difference in beta-adjusted book excess (candidate minus
+the live default's cap, paired by week, Newey-West t at `nwLags(15)` lags) clears
+**|t| > 2.5** and is the **same sign in both halves**. The signal tests' third leg —
+positive in every region — does not carry over unchanged: a book is merged across
+indices by construction (step 3 above pools sp500/nq100/eu50/asia100 candidates into
+one basket before the sector cap runs), so there is no per-region book to split
+without rebuilding the whole grid three more times on a shortened panel per region,
+which the plan does not ask for. Every cap comparison actually run against live data
+will be recorded here as its own test, exactly as C1–C5 were, with this rule fixed
+before that run happens.
+
+**Status.** Code and the unit tests that check the builder (`book_test.go`: the
+sector cap, `max_per_index` and the nomination stand-in each independently bind, and
+`off` is exactly the plain top-5 by |composite| with sector composition ignored) are
+in place. Running the grid against the live panel and recording results against the
+rule above is a later task's job, as for E1 and E3.

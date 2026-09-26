@@ -60,11 +60,16 @@ type Result struct {
 	// Signals maps a slice label (all, US, EU, Asia, H1, H2) to every signal's
 	// stats against benchmark-excess returns; BetaAdjusted is the same against
 	// r − β·r_bench (C4).
-	Signals       map[string][]SignalStats `json:"signals"`
-	BetaAdjusted  map[string][]SignalStats `json:"beta_adjusted"`
-	Barrier       BarrierReport            `json:"barrier"`
-	Preregistered []TestResult             `json:"preregistered"`
-	TestsRun      int                      `json:"tests_run"`
+	Signals      map[string][]SignalStats `json:"signals"`
+	BetaAdjusted map[string][]SignalStats `json:"beta_adjusted"`
+	Barrier      BarrierReport            `json:"barrier"`
+	// BookGrid is E2's live-shaped weekly book replayed under a grid of
+	// max_per_sector values (book.go): lead 2 asked whether the sector cap
+	// that dropped ORCL for SAP.DE costs or saves the book, and one run cannot
+	// answer that — this replays the question across every week in the panel.
+	BookGrid      BookGrid     `json:"book_grid"`
+	Preregistered []TestResult `json:"preregistered"`
+	TestsRun      int          `json:"tests_run"`
 }
 
 const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
@@ -191,6 +196,7 @@ func Analyze(recs []Record, series map[string]*quant.Series) *Result {
 		res.BetaAdjusted[sl.Label] = summarize(cells, sl.Keep, true)
 	}
 	res.Barrier = barrierStudy(recs, series, mid)
+	res.BookGrid = BuildBookGrid(recs, mid)
 	res.Preregistered = preregistered(cells, mid)
 	for _, t := range res.Preregistered {
 		if t.Status == "run" {
@@ -257,6 +263,22 @@ func (r *Result) Text() string {
 	}
 	fmt.Fprintf(&sb, "same picks, 15-session directional benchmark excess (gross): %.3f%% (long %.3f%%, short %.3f%%)\n\n",
 		b.XS15GrossPct, b.XS15LongGrossPct, b.XS15ShortGrossPct)
+
+	g := r.BookGrid
+	fmt.Fprintf(&sb, "=== E2: sector-cap grid (nominations/index %d, max_per_index %d, top %d, H=%d) ===\n",
+		g.NominationsPerIndex, g.MaxPerIndex, picksPerIndex, Horizons[bookHorizon])
+	fmt.Fprintf(&sb, "%-14s %6s %10s %10s %10s %10s %10s %10s\n",
+		"max_per_sector", "weeks", "mean_bx%", "sd_bx%", "worst4wk%", "mean_bx%H1", "mean_bx%H2", "mean_xs%")
+	for _, a := range g.Arms {
+		label := fmt.Sprintf("%d", a.MaxPerSector)
+		if a.MaxPerSector == 0 {
+			label = "off"
+		}
+		fmt.Fprintf(&sb, "%-14s %6d %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f\n",
+			label, a.All.Weeks, a.All.MeanBetaAdjPct, a.All.WeeklySDPct, a.All.Worst4WeekPct,
+			a.H1.MeanBetaAdjPct, a.H2.MeanBetaAdjPct, a.All.MeanExcessPct)
+	}
+	sb.WriteString("\n")
 
 	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run; bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {

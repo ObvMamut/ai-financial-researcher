@@ -40,6 +40,10 @@ const (
 	// risk.max_per_sector so the shortlist's own sector cap can be derived from
 	// it rather than guessed at.
 	defaultMaxPerSector = 2
+	// DefaultMaxPerSector mirrors defaultMaxPerSector under an exported name so
+	// other packages — the backtest lab's live-book replay (internal/backtest)
+	// — can build a live-shaped sector cap without hard-copying the number.
+	DefaultMaxPerSector = defaultMaxPerSector
 	// defaultEdgeSigmaDaily is the daily expected return assumed in the
 	// expectancy simulation, in units of σ_daily.
 	//
