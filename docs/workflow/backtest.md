@@ -15,10 +15,22 @@ arms, because a model cannot be replayed without look-ahead.
 
 - **Data.** Each constituent's and each benchmark's daily bars come from Yahoo's
   keyless chart endpoint over the shortest range that covers the replay plus one
-  year of warm-up (`5y` for the default 4 years). Reads go through the shared
-  data cache and are cache-first: a series younger than `--cache-age` (default 7
-  days) is not re-requested. The lab makes no model call and reads no
-  credential.
+  year of warm-up (`5y` for the default 4 years, `10y` up to 9 years). Beyond
+  that — `--years 10` and up — `range=max` is not used: probed 2026-09-25, Yahoo
+  answers `range=max&interval=1d` with **3-month bars** regardless of
+  `interval` (`meta.dataGranularity="3mo"`, 169 bars back to 1984 for AAPL),
+  where `range=10y` and an explicit window both still answer daily. Spans past
+  10 years are instead requested with an explicit `period1`/`period2` window
+  (unix seconds) and `interval=1d`, computed at the moment of the request so the
+  cache key itself never carries an absolute date
+  (`marketdata.YahooClient.chartSpan`); a response whose `meta.dataGranularity`
+  is present and isn't `1d` is refused with an error rather than silently fed to
+  the pipeline (`internal/marketdata/yahoo.go`). Before this, a `--years 10`
+  replay silently shrank to 20 weekly rebalances spanning about 2.3 years,
+  because almost no name ever reached the 253 daily bars the 12-1 term needs.
+  Reads go through the shared data cache and are cache-first: a series younger
+  than `--cache-age` (default 7 days) is not re-requested. The lab makes no
+  model call and reads no credential.
 - **Rebalance dates.** Every Friday from `--years` before the most recent Friday
   up to that Friday.
 - **Point in time.** At each date *d*, each series is cut at its last bar on or
@@ -31,6 +43,15 @@ arms, because a model cannot be replayed without look-ahead.
   12-1 term needs and printed a bar within 5 days of *d*. A date is dropped when
   any index has fewer than 70% of the most names it ever has scorable, which
   removes the warm-up weeks.
+- **Shortfall warning.** The extra year fetched above is warm-up for the 253-bar
+  requirement, not slack in the replay window: the first surviving rebalance
+  should land within a few weeks of `end - years` (what `--years` asked for),
+  the gap being holidays and the 70% eligibility threshold above, not a whole
+  year. The report compares the two, and if the actual first date falls more
+  than 8 weeks later — the sign of a genuine data problem such as the one above,
+  not ordinary warm-up — the text report prints a `WARNING:` line and the JSON
+  result carries `requested_start`, `shortfall` and `shortfall_note` alongside
+  the actual `first_date`/`last_date`/`dates` it always records.
 - **Known departures from a live run.** There is no liquidity floor, because a
   USD turnover needs each past date's FX rate. There is no drift archetype,
   because no point-in-time filing dates are cached. The composite does not use

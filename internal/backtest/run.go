@@ -54,9 +54,15 @@ type Result struct {
 	Rows          int            `json:"rows"`
 	NamesPerIndex map[string]int `json:"names_per_index"`
 	Unavailable   []string       `json:"unavailable,omitempty"`
-	Survivorship  string         `json:"survivorship"`
-	Departures    []string       `json:"departures"`
-	CostNote      string         `json:"cost_note"`
+	// RequestedStart is end - years, what --years asked the replay to reach
+	// back to. Shortfall is set when Start falls materially later than that —
+	// see checkShortfall.
+	RequestedStart string   `json:"requested_start,omitempty"`
+	Shortfall      bool     `json:"shortfall,omitempty"`
+	ShortfallNote  string   `json:"shortfall_note,omitempty"`
+	Survivorship   string   `json:"survivorship"`
+	Departures     []string `json:"departures"`
+	CostNote       string   `json:"cost_note"`
 	// Signals maps a slice label (all, US, EU, Asia, H1, H2) to every signal's
 	// stats against benchmark-excess returns; BetaAdjusted is the same against
 	// r − β·r_bench (C4).
@@ -70,7 +76,14 @@ type Result struct {
 const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
 
 // yahooRange is the shortest Yahoo range covering the replay plus the year of
-// history the first rebalance needs.
+// history the first rebalance needs. Spans "5y"/"10y" cannot cover are spelled
+// "<years>y" — not Yahoo's own range= vocabulary — which
+// marketdata.YahooClient.chartSpan reads as a request for an explicit
+// period1/period2 window instead of range=max: probed 2026-09-25, Yahoo
+// answers range=max&interval=1d with meta.dataGranularity="3mo" (169 bars back
+// to 1984 for AAPL), which starved every rebalance after the first ~2.3 years
+// of the 253 daily bars the 12-1 momentum term needs and silently shrank a
+// requested 10-year replay to 20 weekly rebalances.
 func yahooRange(years int) string {
 	switch {
 	case years+1 <= 5:
@@ -78,7 +91,7 @@ func yahooRange(years int) string {
 	case years+1 <= 10:
 		return "10y"
 	}
-	return "max"
+	return fmt.Sprintf("%dy", years+1)
 }
 
 // Run fetches (cache-first) every constituent and benchmark, builds the panel
@@ -154,7 +167,43 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 	res := Analyze(recs, data.Series)
 	res.GeneratedAt = cfg.Now.UTC().Format(time.RFC3339)
 	res.Range, res.Years, res.Unavailable = rng, cfg.Years, unavailable
+	checkShortfall(res, cfg.Years, end)
 	return res, nil
+}
+
+// shortfallWarnWeeks is how much later than requested the first surviving
+// rebalance may fall before checkShortfall calls it out. 8 weeks comfortably
+// clears the ordinary slop from holidays and DropWarmupDates' 70% threshold —
+// the 2026-09-23 run's default 4-year replay missed its requested start by
+// only 19 days (2022-10-07 vs 2022-09-18) — while catching the Task 5b bug,
+// which shrank a 10-year request to about 2.3 years (roughly 400 weeks short).
+const shortfallWarnWeeks = 8
+
+// checkShortfall flags a replay whose first surviving rebalance date falls
+// materially later than end - years, the way range=max silently did for spans
+// "5y"/"10y" couldn't cover (see yahooRange): Yahoo answered 3-month bars, few
+// enough names ever reached the 253-bar minimum, and DropWarmupDates was left
+// dropping most of the requested window rather than just its first year's
+// ordinary warm-up. Nothing else in the pipeline would have reported that —
+// Run still returns a populated, internally consistent Result.
+func checkShortfall(res *Result, years int, end time.Time) {
+	requested := end.AddDate(-years, 0, 0)
+	res.RequestedStart = requested.Format("2006-01-02")
+	if res.Start == "" {
+		return
+	}
+	actual, err := time.Parse("2006-01-02", res.Start)
+	if err != nil {
+		return
+	}
+	gap := actual.Sub(requested)
+	if gap <= shortfallWarnWeeks*7*24*time.Hour {
+		return
+	}
+	res.Shortfall = true
+	res.ShortfallNote = fmt.Sprintf(
+		"replay covers only %s..%s (%d weekly rebalances) — %.0f weeks short of the %d year(s) requested (wanted from %s)",
+		res.Start, res.End, res.Dates, gap.Hours()/(7*24), years, res.RequestedStart)
 }
 
 // Analyze turns a filtered panel into the report. Exposed for tests, which
@@ -218,6 +267,9 @@ func (r *Result) Text() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Backtest lab — %d weekly rebalances, %s .. %s (second half from %s); %d rows\n",
 		r.Dates, r.Start, r.End, r.Mid, r.Rows)
+	if r.Shortfall {
+		fmt.Fprintf(&sb, "WARNING: %s\n", r.ShortfallNote)
+	}
 	idx := make([]string, 0, len(r.NamesPerIndex))
 	for k := range r.NamesPerIndex {
 		idx = append(idx, k)

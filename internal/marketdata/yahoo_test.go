@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -345,5 +346,105 @@ func TestYahooHistoryRangeCachesPerRange(t *testing.T) {
 	}
 	if len(ranges) != 2 || ranges[0] != "5y" || ranges[1] != "2y" {
 		t.Errorf("requested ranges = %v, want [5y 2y]", ranges)
+	}
+}
+
+// Task 5b: a span "5y"/"10y" cannot cover (backtest.yahooRange's "<years>y"
+// spelling, e.g. "13y" for a 12-year replay) must be requested with an
+// explicit period1/period2 window and interval=1d, never range=max — probed
+// 2026-09-25, Yahoo answers range=max&interval=1d with 3-month bars.
+func TestYahooHistoryRangeLongSpanUsesExplicitPeriod(t *testing.T) {
+	var gotQuery url.Values
+	fixture, err := os.ReadFile("testdata/yahoo_chart_sample.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(fixture)
+	}))
+	defer srv.Close()
+
+	y := NewYahooClient(NewCache(t.TempDir()))
+	y.baseURL = srv.URL
+
+	before := time.Now()
+	if _, err := y.HistoryRange(context.Background(), "TEST", "13y", 0); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+
+	if gotQuery.Get("range") != "" {
+		t.Errorf("request used range=%s, want no range param for an explicit-years span", gotQuery.Get("range"))
+	}
+	if gotQuery.Get("interval") != "1d" {
+		t.Errorf("interval = %q, want 1d", gotQuery.Get("interval"))
+	}
+	p1, err1 := strconv.ParseInt(gotQuery.Get("period1"), 10, 64)
+	p2, err2 := strconv.ParseInt(gotQuery.Get("period2"), 10, 64)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("period1/period2 missing or not integers: %q / %q", gotQuery.Get("period1"), gotQuery.Get("period2"))
+	}
+	if p2 < before.Unix() || p2 > after.Unix() {
+		t.Errorf("period2 = %d, want it anchored to the time of the request (%d..%d)", p2, before.Unix(), after.Unix())
+	}
+	wantSpan := 13 * 365 * 24 * 60 * 60 // ~13 years in seconds
+	if gotSpan := p2 - p1; math.Abs(float64(gotSpan-int64(wantSpan))) > 3*24*60*60 {
+		t.Errorf("period2-period1 = %d, want ~13 years (%d)", gotSpan, wantSpan)
+	}
+}
+
+// A "5y"/"10y" request must still be sent as a plain range= keyword — the live
+// pipeline's own fetches ("2y") and the lab's shorter spans are unaffected by
+// the explicit-period path.
+func TestYahooHistoryRangeCannedSpanStillUsesRangeParam(t *testing.T) {
+	var gotQuery url.Values
+	fixture, err := os.ReadFile("testdata/yahoo_chart_sample.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(fixture)
+	}))
+	defer srv.Close()
+
+	y := NewYahooClient(NewCache(t.TempDir()))
+	y.baseURL = srv.URL
+	if _, err := y.HistoryRange(context.Background(), "TEST", "10y", 0); err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Get("range") != "10y" {
+		t.Errorf("range = %q, want 10y", gotQuery.Get("range"))
+	}
+	if gotQuery.Get("period1") != "" || gotQuery.Get("period2") != "" {
+		t.Error("a canned range must not also carry period1/period2")
+	}
+}
+
+// Yahoo answering anything other than daily bars must fail loudly rather than
+// silently feed the pipeline monthly or quarterly data: range=max&interval=1d
+// answers meta.dataGranularity="3mo" (probed 2026-09-25), which is exactly the
+// Task 5b bug — every downstream stage assumes one bar is one session.
+func TestYahooRejectsNonDailyGranularity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"chart":{"result":[{"meta":{"currency":"USD","symbol":"TEST","dataGranularity":"3mo"},` +
+			`"timestamp":[1751895000,1751981400],"indicators":{"quote":[{"open":[100.0,101.0],` +
+			`"high":[102.0,103.0],"low":[99.0,100.0],"close":[101.0,102.0],"volume":[1000000,1100000]}],` +
+			`"adjclose":[{"adjclose":[101.0,102.0]}]}}],"error":null}}`))
+	}))
+	defer srv.Close()
+
+	y := NewYahooClient(nil)
+	y.baseURL = srv.URL
+	_, err := y.HistoryRange(context.Background(), "TEST", "13y", 0)
+	if err == nil {
+		t.Fatal("want an error on a non-daily dataGranularity, got nil")
+	}
+	if !strings.Contains(err.Error(), "3mo") {
+		t.Errorf("error = %v, want it to name the bad granularity (3mo)", err)
 	}
 }

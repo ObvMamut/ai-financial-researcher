@@ -305,8 +305,8 @@ func TestWeeklyDatesAndRange(t *testing.T) {
 	if lf := lastFriday(time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)); lf.Format("2006-01-02") != "2026-09-18" {
 		t.Errorf("lastFriday = %s", lf)
 	}
-	if yahooRange(4) != "5y" || yahooRange(6) != "10y" || yahooRange(12) != "max" {
-		t.Error("yahooRange must pick the shortest covering range")
+	if yahooRange(4) != "5y" || yahooRange(6) != "10y" || yahooRange(12) != "13y" {
+		t.Error("yahooRange must pick the shortest covering range, and spell anything past 10y as an explicit <years>y span rather than range=max")
 	}
 }
 
@@ -354,5 +354,79 @@ func TestDropWarmupDates(t *testing.T) {
 	}
 	if len(got) != 20 {
 		t.Errorf("kept %d rows, want 20", len(got))
+	}
+}
+
+// checkShortfall must fire when a replay comes back much shorter than
+// --years asked for — the Task 5b bug: range=max answered 3-month bars, so
+// only names past the first ~2.3 years of data (not the ordinary first year of
+// warm-up) ever reached the 253-bar minimum and DropWarmupDates left just the
+// tail of the requested window. Reproduced here with a synthetic panel whose
+// series carry far fewer daily bars than the requested span needs, rather than
+// with a live long-span fetch (no live fetch in tests).
+func TestShortfallWarningFiresWhenTheReplayComesBackShort(t *testing.T) {
+	end := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	years := 4
+	rng := rand.New(rand.NewPCG(51, 6))
+	start := end.AddDate(0, 0, -560) // ~400 weekdays: under a fifth of the ~1460 the 4-year request implies
+	data := Data{Series: map[string]*quant.Series{}, Bench: map[string]*quant.Series{}}
+	data.Bench["^A"] = synthSeries("^A", start, 400, 0.0002, 0.01, rng)
+	var members []Member
+	for i := 0; i < 20; i++ {
+		tk := fmt.Sprintf("S%02d", i)
+		data.Series[tk] = synthSeries(tk, start, 400, 0.0003*rng.NormFloat64(), 0.01+0.01*rng.Float64(), rng)
+		members = append(members, Member{
+			Constituent: model.Constituent{Ticker: tk, Name: tk, Sector: "Tech", Index: "sp500"},
+			Bench:       "^A",
+		})
+	}
+	dates := WeeklyDates(end.AddDate(-years, 0, 0), end)
+	recs := DropWarmupDates(BuildPanel(members, data, dates))
+	if len(recs) == 0 {
+		t.Fatal("panel is empty; the synthetic series must still produce at least one scorable week")
+	}
+	res := Analyze(recs, data.Series)
+	checkShortfall(res, years, end)
+
+	if !res.Shortfall {
+		t.Fatalf("replay runs %s..%s (%d rebalances) against a %d-year request ending %s — want it flagged short",
+			res.Start, res.End, res.Dates, years, end.Format("2006-01-02"))
+	}
+	if res.ShortfallNote == "" {
+		t.Error("Shortfall is true but ShortfallNote is empty")
+	}
+	if res.RequestedStart != end.AddDate(-years, 0, 0).Format("2006-01-02") {
+		t.Errorf("RequestedStart = %s, want %s", res.RequestedStart, end.AddDate(-years, 0, 0).Format("2006-01-02"))
+	}
+	if !strings.Contains(res.ShortfallNote, res.Start) || !strings.Contains(res.ShortfallNote, res.End) {
+		t.Errorf("ShortfallNote = %q, want it to name the actual span %s..%s", res.ShortfallNote, res.Start, res.End)
+	}
+}
+
+// checkShortfall must not fire on an ordinary replay: the first rebalance
+// naturally lands a little after end-years (holidays, DropWarmupDates'
+// threshold) — the 2026-09-23 run's default 4-year replay missed it by only 19
+// days — so a few weeks of slop must stay under the grace window and clearing
+// it (here, 9 weeks) must still fire.
+func TestNoShortfallWarningWithinTheOrdinaryWarmupSlop(t *testing.T) {
+	end := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	res := &Result{
+		Start: end.AddDate(-4, 0, 0).AddDate(0, 0, 4*7).Format("2006-01-02"), // 4 weeks late
+		End:   end.Format("2006-01-02"),
+		Dates: 200,
+	}
+	checkShortfall(res, 4, end)
+	if res.Shortfall {
+		t.Errorf("shortfall flagged at %s, only 4 weeks after the requested start — want it within the grace window", res.Start)
+	}
+
+	res2 := &Result{
+		Start: end.AddDate(-4, 0, 0).AddDate(0, 0, 9*7).Format("2006-01-02"), // 9 weeks late
+		End:   end.Format("2006-01-02"),
+		Dates: 20,
+	}
+	checkShortfall(res2, 4, end)
+	if !res2.Shortfall {
+		t.Errorf("shortfall not flagged at %s, 9 weeks after the requested start — want it past the grace window", res2.Start)
 	}
 }
