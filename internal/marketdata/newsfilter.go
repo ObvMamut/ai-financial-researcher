@@ -38,30 +38,35 @@ type newsArticle struct {
 // function under.
 type companyNameKey struct{}
 
-// WithCompanyNames attaches a ticker → company name lookup to ctx, so a news
+// WithCompanyNames attaches a ticker → names lookup to ctx, so a news
 // provider's Fetch can test whether an item's headline or summary names the
-// company, not just whether its symbol sits somewhere in a tag list.
+// company, not just whether its symbol sits somewhere in a tag list. The
+// lookup returns every name worth trying: the universe CSV's own column, plus
+// any curated aliases for that ticker (internal/universe/data/aliases.csv) —
+// "Google" for GOOGL, "TSMC" for 2330.TW, "Toyota" for 7203.T — for the
+// brand/common names a legal name's own suffix-stripped form still can't
+// reach.
 //
-// The pipeline already carries this name — the universe CSV's own column —
-// but marketdata cannot import the universe package to read it directly:
-// universe imports marketdata for IsForeignSuffix, and closing the loop back
-// the other way would be a cycle. The orchestrator wires the lookup here
-// instead, into the same ctx BuildPack already threads down to every
-// provider's Fetch, once, where it loads the universe.
+// The pipeline already carries this data — the universe CSV's own name column
+// and its aliases file — but marketdata cannot import the universe package to
+// read it directly: universe imports marketdata for IsForeignSuffix, and
+// closing the loop back the other way would be a cycle. The orchestrator
+// wires the combined lookup here instead, into the same ctx BuildPack already
+// threads down to every provider's Fetch, once, where it loads the universe.
 //
 // An unwrapped ctx — every test in this package, and any collection path that
 // runs before the orchestrator does this wiring (research_capture.go's
 // frozen-snapshot capture, used by `research-pair`) — degrades to no
 // company-name match. That is the same behavior every run had before this
 // rule existed; root and ADR-symbol matching are unaffected either way.
-func WithCompanyNames(ctx context.Context, lookup func(ticker string) string) context.Context {
+func WithCompanyNames(ctx context.Context, lookup func(ticker string) []string) context.Context {
 	return context.WithValue(ctx, companyNameKey{}, lookup)
 }
 
-func companyNameFor(ctx context.Context, ticker string) string {
-	lookup, _ := ctx.Value(companyNameKey{}).(func(string) string)
+func companyNamesFor(ctx context.Context, ticker string) []string {
+	lookup, _ := ctx.Value(companyNameKey{}).(func(string) []string)
 	if lookup == nil {
-		return ""
+		return nil
 	}
 	return lookup(ticker)
 }
@@ -81,21 +86,47 @@ func tickerRoot(ticker string) string {
 // companySuffixes are corporate-form words a headline drops the instant it
 // names a company in prose — "SAP SE" is "SAP" to every reporter who writes
 // about it. Matched with punctuation stripped, so "N.V." and "NV" are the
-// same check.
+// same check. SpA (Italian) and KGaA (German) were missing until the eu50
+// review found four SpA names (Intesa Sanpaolo, UniCredit, Eni, Enel) and one
+// KGaA (Henkel AG & Co. KGaA) normalizing with the suffix still attached.
 var companySuffixes = map[string]bool{
 	"HOLDINGS": true, "HOLDING": true, "GROUP": true, "INCORPORATED": true,
 	"CORPORATION": true, "COMPANY": true, "LIMITED": true, "NV": true,
 	"SA": true, "AS": true, "PLC": true, "ASA": true, "CORP": true,
 	"INC": true, "LTD": true, "CO": true, "AG": true, "SE": true,
+	"SPA": true, "KGAA": true,
 }
 
-// normalizeCompanyName strips trailing corporate-form tokens, repeatedly —
-// "ASML Holding N.V." carries two — so the name matches the way a headline
+// normalizeCompanyName strips trailing corporate-form tokens, a leading
+// "The", and a parenthetical alias, so the name matches the way a headline
 // actually spells it. It is a documented approximation, not a legal-name
 // parser: a suffix not on the list is left in place, which only costs a text
 // match, never adds a false one.
-func normalizeCompanyName(name string) string {
+//
+// It returns the cleaned name and, separately, an alias pulled out of a
+// parenthetical in the raw name — "Industria de Diseño Textil SA (Inditex)",
+// "Fast Retailing Co. Ltd. (Uniqlo)", "Hon Hai Precision Industry (Foxconn)".
+// A literal "(Inditex)" never appears in a headline, so leaving it in the
+// needle made these three unmatchable; removing it and reusing its contents
+// as a second needle is what actually grounds them.
+func normalizeCompanyName(name string) (normalized string, alias string) {
 	name = strings.TrimSpace(name)
+	if i := strings.IndexByte(name, '('); i >= 0 {
+		if j := strings.IndexByte(name[i:], ')'); j > 0 {
+			alias = strings.TrimSpace(name[i+1 : i+j])
+			name = strings.TrimSpace(name[:i] + name[i+j+1:])
+		}
+	}
+	// A leading "The" is part of the legal name, not of how a headline refers
+	// to the company: "The Trade Desk Inc." is "Trade Desk" the moment a
+	// reporter writes about it, the same way "The Home Depot", "The
+	// Coca-Cola Company", "The Walt Disney Company", "The Goldman Sachs
+	// Group" and "The Boeing Company" all lose it. Left in, the needle
+	// "The Trade Desk" never matches a headline that starts "Trade Desk
+	// Plans...".
+	if fields := strings.Fields(name); len(fields) > 1 && strings.EqualFold(fields[0], "The") {
+		name = strings.Join(fields[1:], " ")
+	}
 	// A share-class suffix ("Class A", "Class B") sits after the legal suffix
 	// in the universe CSV's own name column — "Alphabet Inc. Class A",
 	// "Berkshire Hathaway Inc. Class B" — and would otherwise block the loop
@@ -111,12 +142,24 @@ func normalizeCompanyName(name string) string {
 			break
 		}
 		last := strings.ToUpper(strings.ReplaceAll(fields[len(fields)-1], ".", ""))
+		// "&" or "and" only ever survives to the end of the name as the
+		// remnant of a corporate suffix this loop just stripped — "Merck &
+		// Co. Inc." -> "Merck &", "Eli Lilly and Company" -> "Eli Lilly and",
+		// "JPMorgan Chase & Co." -> "JPMorgan Chase &", "Wells Fargo &
+		// Company" / "Deere & Company" the same way. A real name with "and"
+		// in the *middle* ("Air Products and Chemicals", "Nippon Telegraph
+		// and Telephone") never has it as the last token, so this never
+		// touches those.
+		if last == "&" || last == "AND" {
+			name = strings.Join(fields[:len(fields)-1], " ")
+			continue
+		}
 		if !companySuffixes[last] {
 			break
 		}
 		name = strings.Join(fields[:len(fields)-1], " ")
 	}
-	return strings.TrimSpace(name)
+	return strings.TrimSpace(name), alias
 }
 
 // mentionsText reports whether needle appears in haystack as a whole word or
@@ -153,14 +196,17 @@ func mentionsSymbol(text, symbol string) bool {
 	return mentionsText(text, symbol, len(symbol) <= 2)
 }
 
-// mentionsCompanyName reports whether text names the company, once its legal
-// suffix is normalized away.
+// mentionsCompanyName reports whether text names the company: its normalized
+// legal name, or the parenthetical alias its raw name carries (see
+// normalizeCompanyName). Both go through mentionsSymbol's own rule, so a
+// short alias would need the same exact-case match a short ticker root does
+// — none in the universe today, but the rule should not depend on that.
 func mentionsCompanyName(text, name string) bool {
-	n := normalizeCompanyName(name)
-	if n == "" {
-		return false
+	normalized, alias := normalizeCompanyName(name)
+	if mentionsSymbol(text, normalized) {
+		return true
 	}
-	return mentionsText(text, n, false)
+	return alias != "" && mentionsSymbol(text, alias)
 }
 
 // relatesTo reports whether a feed's tag list names this ticker at all. Both
@@ -197,13 +243,14 @@ func relatesTo(related []string, ticker string) bool {
 // not what it read.
 //
 // An item counts as coverage only if the company is its subject: the
-// headline or summary names the ticker root, the ADR symbol or the company
-// name, or the tag list itself is short enough (≤3 symbols) that being
-// tagged at all is informative rather than incidental. Membership in the tag
-// list is still required first — dropping it would let a short tag list on a
-// completely different company's story (the Namibia/oil fallback
-// TestYahooNewsRefusesAFeedThatTagsNothingToTheTicker guards against) count
-// for whichever ticker happened to be fetched at the time.
+// headline or summary names the ticker root, the ADR symbol, the company
+// name or one of its aliases, or the tag list itself is short enough (≤3
+// symbols) that being tagged at all is informative rather than incidental.
+// Membership in the tag list is still required first — dropping it would let
+// a short tag list on a completely different company's story (the
+// Namibia/oil fallback TestYahooNewsRefusesAFeedThatTagsNothingToTheTicker
+// guards against) count for whichever ticker happened to be fetched at the
+// time.
 func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary, ticker string) bool {
 	root := tickerRoot(ticker)
 	adr, _ := USLine(ticker)
@@ -217,8 +264,10 @@ func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary,
 	if adr != "" && mentionsSymbol(text, adr) {
 		return true
 	}
-	if mentionsCompanyName(text, companyNameFor(ctx, ticker)) {
-		return true
+	for _, name := range companyNamesFor(ctx, ticker) {
+		if mentionsCompanyName(text, name) {
+			return true
+		}
 	}
 	return len(symbols) <= 3
 }

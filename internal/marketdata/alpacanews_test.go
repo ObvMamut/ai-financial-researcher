@@ -264,11 +264,11 @@ func TestAlpacaNewsWrapItemsStayUncoveredEvenWithCompanyNameWired(t *testing.T) 
 			"Europe closed mixed as the AfD's Saxony-Anhalt landslide and $97 Brent lifted bond yields.",
 			"IFNNY", "ASML", "STM", "SBGSY", "LGRDY", "TTE", "SHEL", "BP", "NVS", "SAP"),
 	)
-	ctx := WithCompanyNames(context.Background(), func(ticker string) string {
+	ctx := WithCompanyNames(context.Background(), func(ticker string) []string {
 		if ticker == "SAP.DE" {
-			return "SAP SE"
+			return []string{"SAP SE"}
 		}
-		return ""
+		return nil
 	})
 	td, err := NewAlpacaNewsProvider("k", "s").Fetch(ctx, "news", "SAP.DE")
 	if err != nil {

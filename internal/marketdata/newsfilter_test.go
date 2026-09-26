@@ -22,19 +22,61 @@ func TestTickerRootStripsOnlyAKnownForeignSuffix(t *testing.T) {
 }
 
 func TestNormalizeCompanyNameStripsCorporateSuffixes(t *testing.T) {
-	cases := map[string]string{
-		"SAP SE":                          "SAP",
-		"ASML Holding N.V.":               "ASML",
-		"Apple Inc.":                      "Apple",
-		"ON Semiconductor Corporation":    "ON Semiconductor",
-		"Alphabet Inc. Class A":           "Alphabet",
-		"Berkshire Hathaway Inc. Class B": "Berkshire Hathaway",
+	cases := []struct {
+		name, wantNormalized, wantAlias string
+	}{
+		{"SAP SE", "SAP", ""},
+		{"ASML Holding N.V.", "ASML", ""},
+		{"Apple Inc.", "Apple", ""},
+		{"ON Semiconductor Corporation", "ON Semiconductor", ""},
+		{"Alphabet Inc. Class A", "Alphabet", ""},
+		{"Berkshire Hathaway Inc. Class B", "Berkshire Hathaway", ""},
 		// A name with nothing to strip is returned unchanged.
-		"Netflix": "Netflix",
+		{"Netflix", "Netflix", ""},
+
+		// Fix-round regressions: a trailing "&" or dangling "and" left after
+		// the suffix loop stripped "Co."/"Inc."/"Company" made these
+		// unmatchable against any real headline (see mentionsText's word
+		// boundary — a needle ending in "&" or "and" can never close on a
+		// word boundary against a space).
+		{"Merck & Co. Inc.", "Merck", ""},
+		{"JPMorgan Chase & Co.", "JPMorgan Chase", ""},
+		{"Eli Lilly and Company", "Eli Lilly", ""},
+		{"Deere & Company", "Deere", ""},
+		{"Wells Fargo & Company", "Wells Fargo", ""},
+		{"Henkel AG & Co. KGaA", "Henkel", ""}, // also exercises the new KGaA suffix
+		// "&"/"and" in the *middle* of a real name is not a suffix remnant
+		// and must survive.
+		{"Procter & Gamble Co.", "Procter & Gamble", ""},
+		{"Air Products and Chemicals Inc.", "Air Products and Chemicals", ""},
+		{"Nippon Telegraph and Telephone", "Nippon Telegraph and Telephone", ""},
+		{"S&P Global Inc.", "S&P Global", ""}, // "&" with no surrounding spaces is one token, untouched
+
+		// A leading "The" is part of the legal name, never of how a headline
+		// refers to the company.
+		{"The Trade Desk Inc.", "Trade Desk", ""},
+		{"The Home Depot Inc.", "Home Depot", ""},
+		{"The Coca-Cola Company", "Coca-Cola", ""},
+		{"The Walt Disney Company", "Walt Disney", ""},
+		{"The Boeing Company", "Boeing", ""},
+		{"The Goldman Sachs Group Inc.", "Goldman Sachs", ""},
+
+		// The new SpA suffix (Italian eu50 names).
+		{"Intesa Sanpaolo SpA", "Intesa Sanpaolo", ""},
+		{"Eni SpA", "Eni", ""},
+
+		// A parenthetical alias is removed from the needle and returned
+		// separately, rather than left inline where a headline never repeats
+		// it verbatim.
+		{"Industria de Diseño Textil SA (Inditex)", "Industria de Diseño Textil", "Inditex"},
+		{"Fast Retailing Co. Ltd. (Uniqlo)", "Fast Retailing", "Uniqlo"},
+		{"Hon Hai Precision Industry (Foxconn)", "Hon Hai Precision Industry", "Foxconn"},
 	}
-	for name, want := range cases {
-		if got := normalizeCompanyName(name); got != want {
-			t.Errorf("normalizeCompanyName(%q) = %q, want %q", name, got, want)
+	for _, c := range cases {
+		gotNormalized, gotAlias := normalizeCompanyName(c.name)
+		if gotNormalized != c.wantNormalized || gotAlias != c.wantAlias {
+			t.Errorf("normalizeCompanyName(%q) = (%q, %q), want (%q, %q)",
+				c.name, gotNormalized, gotAlias, c.wantNormalized, c.wantAlias)
 		}
 	}
 }
@@ -69,11 +111,11 @@ func TestIsSubjectRelevantRequiresExactCaseForAShortRoot(t *testing.T) {
 // and name share no text, which isolates this path from a root match.
 func TestIsSubjectRelevantMatchesCompanyNameWhenTheRootNeverAppears(t *testing.T) {
 	symbols := []string{"GOOGL", "MSFT", "AMZN", "META"}
-	ctx := WithCompanyNames(context.Background(), func(ticker string) string {
+	ctx := WithCompanyNames(context.Background(), func(ticker string) []string {
 		if ticker == "GOOGL" {
-			return "Alphabet Inc. Class A"
+			return []string{"Alphabet Inc. Class A"}
 		}
-		return ""
+		return nil
 	})
 	if !isSubjectRelevant(ctx, symbols, "Alphabet unveils new data-center chip", "", "GOOGL") {
 		t.Error("a headline naming the company, with the root itself absent, did not count as coverage")
@@ -96,5 +138,87 @@ func TestIsSubjectRelevantMatchesCompanyNameWhenTheRootNeverAppears(t *testing.T
 func TestIsSubjectRelevantRequiresTagMembershipFirst(t *testing.T) {
 	if isSubjectRelevant(context.Background(), []string{"XOM", "CVX"}, "Oil edges down as investors weigh uncertainty", "", "O39.SI") {
 		t.Error("an unrelated short tag list counted as coverage for a ticker it never named")
+	}
+}
+
+// TestIsSubjectRelevantMatchesRealHeadlinesNormalizeCompanyNameOnceMissed is a
+// fix-round regression test for three genuine headlines from the SAP.DE run
+// (runs/2026-09-24T12-58-48/data/news.json) that isSubjectRelevant wrongly
+// rejected before this fix: normalizeCompanyName produced needles no headline
+// could ever match — a trailing "&" left after stripping "Co. Inc." from
+// "Merck & Co. Inc." (MRK), and a leading "The" left in "The Trade Desk Inc."
+// (TTD). Both are fixed by normalizeCompanyName itself, so each fixture below
+// deliberately carries more than three symbols to keep the ≤3-symbols
+// shortcut from masking whether the text-matching fix actually did the work.
+//
+// REGN is different: "Regeneron Pharmaceuticals Inc." normalizes to
+// "Regeneron Pharmaceuticals", a two-word phrase that never appears in this
+// particular headline (it only says "Regeneron"). That is not a
+// normalizeCompanyName bug — the controller ruling explicitly rejects
+// matching on a bare leading word of a multi-word name, since it invites too
+// many false positives ("Regeneron" is distinctive, but the same rule
+// applied elsewhere would not be). REGN's headline is genuine coverage
+// anyway, through the ≤3-symbols branch: a single-company analyst note like
+// this one plausibly carries only its own ticker. news.json does not
+// preserve the real symbols array, so this reconstruction is exactly that —
+// plausible, not verified — which is why it stays a residual limitation in
+// docs/research/2026-09-25-news-relevance.md rather than a closed case.
+func TestIsSubjectRelevantMatchesRealHeadlinesNormalizeCompanyNameOnceMissed(t *testing.T) {
+	mrkCtx := WithCompanyNames(context.Background(), func(ticker string) []string {
+		if ticker == "MRK" {
+			return []string{"Merck & Co. Inc."}
+		}
+		return nil
+	})
+	if !isSubjectRelevant(mrkCtx, []string{"MRK", "MRNA", "PFE", "NVS"},
+		"Merck Advances European Regulatory Approval For Keytruda Combination In Bladder Cancer",
+		"European committee backs Merck's Keytruda + Padcev combo for bladder cancer after Phase 3 trial slashes risk of recurrence by 47%.",
+		"MRK") {
+		t.Error("Merck & Co. Inc.'s trailing '&' after suffix-stripping made this genuine Merck headline unmatchable")
+	}
+
+	ttdCtx := WithCompanyNames(context.Background(), func(ticker string) []string {
+		if ticker == "TTD" {
+			return []string{"The Trade Desk Inc."}
+		}
+		return nil
+	})
+	if !isSubjectRelevant(ttdCtx, []string{"TTD", "APP", "LULU", "MGNI"},
+		"Trade Desk Plans 15% Job Cut, Expects Up to $51 Million In Charges",
+		"Trade Desk shares fall as the company plans to reduce its workforce by approximately 15% as part of an organizational restructuring.",
+		"TTD") {
+		t.Error("The Trade Desk Inc.'s leading 'The' made this genuine Trade Desk headline unmatchable")
+	}
+
+	regnCtx := WithCompanyNames(context.Background(), func(ticker string) []string {
+		if ticker == "REGN" {
+			return []string{"Regeneron Pharmaceuticals Inc."}
+		}
+		return nil
+	})
+	if !isSubjectRelevant(regnCtx, []string{"REGN"},
+		"Regeneron Highlights EYLEA HD Momentum, Dupixent Growth and Pipeline Catalysts",
+		"", "REGN") {
+		t.Error("a single-company Regeneron analyst note (≤3 symbols) did not count as coverage")
+	}
+}
+
+// TestIsSubjectRelevantMatchesACuratedAlias covers aliases.csv end to end:
+// GOOGL's CSV name normalizes to "Alphabet", which a headline that only says
+// "Google" cannot match — this is exactly why the alias exists.
+// internal/universe wires it into the same WithCompanyNames lookup as the
+// primary name (see orchestrator.go); this test wires it the same way by
+// hand, without importing internal/universe, to keep this package's tests
+// free of the import-cycle constraint isSubjectRelevant itself works around.
+func TestIsSubjectRelevantMatchesACuratedAlias(t *testing.T) {
+	symbols := []string{"GOOGL", "MSFT", "AMZN", "META"}
+	ctx := WithCompanyNames(context.Background(), func(ticker string) []string {
+		if ticker == "GOOGL" {
+			return []string{"Alphabet Inc. Class A", "Google"}
+		}
+		return nil
+	})
+	if !isSubjectRelevant(ctx, symbols, "Google unveils new data-center chip", "", "GOOGL") {
+		t.Error("the curated alias 'Google' did not count as coverage for GOOGL")
 	}
 }

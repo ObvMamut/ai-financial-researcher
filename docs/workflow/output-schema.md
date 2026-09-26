@@ -258,6 +258,22 @@ scheduled insider selling and a put/call near 1.0 are the resting state of the m
 EDGAR and the option chain reach US listings only (or a foreign listing's US line); Yahoo's
 chart and headline feeds, which ground quant and news, are global and keyless.
 
+Having a fact is not enough for news, either: whether an Alpaca or Yahoo item is coverage
+of the company at all — not just present for the domain — is decided by
+`isSubjectRelevant` (`internal/marketdata/newsfilter.go`), not by whether the feed's tag
+list happens to carry the symbol. Both feeds filter or rank by tag membership before an
+item ever reaches this check, so a symbol *not* in the tag list is the rare case; the
+finding was that a symbol *in* the tag list is not the same claim as the item being about
+that company — a market wrap or a peer's premarket note tags every name it mentions in
+passing. An item counts as coverage only if its headline or summary names the ticker
+root, the ADR symbol, the company name (or one of its curated aliases,
+`internal/universe/data/aliases.csv` — "Google" for GOOGL, "TSMC" for 2330.TW), or its tag
+list is short enough (≤3 symbols) that being tagged at all is informative. A ticker whose
+every tagged item fails all four checks is uncovered for news exactly as if the feed had
+returned nothing — which is what pulled SAP.DE past the evidence floor on four items that
+were never about SAP. Full method, the real-run regression cases and the residual gaps
+this rule still misses are in `docs/research/2026-09-25-news-relevance.md`.
+
 ## Final trade ideas (Chief Analyst → Go → TUI)
 
 The deliverable: direction, confidence, trade mechanics, quick why.
