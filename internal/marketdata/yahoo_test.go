@@ -389,9 +389,11 @@ func TestYahooHistoryRangeLongSpanUsesExplicitPeriod(t *testing.T) {
 	if p2 < before.Unix() || p2 > after.Unix() {
 		t.Errorf("period2 = %d, want it anchored to the time of the request (%d..%d)", p2, before.Unix(), after.Unix())
 	}
-	wantSpan := 13 * 365 * 24 * 60 * 60 // ~13 years in seconds
-	if gotSpan := p2 - p1; math.Abs(float64(gotSpan-int64(wantSpan))) > 3*24*60*60 {
-		t.Errorf("period2-period1 = %d, want ~13 years (%d)", gotSpan, wantSpan)
+	// Thirteen calendar years back from period2, by the calendar: a fixed
+	// 365-day year drifts a day per leap day, and a 13-year span holds three or
+	// four of them, which a tolerance in days only sometimes covers.
+	if want := time.Unix(p2, 0).AddDate(-13, 0, 0).Unix(); p1 != want {
+		t.Errorf("period1 = %d, want period2 less 13 calendar years (%d)", p1, want)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -590,24 +591,31 @@ func (r *ControlReport) FormatText() string {
 		fmt.Fprintf(&sb, "%d run(s) carry no prescreen.json, so the composite arm skips them.\n", len(r.Skipped))
 	}
 	sb.WriteString("\n")
-	fmt.Fprintf(&sb, "  %-20s %-34s %5s  %7s  %9s  %9s  %9s  %9s  %s\n",
-		"arm", "what it is", "n", "right", "beat bench", "avg", "avg excess", "β-hedged", "95% CI (weeks)")
+	// The label column is as wide as its longest label: the selection and
+	// shipped-by-policy arms carry labels up to ~60 characters, and a fixed
+	// width shorter than that pushed every later column out of line.
+	nameW, labelW := len("arm"), len("what it is")
+	for _, a := range r.Arms {
+		nameW, labelW = max(nameW, utf8.RuneCountInString(a.Name)), max(labelW, utf8.RuneCountInString(a.Label))
+	}
+	fmt.Fprintf(&sb, "  %-*s %-*s %5s  %7s  %9s  %9s  %9s  %9s  %s\n",
+		nameW, "arm", labelW, "what it is", "n", "right", "beat bench", "avg", "avg excess", "β-hedged", "95% CI (weeks)")
 	for _, a := range r.Arms {
 		rec := a.Record
 		if rec.N == 0 {
-			fmt.Fprintf(&sb, "  %-20s %-34s %5s  %7s  %9s  %9s  %9s  %9s   (%d still inside the window)\n",
-				a.Name, a.Label, "—", "—", "—", "—", "—", "—", a.Pending)
+			fmt.Fprintf(&sb, "  %-*s %-*s %5s  %7s  %9s  %9s  %9s  %9s   (%d still inside the window)\n",
+				nameW, a.Name, labelW, a.Label, "—", "—", "—", "—", "—", "—", a.Pending)
 			continue
 		}
-		fmt.Fprintf(&sb, "  %-20s %-34s %5d  %6.0f%%  %8.0f%%  %+8.2f%%  %+8.2f%%  %9s  %s\n",
-			a.Name, a.Label, rec.N, rec.HitRate*100, rec.ExcessHitRate*100, rec.AvgPnL, rec.AvgExcess,
+		fmt.Fprintf(&sb, "  %-*s %-*s %5d  %6.0f%%  %8.0f%%  %+8.2f%%  %+8.2f%%  %9s  %s\n",
+			nameW, a.Name, labelW, a.Label, rec.N, rec.HitRate*100, rec.ExcessHitRate*100, rec.AvgPnL, rec.AvgExcess,
 			formatHedged(a.Hedged), formatCI(a.ExcessCI))
 	}
 	sb.WriteString("\n")
 	for _, a := range r.Arms {
 		if a.Duplicates > 0 || a.Pending > 0 || a.Unmeasurable > 0 || a.NonDirectional > 0 {
-			fmt.Fprintf(&sb, "  %-20s %d re-proposal(s) dropped, %d still inside the window, %d unmeasurable",
-				a.Name, a.Duplicates, a.Pending, a.Unmeasurable)
+			fmt.Fprintf(&sb, "  %-*s %d re-proposal(s) dropped, %d still inside the window, %d unmeasurable",
+				nameW, a.Name, a.Duplicates, a.Pending, a.Unmeasurable)
 			if a.NonDirectional > 0 {
 				fmt.Fprintf(&sb, ", %d dossier(s) with no lean", a.NonDirectional)
 			}
@@ -648,20 +656,31 @@ func (r *ControlReport) verdict() string {
 
 	var sb strings.Builder
 	sb.WriteString("\n")
-	gap := func(label string, over, under HorizonRecord, what string) {
-		if over.N == 0 || under.N == 0 {
-			return
-		}
-		d := (over.HitRate - under.HitRate) * 100
-		e := over.AvgExcess - under.AvgExcess
-		fmt.Fprintf(&sb, "  %-34s %+5.0f pts on hit rate, %+6.2f%% on excess   (%s)\n", label, d, e, what)
+	gaps := []struct {
+		label       string
+		over, under HorizonRecord
+		what        string
+	}{
+		{"Whole model stack adds:", shipped, composite, "shipped vs composite"},
+		{"Specialists and Chief add:", shipped, shortlist, "shipped vs shortlist"},
+		{"Thesis research adds:", by["thesis-lean"], shortlist, "thesis-lean vs shortlist"},
+		{"Merit over the Chief's ranking:", shipped, by["chief-shadow"], "shipped vs chief-shadow"},
+		{"Vetoed names over what shipped:", by["vetoed"], shipped, "vetoed vs shipped"},
+		{"Sector cap cost over merit_veto shipped:", by["sector-capped"], by["shipped-merit_veto"], "sector-capped vs shipped-merit_veto"},
 	}
-	gap("Whole model stack adds:", shipped, composite, "shipped vs composite")
-	gap("Specialists and Chief add:", shipped, shortlist, "shipped vs shortlist")
-	gap("Thesis research adds:", by["thesis-lean"], shortlist, "thesis-lean vs shortlist")
-	gap("Merit over the Chief's ranking:", shipped, by["chief-shadow"], "shipped vs chief-shadow")
-	gap("Vetoed names over what shipped:", by["vetoed"], shipped, "vetoed vs shipped")
-	gap("Sector cap cost over merit_veto shipped:", by["sector-capped"], by["shipped-merit_veto"], "sector-capped vs shipped-merit_veto")
+	// One width for every label, the longest one's, so the figures line up.
+	labelW := 0
+	for _, g := range gaps {
+		labelW = max(labelW, utf8.RuneCountInString(g.label))
+	}
+	for _, g := range gaps {
+		if g.over.N == 0 || g.under.N == 0 {
+			continue
+		}
+		d := (g.over.HitRate - g.under.HitRate) * 100
+		e := g.over.AvgExcess - g.under.AvgExcess
+		fmt.Fprintf(&sb, "  %-*s %+5.0f pts on hit rate, %+6.2f%% on excess   (%s)\n", labelW, g.label, d, e, g.what)
+	}
 	for _, d := range r.Diffs {
 		if d.CI == nil {
 			continue

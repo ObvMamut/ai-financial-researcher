@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
 )
@@ -150,5 +151,35 @@ func TestArmDiffsPairShippedAgainstBothControls(t *testing.T) {
 	}
 	if !strings.Contains(got, "shipped − composite:") || !strings.Contains(got, "indistinguishable from zero") {
 		t.Errorf("an identical arm was not reported as indistinguishable:\n%s", got)
+	}
+}
+
+// TestControlTextColumnsAlignWithLongLabels: the verdict's longest label
+// ("Sector cap cost over merit_veto shipped:", 40 characters) and the arm
+// table's longest labels used to overflow fixed %-34s columns, pushing their
+// figures out of line with every other row.
+func TestControlTextColumnsAlignWithLongLabels(t *testing.T) {
+	rec := HorizonRecord{N: 40, HitRate: 0.5, AvgExcess: 0.1}
+	rep := &ControlReport{HorizonDays: 15, Arms: []ControlArm{
+		{Name: "composite", Label: "pre-screen composite, no model", Record: rec},
+		{Name: "shipped", Label: "what the legacy pipeline shipped", Record: rec},
+		{Name: "shipped-merit_veto", Label: "shipped, merit_veto policy", Record: rec},
+		{Name: "shipped-unrecorded", Label: "shipped, pre-field independent runs (no selection recorded)", Record: rec},
+		{Name: "sector-capped", Label: "shortlist names the sector cap dropped", Record: rec},
+	}}
+	col := func(marker string) map[int]bool {
+		at := map[int]bool{}
+		for _, line := range strings.Split(rep.FormatText(), "\n") {
+			if i := strings.Index(line, marker); i >= 0 {
+				at[utf8.RuneCountInString(line[:i])] = true
+			}
+		}
+		return at
+	}
+	if at := col(" pts on hit rate"); len(at) != 1 {
+		t.Errorf("verdict figures start at %d different columns, want 1:\n%s", len(at), rep.FormatText())
+	}
+	if at := col("   40  "); len(at) != 1 {
+		t.Errorf("arm-table n column starts at %d different columns, want 1:\n%s", len(at), rep.FormatText())
 	}
 }
