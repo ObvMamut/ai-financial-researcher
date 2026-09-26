@@ -15,7 +15,9 @@ import (
 
 // yahooNewsCount is how many items to ask the search endpoint for; newsMaxAge
 // and feedHeadlines are shared with the Alpaca feed and live in newsfilter.go,
-// along with the relevance rule this comment used to claim was applied here.
+// along with isSubjectRelevant — the relevance rule this comment used to claim
+// was applied here before it actually was. A symbol in relatedTickers is not
+// the same claim as the item being about that company; see isSubjectRelevant.
 // Asking for more than we print costs nothing on a keyless endpoint.
 const yahooNewsCount = 20
 
@@ -96,7 +98,7 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 		return TickerData{}, err
 	}
 
-	td, unresolved := p.newsData(resp, ticker, ticker)
+	td, unresolved := p.newsData(ctx, resp, ticker, ticker)
 	if !unresolved {
 		return td, nil
 	}
@@ -110,7 +112,7 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 	if err != nil {
 		return td, err
 	}
-	next, _ := p.newsData(fallback, ticker, adr)
+	next, _ := p.newsData(ctx, fallback, ticker, adr)
 	// The first attempt's own diagnostics (e.g. "unresolved_symbol") describe a
 	// gap that no longer exists once the ADR-mapped fallback found facts; carry
 	// them forward only when the fallback is itself empty, exactly as Warnings
@@ -123,7 +125,7 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 	return next, nil
 }
 
-func (p *yahooNewsProvider) newsData(resp yahooSearchResp, ticker, query string) (TickerData, bool) {
+func (p *yahooNewsProvider) newsData(ctx context.Context, resp yahooSearchResp, ticker, query string) (TickerData, bool) {
 	cutoff := time.Now().Add(-newsMaxAge)
 	var arts []newsArticle
 	// Every filter below is correct on its own, and every one of them ends in
@@ -157,7 +159,7 @@ func (p *yahooNewsProvider) newsData(resp yahooSearchResp, ticker, query string)
 			Publisher: strings.TrimSpace(n.Publisher),
 			Link:      n.Link,
 			Published: published,
-			Related:   relatesTo(n.RelatedTickers, query),
+			Related:   isSubjectRelevant(ctx, n.RelatedTickers, title, "", ticker),
 		})
 	}
 	if len(arts) == 0 {
@@ -198,17 +200,6 @@ func (p *yahooNewsProvider) newsData(resp yahooSearchResp, ticker, query string)
 	}
 	td.Facts = facts
 	return td, false
-}
-
-// relatesTo reports whether Yahoo tagged an item with this ticker.
-func relatesTo(related []string, ticker string) bool {
-	want := strings.ToUpper(strings.TrimSpace(ticker))
-	for _, r := range related {
-		if strings.EqualFold(strings.TrimSpace(r), want) {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *yahooNewsProvider) search(ctx context.Context, ticker string) (yahooSearchResp, error) {

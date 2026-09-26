@@ -127,7 +127,7 @@ func (p *alpacaNewsProvider) Fetch(ctx context.Context, domain string, ticker st
 			Publisher: strings.TrimSpace(n.Source),
 			Link:      n.URL,
 			Published: published.UTC(),
-			Related:   relatesTo(n.Symbols, symbol) || relatesTo(n.Symbols, ticker),
+			Related:   isSubjectRelevant(ctx, n.Symbols, headline, n.Summary, ticker),
 		})
 	}
 

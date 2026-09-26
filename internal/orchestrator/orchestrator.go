@@ -549,6 +549,18 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	if err != nil {
 		return fmt.Errorf("load universe: %w", err)
 	}
+	// The news domain's relevance check (isSubjectRelevant, newsfilter.go)
+	// tests a headline against the company's own name, not just its ticker.
+	// marketdata cannot load the universe itself — universe already imports
+	// marketdata for IsForeignSuffix — so the lookup travels down ctx instead,
+	// covering every BuildPack call this run makes from here on (both legacy
+	// and thesis research modes share this ctx).
+	ctx = marketdata.WithCompanyNames(ctx, func(ticker string) string {
+		if c, ok := uni.Lookup(ticker); ok {
+			return c.Name
+		}
+		return ""
+	})
 
 	// Create run store
 	run := cfg.EvaluationRun
