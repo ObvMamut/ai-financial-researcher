@@ -277,9 +277,9 @@ func TestPerYearStats(t *testing.T) {
 	}
 
 	trades := []trade{
-		{date: "2022-03-04", dir: 1, xs15: 0.05, bxs15: 0.04},
-		{date: "2022-03-11", dir: -1, xs15: -0.02, bxs15: math.NaN()},
-		{date: "2023-04-01", dir: 1, xs15: 0.01, bxs15: 0.02},
+		{date: "2022-03-04", dir: 1, xs15: 0.05, bx15: 0.04},
+		{date: "2022-03-11", dir: -1, xs15: -0.02, bx15: math.NaN()},
+		{date: "2023-04-01", dir: 1, xs15: 0.01, bx15: 0.02},
 	}
 	stats2 := perYearStats(cells, trades)
 	if stats2[0].Top5N != 2 {
@@ -288,7 +288,7 @@ func TestPerYearStats(t *testing.T) {
 	if wantPct := 100 * ((1*0.05 + -1*-0.02) / 2); math.Abs(float64(stats2[0].Top5Pct)-wantPct) > 1e-9 {
 		t.Errorf("2022 top5 pct = %v, want %v", stats2[0].Top5Pct, wantPct)
 	}
-	// Only one of 2022's two trades has a finite bxs15; the NaN leg must be
+	// Only one of 2022's two trades has a finite bx15; the NaN leg must be
 	// dropped from the mean rather than poisoning it.
 	if wantBeta := 100 * 0.04; math.Abs(float64(stats2[0].Top5BetaPct)-wantBeta) > 1e-9 {
 		t.Errorf("2022 top5 beta pct = %v, want %v", stats2[0].Top5BetaPct, wantBeta)

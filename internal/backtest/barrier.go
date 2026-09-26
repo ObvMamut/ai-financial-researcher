@@ -73,7 +73,7 @@ type trade struct {
 	sigma float64
 	path  []quant.Bar // bars P+1 .. P+H
 	xs15  float64
-	bxs15 float64 // beta-adjusted xs15 (r.BX[2]); feeds the per-year report's top-5 excess (E1)
+	bx15  float64 // beta-adjusted version of xs15 (r.BX[2]); feeds the per-year report's top-5 excess (E1) and the side study's beta split (E3); NaN under the same conditions as XS's own BX
 }
 
 // pickTrades selects each (date, index)'s five largest |composite| names with a
@@ -106,7 +106,7 @@ func pickTrades(recs []Record, series map[string]*quant.Series) []trade {
 			}
 			out = append(out, trade{
 				date: r.Date, dir: math.Copysign(1, r.Sig[SigScore]), sigma: r.SigmaDaily,
-				path: s.Bars[r.P+1 : r.P+1+barrierHorizon], xs15: r.XS[2], bxs15: r.BX[2],
+				path: s.Bars[r.P+1 : r.P+1+barrierHorizon], xs15: r.XS[2], bx15: r.BX[2],
 			})
 		}
 	}

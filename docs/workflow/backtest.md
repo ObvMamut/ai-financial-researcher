@@ -125,6 +125,7 @@ changed after it has been seen counts as a new one.
 | Test | Hypothesis | Statistic and decision |
 |---|---|---|
 | **E1**: long history | The edge is a property of the composite, not of the one regime the default 4-year window happens to sample. `cfr backtest --years 10` reaches back through 2018 Q4, 2020 and 2022 as well as the sample already covered. | Composite IC10/IC15 (plain and beta-adjusted) and the top-5 picks' 15-session excess (plain and beta-adjusted), one figure per calendar year, from a `--years 10` run. **E1 does not use the adoption bar above** — ten years does not split into two non-overlapping halves and three regions the way the four-year sample does, so the decision is by calendar year instead. Decision, verbatim from the plan (§4): *"if the composite's beta-adjusted top-5 excess is not positive in a majority of years, the docs stop describing the screen as having an edge, and the TUI says so."* **Not yet run** — a later task runs the `--years 10` replay and applies this decision; that run is what will add E1 to the tests-run count. |
+| **E3**: which side carries the result | The 2026-09-23 run's Top-5 row split the barrier study's picks into longs (+1.316%) and shorts (+0.111%) on *plain* excess only; that split does not say whether the short side is real selection or C4's market-beta exposure in reverse. | Same picks' 15-session directional excess (`internal/backtest/sides.go`'s `Result.Sides`), split long vs short, plain and beta-adjusted, for the whole sample and each half. **E3 does not use the adoption bar above** either — it is a diagnostic split of the barrier study's own picks, not a new signal test. Decision, registered before this runs on real data: *"if shorts are ≤0 beta-adjusted in both halves, pre-register 'long-only merit_veto' as a config test for the live shipped arm."* **Not yet run** — see [E3: which side carries the result](#e3-which-side-carries-the-result-registered-2026-09-25-before-this-ran) below for the detail this row summarizes. |
 
 ## Results
 
@@ -183,3 +184,30 @@ excess:
   beta, not stock selection.
 
 Most of what the screen appeared to earn is exposure to a rising market.
+
+## E3: which side carries the result (registered 2026-09-25, before this ran)
+
+E3 is registered as a row in the Wave B table above; this section is the
+detail behind it. The 2026-09-23 run's Top-5 row above already split the barrier study's five
+largest-|score| picks per index per week into longs and shorts on *plain*
+15-session excess: +1.316% long against +0.111% short, gross. That split does
+not say whether the short side is real selection or just C4's market-beta
+exposure in reverse — the same question C4 asked of the composite's IC.
+
+`internal/backtest/sides.go` answers it by adding the beta-adjusted split
+those two numbers were missing, for the whole sample and each half. It reuses
+`pickTrades`'s selection and `observe`'s `BX` unchanged — it does not
+re-select trades or recompute beta adjustment — and reports, per slice (all,
+H1, H2), the picks' mean directional 15-session excess, gross, split long vs
+short, plain and beta-adjusted: `Result.Sides` (`SidesReport`/`SideStats`),
+the `--json` output's `sides` key, and one `=== E3 ===` table in the text
+report. No per-region breakdown: the task asked only for overall and per
+half.
+
+**Decision rule, registered before this runs on real data:**
+
+> If shorts are ≤0 beta-adjusted in both halves, pre-register "long-only
+> merit_veto" as a config test for the live `shipped` arm.
+
+This has not run yet. Task 7 lands only the reporting code; a later task runs
+the lab and applies the rule to what it prints.

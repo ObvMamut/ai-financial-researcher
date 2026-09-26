@@ -78,10 +78,13 @@ type Result struct {
 	// PerYear is the composite's IC10/IC15 (plain and beta-adjusted) and the
 	// barrier study's top-5 excess (plain and beta-adjusted), one entry per
 	// calendar year (E1, docs/workflow/backtest.md).
-	PerYear       []YearStats   `json:"per_year"`
-	Barrier       BarrierReport `json:"barrier"`
-	Preregistered []TestResult  `json:"preregistered"`
-	TestsRun      int           `json:"tests_run"`
+	PerYear []YearStats   `json:"per_year"`
+	Barrier BarrierReport `json:"barrier"`
+	// Sides is E3: the barrier study's own picks, split long vs short, plain
+	// and beta-adjusted, overall and per half (docs/workflow/backtest.md).
+	Sides         SidesReport  `json:"sides"`
+	Preregistered []TestResult `json:"preregistered"`
+	TestsRun      int          `json:"tests_run"`
 }
 
 const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
@@ -210,6 +213,7 @@ func Analyze(recs []Record, series map[string]*quant.Series) *Result {
 	trades := pickTrades(recs, series)
 	res.Barrier = barrierStudy(trades, mid)
 	res.PerYear = perYearStats(cells, trades)
+	res.Sides = sidesStudy(trades, mid)
 	res.Preregistered = preregistered(cells, mid)
 	for _, t := range res.Preregistered {
 		if t.Status == "run" {
@@ -290,6 +294,16 @@ func (r *Result) Text() string {
 	}
 	fmt.Fprintf(&sb, "same picks, 15-session directional benchmark excess (gross): %.3f%% (long %.3f%%, short %.3f%%)\n\n",
 		b.XS15GrossPct, b.XS15LongGrossPct, b.XS15ShortGrossPct)
+
+	fmt.Fprintf(&sb, "=== E3: same picks' %d-session excess by side, plain / beta-adjusted (gross) ===\n", barrierHorizon)
+	fmt.Fprintf(&sb, "%-5s %8s %8s %8s %8s %6s %6s\n", "slice", "long%", "short%", "longBX%", "shortBX%", "nLong", "nShort")
+	sideRow := func(label string, s SideStats) {
+		fmt.Fprintf(&sb, "%-5s %8.3f %8.3f %8.3f %8.3f %6d %6d\n", label, s.LongPlainPct, s.ShortPlainPct, s.LongBetaPct, s.ShortBetaPct, s.NLong, s.NShort)
+	}
+	sideRow("all", r.Sides.All)
+	sideRow("H1", r.Sides.H1)
+	sideRow("H2", r.Sides.H2)
+	sb.WriteString("\n")
 
 	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run; bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {

@@ -247,8 +247,8 @@ func perYearStats(cells []cell, trades []trade) []YearStats {
 			if !math.IsNaN(t.xs15) {
 				xs = append(xs, t.dir*t.xs15)
 			}
-			if !math.IsNaN(t.bxs15) {
-				bxs = append(bxs, t.dir*t.bxs15)
+			if !math.IsNaN(t.bx15) {
+				bxs = append(bxs, t.dir*t.bx15)
 			}
 		}
 		m, _ = meanSD(xs)
