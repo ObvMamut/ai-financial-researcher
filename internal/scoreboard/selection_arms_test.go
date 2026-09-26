@@ -82,3 +82,98 @@ func TestSelectionShadowArmsScoreTheChiefRankingAndTheVetoes(t *testing.T) {
 		}
 	}
 }
+
+func TestSectorCappedArmAndShippedSplitByPolicy(t *testing.T) {
+	f := newControlFixture(t)
+	up, capped, loser := fixtureTicker(11), fixtureTicker(10), fixtureTicker(0)
+	anchor := 150
+	closeAt := func(tk string, at int) float64 { return closeOnOrBefore(f.prices[tk], f.dates[at]) }
+
+	// A merit_veto run: one idea ships, one sector_cap row carries a scout
+	// direction (a call the arm can score), one carries none (not a call).
+	f.addRun(t, "2025-merit", anchor, "", []model.TradeIdea{
+		{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor)},
+	}, []model.Candidate{{Ticker: up, Index: "sp500", Bias: model.BiasBullish}}, nil)
+	writeJSON(t, filepath.Join(f.runsDir, "2025-merit"), "ideas.json", model.IdeasResult{
+		GeneratedAt: f.dates[anchor] + "T22:00:00Z",
+		Ideas:       []model.TradeIdea{{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor)}},
+		Selection:   model.SelectionMeritVeto,
+	})
+	writeJSON(t, filepath.Join(f.runsDir, "2025-merit"), "data/selection.json", model.SelectionRecord{
+		Policy: model.SelectionMeritVeto, TopN: 1,
+		Rows: []model.SelectionRow{
+			{Ticker: up, Index: "sp500", Direction: model.DirectionBuy, Close: closeAt(up, anchor), MeritRank: 1, Selected: true, ShippedRank: 1},
+			{Ticker: capped, Index: "sp500", Direction: model.DirectionBuy, Close: closeAt(capped, anchor), MeritRank: 2, Excluded: "sector_cap"},
+			// No scout direction: the sector cap dropped it, but neither arm can score it.
+			{Ticker: loser, Index: "sp500", MeritRank: 3, Excluded: "sector_cap"},
+		},
+	})
+	// A second week, so the sector-capped arm carries more than one bet.
+	f.addRun(t, "2025-merit-b", anchor+7, "", nil, nil, nil)
+	writeJSON(t, filepath.Join(f.runsDir, "2025-merit-b"), "data/selection.json", model.SelectionRecord{
+		Policy: model.SelectionMeritVeto, TopN: 1,
+		Rows: []model.SelectionRow{
+			{Ticker: loser, Index: "sp500", Direction: model.DirectionSell, Close: closeAt(loser, anchor+7), MeritRank: 1, Excluded: "sector_cap"},
+		},
+	})
+	// A chief-policy run: no sector cap fires here, but its shipped idea must
+	// land in the chief split, not merit_veto's.
+	f.addRun(t, "2025-chief", anchor+14, "", nil, nil, nil)
+	writeJSON(t, filepath.Join(f.runsDir, "2025-chief"), "ideas.json", model.IdeasResult{
+		GeneratedAt: f.dates[anchor+14] + "T22:00:00Z",
+		Ideas:       []model.TradeIdea{{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor+14)}},
+		Selection:   model.SelectionChief,
+	})
+	// A pre-field run: ships without ever recording a selection policy.
+	f.addRun(t, "2025-prefield", anchor+21, "", []model.TradeIdea{
+		{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor+21)},
+	}, nil, nil)
+
+	rep, err := ControlWithOptions(context.Background(), f.runsDir, f.prices, ControlOptions{Horizon: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arms := map[string]ControlArm{}
+	for _, a := range rep.Arms {
+		arms[a.Name] = a
+	}
+
+	sc := arms["sector-capped"]
+	var scTickers []string
+	for _, e := range sc.Entries {
+		scTickers = append(scTickers, e.Ticker)
+	}
+	// ListRuns walks newest-first; "2025-merit-b" sorts after "2025-merit" and
+	// so is scored first.
+	if strings.Join(scTickers, ",") != loser+","+capped {
+		t.Errorf("sector-capped entries = %v, want %s,%s (the no-direction row dropped)", scTickers, loser, capped)
+	}
+
+	if n := arms["shipped-merit_veto"].Record.N; n != 1 || arms["shipped-merit_veto"].Entries[0].Ticker != up {
+		t.Errorf("shipped-merit_veto = %+v, want exactly the one merit_veto run's idea", arms["shipped-merit_veto"])
+	}
+	if n := arms["shipped-chief"].Record.N; n != 1 {
+		t.Errorf("shipped-chief n=%d, want 1", n)
+	}
+	if n := arms["shipped-unrecorded"].Record.N; n != 1 {
+		t.Errorf("shipped-unrecorded n=%d, want 1 (the pre-field run)", n)
+	}
+	// The pooled shipped arm still carries all three runs undivided.
+	if n := arms["shipped"].Record.N; n != 3 {
+		t.Errorf("pooled shipped n=%d, want 3 (all policies pooled)", n)
+	}
+
+	diffs := map[string]bool{}
+	for _, d := range rep.Diffs {
+		diffs[d.Over+"-"+d.Under] = true
+	}
+	if !diffs["sector-capped-shipped-merit_veto"] {
+		t.Errorf("no sector-capped − shipped-merit_veto difference in %+v", rep.Diffs)
+	}
+	text := rep.FormatText()
+	for _, want := range []string{"sector-capped", "shipped-merit_veto", "shipped-chief", "shipped-unrecorded", "Sector cap cost"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text report lacks %q:\n%s", want, text)
+		}
+	}
+}

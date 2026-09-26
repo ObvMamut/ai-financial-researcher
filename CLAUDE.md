@@ -328,8 +328,10 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    (`degraded`); no corrective re-prompt or DeepSeek fallback runs under this policy.
    Both policies write `data/selection.json` (every shortlisted name: merit rank, labels,
    vetoes, exclusion reason, domain scores, shipped rank, shadow rank), which feeds the
-   scoreboard's `chief-shadow` and `vetoed` arms. `selection = "chief"` (A/B control) is
-   the Chief Analyst path below; single-stock mode always uses it.
+   scoreboard's `chief-shadow`, `vetoed` and `sector-capped` arms (the last, names
+   `max_per_sector` excluded, is the live check on experiment E2's mechanical cap model).
+   `selection = "chief"` (A/B control) is the Chief Analyst path below; single-stock mode
+   always uses it.
 
    **Chief Analyst (Claude, `selection = "chief"`):** reads the 5 reports + the computed base-score table +
    compact verified quant lines + — once ≥10 past ideas have closed — the pipeline's own
