@@ -145,9 +145,9 @@ changed after it has been seen counts as a new one.
 
 | Test | Hypothesis | Statistic and decision |
 |---|---|---|
-| **E1**: long history | The edge is a property of the composite, not of the one regime the default 4-year window happens to sample. `cfr backtest --years 10` reaches back through 2018 Q4, 2020 and 2022 as well as the sample already covered. | Composite IC10/IC15 (plain and beta-adjusted) and the top-5 picks' 15-session excess (plain and beta-adjusted), one figure per calendar year, from a `--years 10` run. **E1 does not use the adoption bar above** — ten years does not split into two non-overlapping halves and three regions the way the four-year sample does, so the decision is by calendar year instead. Decision, verbatim from the plan (§4): *"if the composite's beta-adjusted top-5 excess is not positive in a majority of years, the docs stop describing the screen as having an edge, and the TUI says so."* **Not yet run** — a later task runs the `--years 10` replay and applies this decision; that run is what will add E1 to the tests-run count. |
-| **E3**: which side carries the result | The 2026-09-23 run's Top-5 row split the barrier study's picks into longs (+1.316%) and shorts (+0.111%) on *plain* excess only; that split does not say whether the short side is real selection or C4's market-beta exposure in reverse. | Same picks' 15-session directional excess (`internal/backtest/sides.go`'s `Result.Sides`), split long vs short, plain and beta-adjusted, for the whole sample and each half. **E3 does not use the adoption bar above** either — it is a diagnostic split of the barrier study's own picks, not a new signal test. Decision, registered before this runs on real data: *"if shorts are ≤0 beta-adjusted in both halves, pre-register 'long-only merit_veto' as a config test for the live shipped arm."* **Not yet run** — see [E3: which side carries the result](#e3-which-side-carries-the-result-registered-2026-09-25-before-this-ran) below for the detail this row summarizes. |
-| **E2**: sector-cap grid | One run's default `max_per_sector` (2) held MSFT and SAP.DE to the two IT slots and dropped ORCL on a 0.5% merit gap; one run cannot say whether that cap costs or saves the book. `internal/backtest/book.go` replays a live-shaped weekly book (mechanically standing in for the scout call and the Chief) under `SectorCaps = {1, 2, 3, off}` across every week the panel has. | Per-week difference in beta-adjusted book excess (candidate cap minus the live default's arm, paired by date), Newey-West t at `nwLags(15)`, plus its halves and regions (`BookGrid.PairedTests`). **E2 does not use the adoption bar above** either — like E3, it is a diagnostic replay of the live funnel's own construction, not a new signal test, so its own bar is two-sided: **`|t| > 2.5`, same sign in both halves and every region**, since a departure from the live cap could plausibly help or hurt rather than propose one direction. Decision, registered before this runs on real data: *"a candidate `max_per_sector` value is adopted over the live default only if it clears that bar; otherwise the live default stands."* **Not yet run** — see [E2: live-book replay with a sector-cap grid](#e2-live-book-replay-with-a-sector-cap-grid-pre-registered-2026-09-25) below for the detail this row summarizes. |
+| **E1**: long history | The edge is a property of the composite, not of the one regime the default 4-year window happens to sample. `cfr backtest --years 10` reaches back through 2018 Q4, 2020 and 2022 as well as the sample already covered. | Composite IC10/IC15 (plain and beta-adjusted) and the top-5 picks' 15-session excess (plain and beta-adjusted), one figure per calendar year, from a `--years 10` run. **E1 does not use the adoption bar above** — ten years does not split into two non-overlapping halves and three regions the way the four-year sample does, so the decision is by calendar year instead. Decision, verbatim from the plan (§4): *"if the composite's beta-adjusted top-5 excess is not positive in a majority of years, the docs stop describing the screen as having an edge, and the TUI says so."* **Run 2026-09-26: not triggered.** Beta-adjusted top-5 excess was positive in 7 of 11 calendar years (5 of 9 full years), so nothing changed. See [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest). |
+| **E3**: which side carries the result | The 2026-09-23 run's Top-5 row split the barrier study's picks into longs (+1.316%) and shorts (+0.111%) on *plain* excess only; that split does not say whether the short side is real selection or C4's market-beta exposure in reverse. | Same picks' 15-session directional excess (`internal/backtest/sides.go`'s `Result.Sides`), split long vs short, plain and beta-adjusted, for the whole sample and each half. **E3 does not use the adoption bar above** either — it is a diagnostic split of the barrier study's own picks, not a new signal test. Decision, registered before this runs on real data: *"if shorts are ≤0 beta-adjusted in both halves, pre-register 'long-only merit_veto' as a config test for the live shipped arm."* **Run 2026-09-26: not triggered.** Beta-adjusted shorts were −1.046% in H1 and +0.127% in H2 (10 years), and −0.246% / +0.681% over 4 years, so no long-only config test is registered. See [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest). |
+| **E2**: sector-cap grid | One run's default `max_per_sector` (2) held MSFT and SAP.DE to the two IT slots and dropped ORCL on a 0.5% merit gap; one run cannot say whether that cap costs or saves the book. `internal/backtest/book.go` replays a live-shaped weekly book (mechanically standing in for the scout call and the Chief) under `SectorCaps = {1, 2, 3, off}` across every week the panel has. | Per-week difference in beta-adjusted book excess (candidate cap minus the live default's arm, paired by date), Newey-West t at `nwLags(15)`, plus its halves and regions (`BookGrid.PairedTests`). **E2 does not use the adoption bar above** either — like E3, it is a diagnostic replay of the live funnel's own construction, not a new signal test, so its own bar is two-sided: **`|t| > 2.5`, same sign in both halves and every region**, since a departure from the live cap could plausibly help or hurt rather than propose one direction. Decision, registered before this runs on real data: *"a candidate `max_per_sector` value is adopted over the live default only if it clears that bar; otherwise the live default stands."* **Run 2026-09-26: no change.** E2-1 had t −0.50, E2-3 t −0.61 and E2-off t 0.82 (518 weeks). All three fail, so `max_per_sector` stays at 2. See [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest). |
 
 ## Results
 
@@ -207,6 +207,68 @@ excess:
 
 Most of what the screen appeared to earn is exposure to a rising market.
 
+### Run of 2026-09-26: Wave B, E1–E3 (`docs/research/2026-09-25-evidence/backtest/`)
+
+This section records the one run of each Wave B test, from a binary built at `b5c955e` with every
+key unset. The write-up is `docs/research/2026-09-25-lab-e1-e3.md`, and the raw text and JSON
+reports are in the evidence directory.
+
+- **Sample (`--years 10`).** 521 weekly rebalances from 2016-10-07 to 2026-09-25, with the second
+  half starting on 2021-10-01. The panel has 136,478 rows, drawn from 244 symbols with 0
+  unavailable. The requested start was 2016-09-25, and the run printed no shortfall warning. The
+  earlier `--years 10` run at `5b2e16d` got 3-month bars from `range=max` and is not evidence.
+- **Comparison sample (default 4 years).** 208 rebalances from 2022-10-07 to 2026-09-25, 55,612
+  rows, 0 symbols unavailable.
+- **Survivorship.** The long-history caveat above applies in full. The early years are the
+  weakest upper bounds.
+
+**E1: not triggered, so nothing changes.** This is the composite's beta-adjusted top-5 15-session
+excess per calendar year, in %, gross (`backtest-10y.txt` lines 141–153):
+
+| 2016* | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026* |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| +0.428 | +0.035 | +0.286 | −0.090 | +2.171 | −0.271 | −0.575 | −0.191 | +0.905 | +1.049 | +1.373 |
+
+\* A partial year, with 13 and 37 dates.
+
+It is positive in 7 of 11 years, or 5 of 9 full years. That is a majority, so under the
+registered rule the docs and the TUI keep their current wording. The pass is thin. The
+beta-adjusted composite IC10 over the whole ten years is 0.006, with a Newey-West t of 0.66. The
+2017 figure is +0.035%. The three losing years in a row, 2021–2023, look like a regime rather than
+noise. And the early positive years carry the worst survivorship.
+
+**E2: no change, so `max_per_sector` stays at 2.** These are the 10-year book arms (518 weeks
+each):
+
+| Cap | Mean β-adj excess | Weekly sd | Worst 4-wk overlapping sum |
+|---|---:|---:|---:|
+| 1 | 0.661% | 4.903% | −32.403% |
+| 2 | 0.738% | 5.243% | −37.812% |
+| 3 | 0.686% | 5.308% | −42.448% |
+| off | 0.846% | 5.553% | −42.448% |
+
+Paired against cap 2:
+
+- E2-1 has t −0.50, with halves −0.0034 / +0.0018.
+- E2-3 has t −0.61, with regions −0.0014 / +0.0007 / +0.0014.
+- E2-off has t 0.82, with halves −0.0005 / +0.0027.
+
+None clears |t| > 2.5, and none has a consistent sign. The 4-year run agrees: t 0.30, −0.03 and
+1.27.
+
+**E3: not triggered, so no long-only config test is registered.** The beta-adjusted short side
+was −1.046% in H1 and +0.127% in H2 over 10 years, and −0.246% / +0.681% over 4 years. It is
+therefore not ≤0 in both halves in either sample. The long side is positive beta-adjusted in
+every slice (10 years: 1.026% overall, with 1.329% / 0.689% by half).
+
+**Tests run.** The register now holds **8 decision tests**: C1, C3 and C4 (2026-09-23), plus E1,
+E2-1, E2-3, E2-off and E3 (2026-09-26). None has passed. Both 2026-09-26 reports print
+`tests_run: 3`, a field that counts only the C-series the lab recomputes on every run. Those
+recomputations on the 10-year and refreshed 4-year samples are 6 further looks, and they decide
+nothing. All fail the bar, with C1 closest: 10-year t 1.44, 4-year t 1.62. The 4-year run's E2 and
+E3 figures are 4 further comparison-only looks. In all, 15 statistics were read on 2026-09-26, and
+none changes a setting.
+
 ## E3: which side carries the result (registered 2026-09-25, before this ran)
 
 E3 is registered as a row in the Wave B table above; this section is the
@@ -231,8 +293,7 @@ half.
 > If shorts are ≤0 beta-adjusted in both halves, pre-register "long-only
 > merit_veto" as a config test for the live `shipped` arm.
 
-This has not run yet. Task 7 lands only the reporting code; a later task runs
-the lab and applies the rule to what it prints.
+It ran on 2026-09-26 and did not trigger: see [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest).
 
 ## E2: live-book replay with a sector-cap grid (pre-registered 2026-09-25)
 
@@ -346,5 +407,4 @@ ticker cross-listed in two indices is counted once, keeping the higher |composit
 reading; `off` is exactly the plain top-5 by |composite| with sector composition
 ignored; a tail week with a book but no known return does not inflate `Weeks`; and the
 paired adoption test's two-sided sign check fails when only one region's sign flips)
-are in place. Running the grid against the live panel and recording results against
-the rule above is a later task's job, as for E1 and E3.
+are in place. The grid ran on 2026-09-26, and the recorded results are under [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest).
