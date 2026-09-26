@@ -88,18 +88,18 @@ func vetoedCalls(rec *model.SelectionRecord) []call {
 	return selectionCalls(rowsWithDirection(rec, func(r model.SelectionRow) bool { return r.Vetoed }))
 }
 
-// excludedSectorCap mirrors internal/orchestrator/selection.go's unexported
-// excludedSectorCap constant. The two packages cannot share the literal across
-// an import boundary that only goes the other way (scoreboard already depends
-// on model, never on orchestrator), so this copy is kept next to the one
-// reader of the value, the way the risk_gate and below_cut reasons are not
-// otherwise needed here.
-const excludedSectorCap = "sector_cap"
+// ExcludedSectorCap mirrors internal/orchestrator/selection.go's unexported
+// excludedSectorCap constant, which scoreboard cannot import directly:
+// orchestrator already imports scoreboard (calibration.go, postmortem.go),
+// and the reverse would cycle. Exported so orchestrator can assert the two
+// stay equal instead of drifting silently — see
+// TestExcludedSectorCapMatchesScoreboard in internal/orchestrator.
+const ExcludedSectorCap = "sector_cap"
 
 // sectorCappedCalls is every shortlisted name max_per_sector excluded, at the
 // scout's direction — the live counterpart of experiment E2 (plan §7).
 func sectorCappedCalls(rec *model.SelectionRecord) []call {
-	return selectionCalls(rowsWithDirection(rec, func(r model.SelectionRow) bool { return r.Excluded == excludedSectorCap }))
+	return selectionCalls(rowsWithDirection(rec, func(r model.SelectionRow) bool { return r.Excluded == ExcludedSectorCap }))
 }
 
 func selectionCalls(rows []model.SelectionRow) []call {

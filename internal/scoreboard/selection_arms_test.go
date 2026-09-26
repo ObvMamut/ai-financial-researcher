@@ -128,6 +128,16 @@ func TestSectorCappedArmAndShippedSplitByPolicy(t *testing.T) {
 	f.addRun(t, "2025-prefield", anchor+21, "", []model.TradeIdea{
 		{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor+21)},
 	}, nil, nil)
+	// A single-stock run: also never records a selection policy, but it is not
+	// an "unrecorded" independent run — the field does not apply to it at all.
+	f.addRun(t, "2025-single", anchor+28, "", []model.TradeIdea{
+		{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor+28)},
+	}, nil, nil)
+	writeJSON(t, filepath.Join(f.runsDir, "2025-single"), "ideas.json", model.IdeasResult{
+		GeneratedAt: f.dates[anchor+28] + "T22:00:00Z",
+		Mode:        string(model.ModeSingle),
+		Ideas:       []model.TradeIdea{{Rank: 1, Ticker: up, Index: "sp500", Direction: model.DirectionBuy, PriceAtGeneration: closeAt(up, anchor+28)}},
+	})
 
 	rep, err := ControlWithOptions(context.Background(), f.runsDir, f.prices, ControlOptions{Horizon: 10})
 	if err != nil {
@@ -156,11 +166,14 @@ func TestSectorCappedArmAndShippedSplitByPolicy(t *testing.T) {
 		t.Errorf("shipped-chief n=%d, want 1", n)
 	}
 	if n := arms["shipped-unrecorded"].Record.N; n != 1 {
-		t.Errorf("shipped-unrecorded n=%d, want 1 (the pre-field run)", n)
+		t.Errorf("shipped-unrecorded n=%d, want 1 (only the pre-field independent run, not the single-stock one)", n)
 	}
-	// The pooled shipped arm still carries all three runs undivided.
-	if n := arms["shipped"].Record.N; n != 3 {
-		t.Errorf("pooled shipped n=%d, want 3 (all policies pooled)", n)
+	if n := arms["shipped-single"].Record.N; n != 1 {
+		t.Errorf("shipped-single n=%d, want 1 (the single-stock run, kept out of shipped-unrecorded)", n)
+	}
+	// The pooled shipped arm still carries all four runs undivided.
+	if n := arms["shipped"].Record.N; n != 4 {
+		t.Errorf("pooled shipped n=%d, want 4 (all policies and modes pooled)", n)
 	}
 
 	diffs := map[string]bool{}
@@ -171,7 +184,7 @@ func TestSectorCappedArmAndShippedSplitByPolicy(t *testing.T) {
 		t.Errorf("no sector-capped − shipped-merit_veto difference in %+v", rep.Diffs)
 	}
 	text := rep.FormatText()
-	for _, want := range []string{"sector-capped", "shipped-merit_veto", "shipped-chief", "shipped-unrecorded", "Sector cap cost"} {
+	for _, want := range []string{"sector-capped", "shipped-merit_veto", "shipped-chief", "shipped-single", "shipped-unrecorded", "Sector cap cost"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text report lacks %q:\n%s", want, text)
 		}

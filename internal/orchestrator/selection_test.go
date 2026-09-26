@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/scoreboard"
 )
 
 func meritVetoConfig(t *testing.T) Config {
@@ -263,5 +264,18 @@ func TestChiefSelectionStillRecordsLabels(t *testing.T) {
 	}
 	if complete.Ideas.Selection != model.SelectionChief {
 		t.Errorf("ideas selection = %q", complete.Ideas.Selection)
+	}
+}
+
+// TestExcludedSectorCapMatchesScoreboard guards against the two packages'
+// copies of "sector_cap" drifting apart. scoreboard.ExcludedSectorCap exists
+// only because scoreboard cannot import this package's unexported
+// excludedSectorCap (orchestrator already imports scoreboard, so the reverse
+// would cycle); this is the other half of that mirror, run from the side that
+// can see both.
+func TestExcludedSectorCapMatchesScoreboard(t *testing.T) {
+	if excludedSectorCap != scoreboard.ExcludedSectorCap {
+		t.Errorf("excludedSectorCap = %q, scoreboard.ExcludedSectorCap = %q; the scoreboard's sector-capped arm reads a different value than this package writes",
+			excludedSectorCap, scoreboard.ExcludedSectorCap)
 	}
 }

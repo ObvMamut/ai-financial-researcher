@@ -38,9 +38,11 @@ import (
 // specialists and the Chief add on top of the screening they were handed.
 // merit_veto selection adds three shadow arms from data/selection.json — the
 // Chief's own ranking, the vetoed names and the sector-capped names
-// (selection_arms.go). shipped is also split by ideas.json's own `selection`
-// field (shipped-merit_veto, shipped-chief, shipped-unrecorded) alongside the
-// pooled shipped arm, since a policy's edge is not the other policy's.
+// (selection_arms.go). shipped is also split by run kind alongside the pooled
+// shipped arm, since a policy's edge is not the other policy's:
+// shipped-merit_veto and shipped-chief by ideas.json's own `selection` field,
+// shipped-single for single-stock mode (which never stamps that field), and
+// shipped-unrecorded for the independent-mode runs that predate it.
 // Thesis mode gets its own arms (thesis_arms.go), every arm carries a
 // beta-hedged excess beside the plain one (hedge.go), and the report closes
 // with the pre-screen's whole-universe IC (universe_ic.go).
@@ -165,6 +167,26 @@ type ControlOptions struct {
 	ICHorizons []int
 }
 
+// isSingleStockRun reports whether a run analyzed one user-supplied ticker
+// rather than screening the universe. Single-stock mode never builds
+// data/selection.json or stamps ideas.json's selection field — that field is
+// only ever set for independent-mode runs (orchestrator.go only builds
+// selRows, and only then sets Selection, when cfg.Mode == ModeIndependent) —
+// so an empty Selection on its own cannot tell "predates the field" apart
+// from "the field never applies here." ideas.json states the mode for runs
+// that reached synthesis; metadata.json for the rest, the same fallback
+// isThesisRun uses.
+func isSingleStockRun(ideas *model.IdeasResult, meta *model.RunMeta) bool {
+	mode := ""
+	if ideas != nil {
+		mode = ideas.Mode
+	}
+	if mode == "" && meta != nil {
+		mode = meta.Mode
+	}
+	return mode == string(model.ModeSingle)
+}
+
 // Control builds and scores the arms over every run in runsDir, with the
 // historical lean backfill read from its default location.
 func Control(ctx context.Context, runsDir string, yc marketdata.PriceSource, horizon int) (*ControlReport, error) {
@@ -193,11 +215,18 @@ func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.Price
 	shipped := ControlArm{Name: "shipped", Label: "what the legacy pipeline shipped"}
 	// shipped, split by the policy ideas.json recorded it under (docs/workflow/
 	// scoreboard.md's former caveat: "shipped pools both selection policies").
-	// An older run predating the selection field is neither policy — it is
-	// labelled unrecorded rather than folded into either one.
+	// Single-stock mode gets its own bucket rather than falling into
+	// "unrecorded": it never stamps a selection policy at all (the field only
+	// exists for independent-mode runs), so a run analyzing one ticker is not
+	// evidence about an *independent* run that merely predates the field —
+	// pooling the two would understate how thin "unrecorded" really is and
+	// silently mix an ongoing mode into a bucket named for old runs.
+	// "Unrecorded" is left to mean exactly that: independent-mode runs from
+	// before merit_veto's selection field existed.
 	shippedMerit := ControlArm{Name: "shipped-" + model.SelectionMeritVeto, Label: "shipped, merit_veto policy"}
 	shippedChief := ControlArm{Name: "shipped-" + model.SelectionChief, Label: "shipped, chief policy"}
-	shippedUnrecorded := ControlArm{Name: "shipped-unrecorded", Label: "shipped, pre-field runs (no selection recorded)"}
+	shippedSingle := ControlArm{Name: "shipped-single", Label: "shipped, single-stock mode (no selection policy)"}
+	shippedUnrecorded := ControlArm{Name: "shipped-unrecorded", Label: "shipped, pre-field independent runs (no selection recorded)"}
 	thesis := ControlArm{Name: "thesis", Label: "what thesis mode shipped"}
 	thesisLean := ControlArm{Name: "thesis-lean", Label: "every thesis dossier at its lean"}
 	backfill := ControlArm{Name: "thesis-lean-backfill", Label: "hand-judged leans, pre-lean runs"}
@@ -267,10 +296,12 @@ func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.Price
 		} else {
 			shippedThisRun := shippedCalls(ideas.Ideas)
 			score(&shipped, shippedThisRun)
-			switch ideas.Selection {
-			case model.SelectionMeritVeto:
+			switch {
+			case isSingleStockRun(ideas, meta):
+				score(&shippedSingle, shippedThisRun)
+			case ideas.Selection == model.SelectionMeritVeto:
 				score(&shippedMerit, shippedThisRun)
-			case model.SelectionChief:
+			case ideas.Selection == model.SelectionChief:
 				score(&shippedChief, shippedThisRun)
 			default:
 				score(&shippedUnrecorded, shippedThisRun)
@@ -299,7 +330,7 @@ func ControlWithOptions(ctx context.Context, runsDir string, yc marketdata.Price
 		backfill.Entries = append(backfill.Entries, e)
 	}
 
-	rep.Arms = []ControlArm{composite, shortlist, shipped, shippedMerit, shippedChief, shippedUnrecorded,
+	rep.Arms = []ControlArm{composite, shortlist, shipped, shippedMerit, shippedChief, shippedSingle, shippedUnrecorded,
 		thesis, thesisLean, backfill, chiefShadow, vetoed, sectorCapped}
 	// Each arm is deduplicated on its own entries rather than on the union: the
 	// arms are different sets of calls, and a name the shipped arm took once
