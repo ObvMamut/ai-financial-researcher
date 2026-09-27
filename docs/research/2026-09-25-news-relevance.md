@@ -337,33 +337,53 @@ reached them.
 
 ### The fix
 
-`articlesFor` now takes `ctx` and the original CFR ticker, builds the item's *full*
-`ticker_sentiment` tag list (every ticker AlphaVantage associated with that one story, not
-just the one being asked about), and calls the same `isSubjectRelevant` Alpaca and Yahoo
-call. Passing the item's real tag list is what makes `isSubjectRelevant`'s own "≤3 symbols"
-branch mean the same thing here as there: a story tagging one or two names is informative on
-its own; a story tagging a dozen (a market wrap, a multi-holdings alert) is not, and needs an
-actual textual mention to count. An item counts as coverage if `isSubjectRelevant` reads its
-headline or summary as naming the company (ticker root, ADR symbol, company name, or a
-curated alias — see the main doc above), **or** its own `relevance_score` clears
-`AVRelevanceFloor`. A non-subject item is still rendered as a headline fact — AlphaVantage's
-format carries its own per-article relevance and sentiment score, worth keeping visible as
-context — but labelled `context, not about this company` (the identical phrase A2 gave
-Alpaca/Yahoo, so one instruction in `agents/news.md` now covers both feeds), and it is
-dropped from the domain's aggregate `News Sentiment Score`, which is now a mean over
-subject-relevant articles only.
+`articlesFor` now takes `ctx` and the original CFR ticker. An item counts as coverage if its
+headline or summary names the company — `namesCompanyInText` (`newsfilter.go`): ticker root,
+ADR symbol, company name, or a curated alias, the same text match `isSubjectRelevant` itself
+uses — **or** its own `relevance_score` clears `AVRelevanceFloor`.
+
+This deliberately does **not** reuse `isSubjectRelevant`'s tag-membership gate or its "≤3
+symbols" fallback (a short tag list is informative on its own). The first version of this fix
+did reuse it, built from the item's full `ticker_sentiment` array on the theory that it would
+mean the same thing here as for Alpaca/Yahoo. Branch review caught that this makes the
+fallback a near no-op for AlphaVantage specifically: the repo's own captured sample
+(`internal/marketdata/testdata/av_news_sentiment_sample.json`) tags every one of its 52 items
+with only one or two tickers, and a real multi-holdings alert (the AFG Fiduciary example
+below) is no exception — real AV items essentially never carry a tag list long enough to fail
+that branch, so it would have waved almost everything through regardless of what the text
+says, leaving the relevance floor as the only check actually doing anything. AlphaVantage
+already supplies the thing that fallback approximates for Alpaca/Yahoo (a confidence that a
+short tag list is meaningful) directly, as `relevance_score`, so the two checks stay
+independent and are combined with OR instead of being folded into one shared branch.
+
+A non-subject item mixed into a feed that also has at least one relevant item is still
+rendered as a headline fact — AlphaVantage's format carries its own per-article relevance and
+sentiment score, worth keeping visible as context — but labelled `context, not about this
+company` (the identical phrase A2 gave Alpaca/Yahoo, so one instruction in `agents/news.md`
+now covers both feeds), and it is dropped from the domain's aggregate `News Sentiment Score`,
+which is now a mean over subject-relevant articles only.
+
+**If *every* item AlphaVantage returns for a ticker is non-subject, the feed now emits no
+Facts at all — only a warning**, mirroring `newsfilter.go`'s `headlineFacts` exactly (the same
+all-non-subject suppression A2 gave Alpaca/Yahoo). The first version of this fix printed every
+item as a Fact regardless, on the reading that the brief's "non-subject items become...
+facts" described a per-item relabel, not a whole-feed rule. Branch review found this was the
+SAP.DE defect again, undone: `HasDomainEvidence` (`pack.go`) counts any non-empty Facts list
+(other than the earnings-date/US-line notes) as this domain having something to say about the
+ticker, so a ticker whose only AlphaVantage evidence was a market wrap still counted as
+news-covered, still got scored by the news specialist, and would still have cleared
+`checkPriceOnlyEvidence` — exactly what this task exists to close, one provider over. Fixed by
+matching `headlineFacts`'s behaviour precisely rather than reinterpreting it.
 
 ### Choosing `AVRelevanceFloor`: the relevance-score distribution
 
 The ruling was to pin the floor from the saved data, not guess it. Method: every AlphaVantage
 headline fact across `runs/*/data/news.json` (label shape `Headline N (relevance R, sentiment
-...)`) was re-tested against the text rule, with the same universe-backed `ctx` a live run
-wires (company names + `aliases.csv`). Because a saved fact keeps only the rendered
-headline/summary and not AlphaVantage's raw `ticker_sentiment` array, the "≤3 symbols" branch
-cannot be re-derived from disk (the same structural limit the main doc already names for
-Alpaca's `symbols`/Yahoo's `relatedTickers`); the re-test pads the reconstructed tag list to
-length 4 so every item is forced through the real text match, never that branch's free pass —
-conservative, the same bias the original audit adopted.
+...)`) was re-tested against `namesCompanyInText` directly — the same text match, and the same
+absence of a tag-membership gate or "≤3 symbols" fallback, that `articlesFor` itself now uses
+— with the same universe-backed `ctx` a live run wires (company names + `aliases.csv`). Unlike
+the Alpaca/Yahoo re-derivation elsewhere in this doc, no reconstruction or padding of a tag
+list is needed here at all: AlphaVantage's real behaviour never reads one for this check.
 
 **Result, 628 AlphaVantage headline facts across 17 runs and 33 tickers:**
 
@@ -395,21 +415,25 @@ six weakest fails (relevance 0.65–0.71) are all genuine mismatches — the wea
 hand, is a MarketBeat 13F-holdings alert titled *"AFG Fiduciary Services Limited Partnership
 Has $3.87 Million Holdings in Amazon.com, Inc. $AMZN"* (`runs/2026-08-31T09-39-06/data/news.json`,
 `ByTicker["TTD"]`), which names Amazon, not Trade Desk, yet carried a `TTD` `ticker_sentiment`
-entry at relevance 0.65 — a multi-holdings alert tagging several names at once, the AV-feed
-equivalent of SAP.DE's four-name wrap. Sweeping `AVRelevanceFloor` from 0.90 to 1.00 changes
-nothing about how many fails it admits (72, every time, because that is where they already
-sit); only a value above ~0.71 excludes this specific low tail.
+entry at relevance 0.65 — a two-ticker item (AMZN, TTD), the shape a real AlphaVantage item
+actually has, not a market-wrap-sized tag list. The 78 fails split into exactly two clusters
+with nothing between them: 6 at 0.65–0.71, and 72 sitting at the 1.00 ceiling. **Every floor
+value in the empty band between them, (0.71, 1.00], produces the identical partition on this
+data** — it excludes the same six low mismatches and admits the same 72 ceiling-scored items
+regardless of exactly where in that band it sits. The data does not prefer 0.98 to, say, 0.90
+or 1.00; it only rules out anything at or below ~0.71.
 
-**Pinned: `AVRelevanceFloor = 0.98`** — the weakest relevance any text-confirmed article in
-this pipeline's whole saved history has carried. It is not a claim that the floor discriminates
-well at the high end (the data says plainly that it does not); it is the most conservative
-value the data actually supports: no stricter than coverage the pipeline already correctly
-counts (0.98 is the passing population's own minimum), and no looser than the one place the
-data shows real separation (it still correctly excludes the six 0.65–0.71 fails). The residual
-— a subject-relevant item that fails the text rule and scores below 0.98, or one that fails
-the text rule, scores at or near 1.00, and is not actually about the company — is named here
+**Pinned: `AVRelevanceFloor = 0.98`** — chosen within that indifferent band, not because the
+data determines that value over another one in it, but because it is also exactly the weakest
+relevance any text-confirmed article in this pipeline's whole saved history has carried: a
+floor that reads "at least what real coverage has always scored" rather than an arbitrary pick
+from an otherwise indifferent range. It is not a claim that the floor discriminates well at
+the high end (the data says plainly that it does not) — text-passing items count regardless
+of the floor's exact value, since the floor is an OR route, not a requirement. The residual —
+a subject-relevant item that fails the text rule and scores below 0.98, or one that fails the
+text rule, scores at or near 1.00, and is not actually about the company — is named here
 rather than silently absorbed: it is a live limit of AlphaVantage's own relevance score, not
-of `isSubjectRelevant`'s text matching, and no floor value fixes it.
+of the text match, and no floor value fixes it.
 
 ### Acceptance audit: re-run with AlphaVantage included
 
@@ -436,13 +460,26 @@ closes off. That is a statement about this saved history, not a guarantee about 
 a name reachable only through a wrap-tagged, low-relevance AlphaVantage item, with no Alpaca
 or Yahoo coverage either, is exactly the case A1 now catches.
 
+The audit's own re-derivation (`reDeriveNewsCoverage`) re-tests an AlphaVantage-labelled fact
+with `NamesCompanyInText` directly — no padded tag list, since AlphaVantage's real rule never
+reads one — and an Alpaca/Yahoo-labelled fact with the padded `IsSubjectRelevant` call, as
+before. It also treats a fact already labelled `context, not about this company` (a label only
+this fix's own code can have written) as evidence for neither the old rule nor the new one,
+rather than reading its "Headline N (relevance ...)" prefix alone and counting it as an old-rule
+coverage claim it never was: since A1 also suppresses every AlphaVantage Fact for a ticker with
+no relevant item at all, that label can now only appear on one item inside a mixed feed that
+has at least one other, genuinely relevant item, so it never actually changes a verdict in this
+history — but a future re-run over post-fix runs would otherwise misread it.
+
 ### Files changed
 
-- `internal/marketdata/alphavantage.go` — `articlesFor` takes `ctx` and the original ticker,
-  builds each item's real tag list, and sets `article.relevant`; `AVRelevanceFloor` (0.98,
-  exported so the audit test can't drift from production); the aggregate `News Sentiment
-  Score` sums only relevant articles; every headline fact is labelled `tagged to this ticker`
-  or `context, not about this company`.
+Initial pass:
+
+- `internal/marketdata/alphavantage.go` — `articlesFor` takes `ctx` and the original ticker
+  and sets `article.relevant`; `AVRelevanceFloor` (0.98, exported so the audit test can't
+  drift from production); the aggregate `News Sentiment Score` sums only relevant articles;
+  every headline fact is labelled `tagged to this ticker` or `context, not about this
+  company`.
 - `internal/marketdata/newsfilter.go` — `IsSubjectRelevant`, an exported wrapper around
   `isSubjectRelevant`, so a cross-package audit can call the real production rule instead of a
   hand-copied one that has to be "kept in sync" (the prior round's own words for exactly this
@@ -452,7 +489,35 @@ or Yahoo coverage either, is exactly the case A1 now catches.
 - `agents/news.md`, `docs/workflow/output-schema.md` — the keyed feed's headlines are now
   described as carrying the same `tagged to this ticker` / `context, not about this company`
   label as the global feed, and the floor is named.
-- Tests: `TestNewsSentimentExcludesAWrapTaggedAtLowRelevance` (new, `alphavantage_test.go`) —
-  the real TTD/AFG-Fiduciary wrap fixture above, plus a genuine same-feed headline as a
-  positive control, asserting the label, the aggregate's article count, and that the wrap is
-  excluded from it.
+- Tests: `TestNewsSentimentExcludesAWrapTaggedAtLowRelevance` (new, `alphavantage_test.go`).
+
+Fix round 1 (2026-09-27 review — see "The fix" and "Choosing `AVRelevanceFloor`" above for
+what changed and why):
+
+- `internal/marketdata/alphavantage.go` — `articlesFor` no longer builds or passes a tag list;
+  it calls `namesCompanyInText` directly. When no article for a ticker is subject-relevant,
+  `fetchNewsSentiment` now returns no Facts at all (only a warning), matching
+  `headlineFacts`'s all-non-subject suppression exactly, so `HasDomainEvidence` sees an empty
+  feed rather than a wrap it would count as coverage. `AVRelevanceFloor`'s comment reframed
+  per Minor 1 below.
+- `internal/marketdata/newsfilter.go` — `isSubjectRelevant`'s text-matching core factored out
+  into `namesCompanyInText` (unexported) and exported as `NamesCompanyInText`, so AlphaVantage
+  and the audit can use the text match without `isSubjectRelevant`'s tag-membership gate or
+  "≤3 symbols" fallback.
+- `internal/orchestrator/news_relevance_audit_test.go` — `reDeriveNewsCoverage` takes separate
+  `avRelevant` (`NamesCompanyInText`, no padding) and `globalFeedRelevant` (padded
+  `IsSubjectRelevant`, unchanged) functions, and treats a fact already labelled `context, not
+  about this company` as coverage under neither rule (Minor 2) instead of reading its
+  "Headline N (relevance ...)" prefix alone.
+- `docs/workflow/output-schema.md` — the AV paragraph corrected: `namesCompanyInText` not
+  `isSubjectRelevant`, no tag-membership gate, and the all-non-subject suppression named
+  explicitly.
+- Tests: `TestNewsSentimentExcludesAWrapTaggedAtLowRelevance`'s fixture rebuilt from the real
+  two-tag AFG-Fiduciary shape (the four-tag version was invented, and would have been rescued
+  by the fallback this fix removes for AV); new
+  `TestNewsSentimentEmitsNoFactsWhenEveryItemIsNonSubject`, asserting
+  `HasDomainEvidence("news", td) == false` on an all-wrap feed, as the review asked; four
+  pre-existing tests (`TestNewsSentimentKeepsHeadlines`, `TestNewsSentimentHyphenatesShareClasses`,
+  `TestAlphaVantageFollowsTheUSLine`, `TestEarningsCalendarSurvivesAQuotaMessage`) updated to
+  wire a company-name `ctx` or raise a fixture's relevance score, matching what a live run
+  always provides, now that AV no longer gets the fallback's free pass.

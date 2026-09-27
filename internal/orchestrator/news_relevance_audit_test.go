@@ -17,36 +17,58 @@ import (
 
 // avHeadlineLabelRE matches alphavantage.go's per-headline fact label,
 // "Headline N (relevance R.RR, sentiment ...)", and captures the relevance.
+// The label's trailing text ("..., tagged to this ticker)" or "..., context,
+// not about this company)", added since A1) decides whether the item counts
+// — see reDeriveNewsCoverage.
 var avHeadlineLabelRE = regexp.MustCompile(`^Headline \d+ \(relevance ([\d.]+), sentiment`)
 
 // TestNewsRelevanceAcceptanceAudit re-derives, from runs already on disk, how
 // many shipped ideas' news coverage would change under the current
-// subject-relevance rule (newsfilter.go's isSubjectRelevant, and — since A1 —
-// alphavantage.go's articlesFor and AVRelevanceFloor). It is gated behind
-// CFR_NEWS_RELEVANCE_RUNS_DIR because it reads an operator's own runs/
-// directory, not a fixture, and it asserts nothing: it exists to reproduce
-// the numbers docs/research/2026-09-25-news-relevance.md reports (and its
-// 2026-09-27 addendum), on demand, the next time the rule changes — the
-// original version of this audit was a one-off script that was never
+// subject-relevance rule (newsfilter.go's isSubjectRelevant/namesCompanyInText,
+// and — since A1 — alphavantage.go's articlesFor and AVRelevanceFloor). It is
+// gated behind CFR_NEWS_RELEVANCE_RUNS_DIR because it reads an operator's own
+// runs/ directory, not a fixture, and it asserts nothing: it exists to
+// reproduce the numbers docs/research/2026-09-25-news-relevance.md reports
+// (and its 2026-09-27 addendum), on demand, the next time the rule changes —
+// the original version of this audit was a one-off script that was never
 // committed, which is the "test drift" this branch is named for.
 //
 // Method, per shipped idea with a `news` domain_scores entry (independent
 // mode only — single-stock never gates on the evidence floor, matching
 // applyRiskGate in riskgate.go):
 //   - A saved fact labelled "Headline N (relevance R, sentiment ...)" is an
-//     AlphaVantage item. Before A1, ANY such fact counted as coverage, with
-//     no relevance threshold at all. It counts now only if isSubjectRelevant
-//     reads its headline/summary as naming the company, or its relevance
-//     clears marketdata.AVRelevanceFloor.
-//   - A saved fact labelled "... (tagged to this ticker)" is an Alpaca/Yahoo
-//     item from before that feed's own subject-relevance fix (F3,
-//     2026-09-25); every run saved so far predates the fix, so this is still
-//     the label the old rule used for "counts as coverage" there too. It
-//     counts now only if isSubjectRelevant reads it the same way.
-//   - Any other label ("News Sentiment Score", "Next earnings", "US line",
-//     or a post-fix "... (context, not about this company)") is metadata or
-//     an already-non-subject item — never evidence of coverage either way,
-//     under the old rule or the new one.
+//     AlphaVantage item.
+//   - If it also ends "context, not about this company)" (a label only A1's
+//     code can have written), the current rule already decided this specific
+//     item is not coverage — it contributes to neither oldCovered nor
+//     newCovered. Since A1 additionally suppresses every AV Fact when *no*
+//     item for a ticker is subject-relevant, this label can now only appear
+//     on one item in a mixed feed that has at least one other, genuinely
+//     relevant item — so it never changes a ticker's oldCovered/newCovered
+//     verdict on its own, but it must not be misread as "the old rule counted
+//     this", which a plain regex match on the "Headline N (relevance ...)"
+//     prefix alone would do.
+//   - Otherwise (no trailing marker, i.e. saved before A1, or ending "tagged
+//     to this ticker)") it is being read as the old rule's own claim of
+//     coverage: before A1, AV counted ANY item with a ticker_sentiment entry,
+//     with no relevance threshold and no subject check at all. It counts
+//     under the *current* rule only if AlphaVantage's relevance_score clears
+//     AVRelevanceFloor, or the headline/summary itself names the company —
+//     namesCompanyInText, not the full isSubjectRelevant: AlphaVantage does
+//     not get isSubjectRelevant's tag-membership gate or "≤3 symbols"
+//     fallback (see articlesFor's own comment for why), so re-deriving it
+//     with that fallback available would overstate how often the old rule's
+//     claim still holds.
+//   - A saved fact labelled "... (tagged to this ticker)" that is *not* an AV
+//     label (the regex above doesn't match) is an Alpaca/Yahoo item from
+//     before that feed's own subject-relevance fix (F3, 2026-09-25); every
+//     run saved so far predates the fix, so this is still the label the old
+//     rule used for "counts as coverage" there. It counts under the current
+//     rule only if the full isSubjectRelevant reads it the same way.
+//   - Any other label ("News Sentiment Score", "Next earnings", "US line", or
+//     a post-fix Alpaca/Yahoo "... (context, not about this company)") is
+//     metadata or an already-non-subject item — never evidence of coverage
+//     either way, under the old rule or the new one.
 //
 // If every one of a ticker's facts loses coverage under the new rule while at
 // least one had it under the old rule, `news` is dropped from a copy of that
@@ -54,16 +76,17 @@ var avHeadlineLabelRE = regexp.MustCompile(`^Headline \d+ \(relevance ([\d.]+), 
 // unexported, called directly since this test lives in the same package) is
 // run against what remains.
 //
-// Limit, carried over unchanged from the 2026-09-25 audit: a saved fact keeps
+// Limit, carried over unchanged from the 2026-09-25 audit, for the
+// Alpaca/Yahoo (not AlphaVantage — see above) branch only: a saved fact keeps
 // only the rendered headline/summary, never the provider's raw tag list
-// (Alpaca's symbols, Yahoo's relatedTickers, AlphaVantage's ticker_sentiment
-// array), so isSubjectRelevant's own "<=3 symbols" branch — a short tag list
-// is informative on its own — cannot be re-derived from disk. Padding the
-// symbols list this test builds to length 4 (the real ticker plus three
-// placeholders) keeps the tag-membership gate open while forcing every check
-// through the real text match instead of that branch's free pass. This makes
-// the audit conservative — an upper bound on how many ideas would flip, not
-// an exact replay — exactly the prior round's own stated bias.
+// (Alpaca's symbols, Yahoo's relatedTickers), so isSubjectRelevant's own
+// "≤3 symbols" branch cannot be re-derived from disk for those two feeds.
+// Padding the symbols list this test builds to length 4 (the real ticker plus
+// three placeholders) keeps the tag-membership gate open while forcing every
+// check through the real text match instead of that branch's free pass. This
+// makes the audit conservative for Alpaca/Yahoo — an upper bound on how many
+// ideas would flip, not an exact replay — exactly the prior round's own
+// stated bias.
 func TestNewsRelevanceAcceptanceAudit(t *testing.T) {
 	dir := os.Getenv("CFR_NEWS_RELEVANCE_RUNS_DIR")
 	if dir == "" {
@@ -84,8 +107,16 @@ func TestNewsRelevanceAcceptanceAudit(t *testing.T) {
 		}
 		return append(names, universe.AliasesFor(ticker)...)
 	})
-	textRelevant := func(ticker, headline, summary string) bool {
+	// globalFeedRelevant re-derives an Alpaca/Yahoo fact, padded past the
+	// "≤3 symbols" fallback (see the doc comment above).
+	globalFeedRelevant := func(ticker, headline, summary string) bool {
 		return marketdata.IsSubjectRelevant(ctx, []string{ticker, "__pad1__", "__pad2__", "__pad3__"}, headline, summary, ticker)
+	}
+	// avRelevant re-derives an AlphaVantage fact with the same text match
+	// articlesFor itself uses — no tag-membership gate, no "≤3 symbols"
+	// fallback.
+	avRelevant := func(ticker, headline, summary string) bool {
+		return marketdata.NamesCompanyInText(ctx, headline, summary, ticker)
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -122,7 +153,7 @@ func TestNewsRelevanceAcceptanceAudit(t *testing.T) {
 			if !ok {
 				continue
 			}
-			oldCovered, newCovered := reDeriveNewsCoverage(td, idea.Ticker, textRelevant)
+			oldCovered, newCovered := reDeriveNewsCoverage(td, idea.Ticker, globalFeedRelevant, avRelevant)
 			if !oldCovered || newCovered {
 				continue
 			}
@@ -151,24 +182,36 @@ func TestNewsRelevanceAcceptanceAudit(t *testing.T) {
 // reDeriveNewsCoverage reads one ticker's saved news facts and reports
 // whether the ticker counted as covered under the rule that produced them
 // (oldCovered) and under the current rule (newCovered). See
-// TestNewsRelevanceAcceptanceAudit's doc comment for what each label means.
-func reDeriveNewsCoverage(td marketdata.TickerData, ticker string, textRelevant func(ticker, headline, summary string) bool) (oldCovered, newCovered bool) {
+// TestNewsRelevanceAcceptanceAudit's doc comment for what each label means and
+// why AlphaVantage and Alpaca/Yahoo facts are re-derived differently.
+func reDeriveNewsCoverage(
+	td marketdata.TickerData,
+	ticker string,
+	globalFeedRelevant func(ticker, headline, summary string) bool,
+	avRelevant func(ticker, headline, summary string) bool,
+) (oldCovered, newCovered bool) {
 	for _, f := range td.Facts {
 		title := f.Value
 		if i := strings.Index(title, " — "); i > 0 {
 			title = title[:i]
 		}
 		if m := avHeadlineLabelRE.FindStringSubmatch(f.Label); m != nil {
+			if strings.HasSuffix(f.Label, "context, not about this company)") {
+				// Already decided by the current rule: never coverage, under
+				// either rule. Not "continue to the tagged check" — an AV
+				// label never also matches the Alpaca/Yahoo suffix below.
+				continue
+			}
 			oldCovered = true
 			rel, err := strconv.ParseFloat(m[1], 64)
-			if err == nil && (rel >= marketdata.AVRelevanceFloor || textRelevant(ticker, title, f.Summary)) {
+			if err == nil && (rel >= marketdata.AVRelevanceFloor || avRelevant(ticker, title, f.Summary)) {
 				newCovered = true
 			}
 			continue
 		}
 		if strings.HasSuffix(f.Label, "(tagged to this ticker)") {
 			oldCovered = true
-			if textRelevant(ticker, title, f.Summary) {
+			if globalFeedRelevant(ticker, title, f.Summary) {
 				newCovered = true
 			}
 		}

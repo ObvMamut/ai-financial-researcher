@@ -282,6 +282,21 @@ func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary,
 	if !relatesTo(symbols, ticker) && !relatesTo(symbols, root) && !relatesTo(symbols, adr) {
 		return false
 	}
+	if namesCompanyInText(ctx, headline, summary, ticker) {
+		return true
+	}
+	return len(symbols) <= 3
+}
+
+// namesCompanyInText is isSubjectRelevant's text-matching core, factored out
+// so a caller whose tag list can't be given the same "≤3 symbols" reading
+// (see alphavantage.go's articlesFor) can use the real name/root/ADR match
+// without also inheriting that fallback or the tag-membership gate. It reports
+// whether headline or summary names the ticker root, the ADR symbol, or the
+// company name or one of its aliases.
+func namesCompanyInText(ctx context.Context, headline, summary, ticker string) bool {
+	root := tickerRoot(ticker)
+	adr, _ := USLine(ticker)
 	text := headline + " " + summary
 	if mentionsSymbol(text, root) {
 		return true
@@ -294,7 +309,7 @@ func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary,
 			return true
 		}
 	}
-	return len(symbols) <= 3
+	return false
 }
 
 // IsSubjectRelevant exports isSubjectRelevant's rule for callers outside this
@@ -309,6 +324,16 @@ func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary,
 // real function removes that drift risk.
 func IsSubjectRelevant(ctx context.Context, symbols []string, headline, summary, ticker string) bool {
 	return isSubjectRelevant(ctx, symbols, headline, summary, ticker)
+}
+
+// NamesCompanyInText exports namesCompanyInText for the same reason
+// IsSubjectRelevant is exported: the acceptance audit re-derives AlphaVantage
+// coverage too, and AlphaVantage (articlesFor, alphavantage.go) uses this text
+// match directly rather than the full isSubjectRelevant rule — it does not
+// take the tag-membership gate or the "≤3 symbols" fallback, so the audit
+// must not either when re-testing an AlphaVantage fact.
+func NamesCompanyInText(ctx context.Context, headline, summary, ticker string) bool {
+	return namesCompanyInText(ctx, headline, summary, ticker)
 }
 
 // headlineFacts renders the articles the prompt will see, newest first, or

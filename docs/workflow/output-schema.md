@@ -284,14 +284,22 @@ AlphaVantage's `NEWS_SENTIMENT` feed carries the same gap one provider over (`ar
 `internal/marketdata/alphavantage.go`): a `ticker_sentiment` entry is AV's own tag-list
 membership, not a subject claim, so a market wrap or an unrelated 13F-holdings alert that
 tags this ticker in passing used to count as coverage with no threshold at all. An AV item
-now counts only if `isSubjectRelevant` reads its headline or summary the same way (the
-item's own full `ticker_sentiment` tag list stands in for the ≤3-symbols check), or its own
-`relevance_score` clears `AVRelevanceFloor` (0.98) — a second route pinned from the saved
-data rather than guessed, and one the data shows adds little discriminating power at the
-high end: see the 2026-09-27 addendum to the doc above. A non-subject AV item is still
-printed as a headline fact, labelled `context, not about this company` exactly like a
-non-subject Alpaca/Yahoo one, but it is dropped from the domain's aggregate
-`News Sentiment Score` and is not coverage for the evidence floor.
+now counts only if its headline or summary names the company (`namesCompanyInText`,
+`internal/marketdata/newsfilter.go` — the text-matching core `isSubjectRelevant` itself
+calls), or its own `relevance_score` clears `AVRelevanceFloor` (0.98). AV deliberately does
+not get `isSubjectRelevant`'s tag-membership gate or its "≤3 symbols" fallback: a real AV
+item's own `ticker_sentiment` array almost always carries one or two tickers, which would
+make that fallback a near no-op for this provider and leave the relevance floor doing all
+the work, so the two checks are kept independent and combined with OR instead. The floor
+is pinned from the saved data rather than guessed, and the data shows it adds little
+discriminating power at the high end: see the 2026-09-27 addendum to the doc above. A
+non-subject AV item mixed into a feed that has at least one relevant item is still printed
+as a headline fact, labelled `context, not about this company` exactly like a non-subject
+Alpaca/Yahoo one, and is dropped from the domain's aggregate `News Sentiment Score`; if
+*every* item AlphaVantage returned for a ticker is non-subject, the feed emits no Facts at
+all (only a warning), exactly like Alpaca/Yahoo's own all-non-subject case
+(`headlineFacts`), so the ticker is not news-covered on it — `HasDomainEvidence` (this
+section, above) sees an empty Facts list, not a headline it would otherwise count.
 
 ## Final trade ideas (Chief Analyst → Go → TUI)
 

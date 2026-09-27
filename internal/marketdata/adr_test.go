@@ -107,8 +107,13 @@ func TestAlphaVantageFollowsTheUSLine(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("CFR_AV_BASE", srv.URL)
 
+	// AV no longer gets isSubjectRelevant's "≤3 symbols" free pass (fix round
+	// 1), so the fixture's "TSMC" headline needs the curated-alias lookup a
+	// live run wires from universe.AliasesFor (2330.TW's own alias is
+	// "TSMC" — its legal name is never spelled out in a headline).
+	ctx := WithCompanyNames(context.Background(), func(string) []string { return []string{"TSMC"} })
 	p := NewAlphaVantageProvider("key", "")
-	td, err := p.Fetch(context.Background(), "news", "2330.TW")
+	td, err := p.Fetch(ctx, "news", "2330.TW")
 	if err != nil {
 		t.Fatalf("Fetch 2330.TW: %v", err)
 	}

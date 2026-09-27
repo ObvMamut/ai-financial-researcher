@@ -259,9 +259,13 @@ func TestEarningsCalendarSurvivesAQuotaMessage(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("CFR_AV_BASE", srv.URL)
 
+	// AV no longer gets isSubjectRelevant's "≤3 symbols" free pass (fix round
+	// 1), so the fixture's "Nvidia headline number N" titles need the
+	// company-name lookup a live run always wires.
+	ctx := WithCompanyNames(context.Background(), func(string) []string { return []string{"Nvidia"} })
 	p := NewAlphaVantageProvider("testkey", t.TempDir())
 	svc := NewService(nil, p)
-	pack := svc.BuildPack(context.Background(), "news", []string{"NVDA"})
+	pack := svc.BuildPack(ctx, "news", []string{"NVDA"})
 
 	if len(pack.EventDates) != 0 {
 		t.Errorf("a quota message must not become an earnings date: %v", pack.EventDates)

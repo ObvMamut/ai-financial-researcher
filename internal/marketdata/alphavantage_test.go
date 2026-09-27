@@ -48,8 +48,15 @@ func TestNewsSentimentKeepsHeadlines(t *testing.T) {
 	srv, query := serveAVFixture(t, loadAVFixture(t))
 	t.Setenv("CFR_AV_BASE", srv.URL)
 
+	// AV no longer gets isSubjectRelevant's "≤3 symbols" free pass (fix round
+	// 1: a real AV item's own tag list is almost always that short, which
+	// would make the text rule a near no-op for this provider), so the
+	// fixture's "Nvidia headline number N" titles need the company-name
+	// lookup a live run always wires (orchestrator.go's WithCompanyNames) to
+	// count as coverage rather than relying on relevance alone.
+	ctx := WithCompanyNames(context.Background(), func(string) []string { return []string{"Nvidia"} })
 	p := NewAlphaVantageProvider("testkey", t.TempDir())
-	td, err := p.Fetch(context.Background(), "news", "NVDA")
+	td, err := p.Fetch(ctx, "news", "NVDA")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -157,9 +164,13 @@ func TestNewsSentimentHyphenatesShareClasses(t *testing.T) {
 			return
 		}
 		query = r.URL.Query().Get("tickers")
+		// This test is about the hyphenation match, not the subject-relevance
+		// rule, so the relevance score clears AVRelevanceFloor directly
+		// rather than wiring a company-name lookup the ticker-matching logic
+		// under test has no part in.
 		w.Write([]byte(`{"feed":[{"title":"Berkshire news","url":"https://reuters.com/x",
 			"time_published":"20260828T120000","source":"Reuters","source_domain":"reuters.com",
-			"ticker_sentiment":[{"ticker":"BRK-B","relevance_score":"0.9",
+			"ticker_sentiment":[{"ticker":"BRK-B","relevance_score":"0.99",
 			"ticker_sentiment_score":"0.2","ticker_sentiment_label":"Somewhat-Bullish"}]}]}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -178,28 +189,31 @@ func TestNewsSentimentHyphenatesShareClasses(t *testing.T) {
 	}
 }
 
-// A2's F3 defect one provider over (A1): AlphaVantage's ticker_sentiment entry
-// is membership in the feed's tag list, not a claim the story is about this
-// company — the same gap Alpaca/Yahoo had before isSubjectRelevant
-// (newsfilter.go). The wrap item here is real, from runs/2026-08-31T09-39-06
-// (TTD's saved news.json, "Headline 6 (relevance 0.65, ...)"): a MarketBeat
-// 13F-holdings alert whose own headline names Amazon and $AMZN, not Trade
-// Desk, tagging four names at once the way a real multi-holdings alert does —
-// AV still scored it 0.65 relevant to TTD. A wrap tagged at that relevance,
-// with nothing in its text naming the company, must not count as coverage or
-// be weighted into the aggregate sentiment; a genuine TTD headline in the same
-// feed still must.
+// avWrapItem is the shape of a real low-relevance AlphaVantage item that
+// tags this ticker without being about it, taken from
+// runs/2026-08-31T09-39-06/data/news.json (TTD's saved news.json, "Headline 6
+// (relevance 0.65, ...)"): a MarketBeat 13F-holdings alert whose own headline
+// names Amazon and $AMZN, not Trade Desk. The real captured feed
+// (testdata/av_news_sentiment_sample.json) tags every item with only one or
+// two tickers, never a dozen, so this reconstructs the same two-ticker shape
+// (AMZN, the real subject, plus TTD) rather than an invented multi-name wrap —
+// isSubjectRelevant's own "≤3 symbols" fallback would wave a short tag list
+// like this through, which is exactly why AV does not use that fallback (see
+// articlesFor's comment); this fixture is what pins that.
+const avWrapItem = `{"title":"AFG Fiduciary Services Limited Partnership Has $3.87 Million Holdings in Amazon.com, Inc. $AMZN — MarketBeat",
+	 "url":"https://www.marketbeat.com/instant-alerts/x/","source":"MarketBeat","source_domain":"marketbeat.com",
+	 "time_published":"20260822T070916",
+	 "ticker_sentiment":[
+		{"ticker":"AMZN","relevance_score":"0.95","ticker_sentiment_score":"0.10","ticker_sentiment_label":"Neutral"},
+		{"ticker":"TTD","relevance_score":"0.65","ticker_sentiment_score":"0.11","ticker_sentiment_label":"Neutral"}
+	 ]}`
+
+// A low-relevance wrap tagged to this ticker, mixed in with a genuine headline
+// for it: the wrap must not count as coverage or be weighted into the
+// aggregate sentiment, but must still be printed as context; the genuine
+// headline still must count.
 func TestNewsSentimentExcludesAWrapTaggedAtLowRelevance(t *testing.T) {
-	srv, _ := serveAVFixture(t, []byte(`{"feed":[
-		{"title":"AFG Fiduciary Services Limited Partnership Has $3.87 Million Holdings in Amazon.com, Inc. $AMZN — MarketBeat",
-		 "url":"https://www.marketbeat.com/instant-alerts/x/","source":"MarketBeat","source_domain":"marketbeat.com",
-		 "time_published":"20260822T070916",
-		 "ticker_sentiment":[
-			{"ticker":"AMZN","relevance_score":"0.95","ticker_sentiment_score":"0.10","ticker_sentiment_label":"Neutral"},
-			{"ticker":"TTD","relevance_score":"0.65","ticker_sentiment_score":"0.11","ticker_sentiment_label":"Neutral"},
-			{"ticker":"MSFT","relevance_score":"0.40","ticker_sentiment_score":"0.05","ticker_sentiment_label":"Neutral"},
-			{"ticker":"GOOGL","relevance_score":"0.30","ticker_sentiment_score":"0.02","ticker_sentiment_label":"Neutral"}
-		 ]},
+	srv, _ := serveAVFixture(t, []byte(`{"feed":[`+avWrapItem+`,
 		{"title":"The Trade Desk (TTD) beats Q2 earnings estimates",
 		 "url":"https://reuters.com/ttd-earnings","source":"Reuters","source_domain":"reuters.com",
 		 "time_published":"20260828T120000",
@@ -238,6 +252,33 @@ func TestNewsSentimentExcludesAWrapTaggedAtLowRelevance(t *testing.T) {
 	}
 	if !strings.Contains(agg.Value, "from 1 articles") {
 		t.Errorf("aggregate should weight only the subject-relevant article, got %q", agg.Value)
+	}
+}
+
+// When *every* item tagged to this ticker is a low-relevance wrap (the same
+// shape as above, alone this time), the feed must produce no Facts at all —
+// only a warning — exactly as newsfilter.go's headlineFacts does for
+// Alpaca/Yahoo. HasDomainEvidence (pack.go) treats any non-empty Facts list
+// as the news domain having something to say about this ticker other than the
+// earnings-date/US-line notes, so leaving the wrap's headline in as a Fact
+// would make this ticker "news covered" on an item that is not about it — the
+// SAP.DE defect one provider over.
+func TestNewsSentimentEmitsNoFactsWhenEveryItemIsNonSubject(t *testing.T) {
+	srv, _ := serveAVFixture(t, []byte(`{"feed":[`+avWrapItem+`]}`))
+	t.Setenv("CFR_AV_BASE", srv.URL)
+
+	td, err := NewAlphaVantageProvider("testkey", t.TempDir()).Fetch(context.Background(), "news", "TTD")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(td.Facts) != 0 {
+		t.Errorf("expected no Facts when every AV item is non-subject, got %+v", td.Facts)
+	}
+	if len(td.Warnings) == 0 {
+		t.Error("expected a warning explaining the feed has no coverage")
+	}
+	if HasDomainEvidence("news", td) {
+		t.Error("HasDomainEvidence should be false when every item is a non-subject wrap")
 	}
 }
 
