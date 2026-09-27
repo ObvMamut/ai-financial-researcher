@@ -156,6 +156,35 @@ const newsFeedLimit = 50
 // for an analyst to form a narrative; few enough to keep the prompt compact.
 const newsHeadlines = 6
 
+// AVRelevanceFloor is the second route to counting an AlphaVantage item as
+// coverage of this company, alongside the shared isSubjectRelevant text rule
+// (see articlesFor). Pinned from the saved data rather than guessed, and the
+// data says something less tidy than "high relevance means on-subject": of
+// 628 AlphaVantage headline facts across runs/*/data/news.json (17 runs, 33
+// tickers, as of 2026-09-27), 550 pass the text rule (min relevance 0.98) and
+// 78 fail it
+// — but 72 of those 78 fails still carry the *same* relevance_score, 1.00, as
+// the bulk of the passes. AlphaVantage's own score does not, on this evidence,
+// separate a subject-relevant item from one it scores highly for some other
+// reason (an ISRG story about robotic surgery that never says "Intuitive
+// Surgical"; "Micron Announces Leadership Appointments..." and "Marvell
+// Falls 4%..." — both real mentions the text rule still misses only because
+// each drops the multi-word normalized name's corporate half, the same
+// residual class already named for Regeneron/Disney/Infineon/Daikin in
+// docs/research/2026-09-25-news-relevance.md) — no floor between 0.90 and
+// 1.00 changes how many of the 78 fails it would still admit (72, every time,
+// because that is where they already sit). So this floor is not a
+// discriminator at the high end; it is pinned at 0.98, the weakest score any
+// text-confirmed article in this pipeline's history has carried, because that
+// is the most conservative value the data actually supports — anything
+// stricter would exclude coverage the pipeline already correctly counts, and
+// it still correctly excludes the sample's only real low-relevance fails (six
+// items at 0.65-0.71, a wrap-style "AFG Fiduciary Services Limited Partnership
+// Has $3.87 Million Holdings" mention among them). See
+// docs/research/2026-09-25-news-relevance.md's 2026-09-27 addendum for the
+// full distribution and the acceptance audit this produced.
+const AVRelevanceFloor = 0.98
+
 // avNewsFeed mirrors the NEWS_SENTIMENT response. Alpha Vantage encodes the
 // per-ticker scores as JSON strings, hence the string-typed score fields.
 type avNewsFeed struct {
@@ -194,6 +223,11 @@ type article struct {
 	relevance float64
 	sentiment float64
 	label     string
+	// relevant is isSubjectRelevant on this item's title+summary, or AV's own
+	// relevance score clearing AVRelevanceFloor — the same subject rule
+	// Alpaca/Yahoo apply (newsfilter.go), plus AV's own second route. An item
+	// that clears neither is context, not coverage: see the call site.
+	relevant bool
 }
 
 func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker string) (TickerData, error) {
@@ -241,7 +275,7 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %s", ErrUnavailable, redact.String(msg))
 	}
 
-	arts := articlesFor(&data, symbol)
+	arts := articlesFor(ctx, &data, symbol, ticker)
 	if len(arts) == 0 {
 		return TickerData{Ticker: ticker}, nil
 	}
@@ -271,31 +305,46 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 
 	// Aggregate first: a relevance-weighted mean of the per-ticker sentiment
 	// scores, not the article-level "overall" score, which mixes in every other
-	// name mentioned in the same piece.
+	// name mentioned in the same piece. Only subject-relevant articles are
+	// weighted in — a market wrap's sentiment is a read on the market, not on
+	// this company, and folding it in is the same F3 defect as counting it for
+	// coverage.
 	var wsum, w float64
+	var relevantCount int
 	for _, a := range arts {
+		if !a.relevant {
+			continue
+		}
 		wsum += a.relevance * a.sentiment
 		w += a.relevance
+		relevantCount++
 	}
-	agg := 0.0
 	if w > 0 {
-		agg = wsum / w
+		agg := wsum / w
+		td.Facts = append(td.Facts, Fact{
+			Label:  "News Sentiment Score",
+			Value:  fmt.Sprintf("%+.3f (%s) from %d articles", agg, sentimentLabel(agg), relevantCount),
+			AsOf:   arts[0].published,
+			Source: "AlphaVantage",
+		})
 	}
-	td.Facts = append(td.Facts, Fact{
-		Label:  "News Sentiment Score",
-		Value:  fmt.Sprintf("%+.3f (%s) from %d articles", agg, sentimentLabel(agg), len(arts)),
-		AsOf:   arts[0].published,
-		Source: "AlphaVantage",
-	})
 
-	// Then the headlines themselves — the citable part.
+	// Then the headlines themselves — the citable part. All of them are
+	// printed, subject and non-subject alike, exactly as the global feed
+	// prints a mix of `tagged to this ticker` and `context, not about this
+	// company` items (newsfilter.go's headlineFacts): a market wrap is real
+	// information, just not evidence of what this company is doing.
 	for i, a := range arts {
 		if i >= newsHeadlines {
 			break
 		}
+		rel := "tagged to this ticker"
+		if !a.relevant {
+			rel = "context, not about this company"
+		}
 		td.Facts = append(td.Facts, Fact{
-			Label: fmt.Sprintf("Headline %d (relevance %.2f, sentiment %+.2f %s)",
-				i+1, a.relevance, a.sentiment, a.label),
+			Label: fmt.Sprintf("Headline %d (relevance %.2f, sentiment %+.2f %s, %s)",
+				i+1, a.relevance, a.sentiment, a.label, rel),
 			Value:   fmt.Sprintf("%s — %s", a.title, a.publisher),
 			AsOf:    a.published,
 			Source:  a.domain,
@@ -323,12 +372,28 @@ func avSymbol(ticker string) string {
 }
 
 // articlesFor keeps only feed items that carry a ticker_sentiment entry for the
-// requested ticker, and scores them from that entry. An article that merely
-// mentions the name in passing has a low relevance_score and sorts itself out.
-func articlesFor(data *avNewsFeed, ticker string) []article {
-	want := avSymbol(ticker)
+// requested ticker (symbol — the AV-spelled query symbol, itself or the ADR
+// line providerSymbol resolved), and scores them from that entry.
+//
+// Carrying a ticker_sentiment entry is AV's own membership test, not a subject
+// test — the F3 defect (newsfilter.go) again, one provider over: a market wrap
+// or a peer's note that tags this ticker in passing carries one too. So an item
+// additionally counts as coverage only if isSubjectRelevant reads it or its own
+// relevance_score clears AVRelevanceFloor. isSubjectRelevant is given the
+// item's actual ticker_sentiment tag list (every ticker AV associated with
+// this one story, not just the one being asked about) so its own "≤3 symbols"
+// branch means what it means for Alpaca/Yahoo: a story tagging a small
+// handful of names is informative on its own, one tagging a dozen (a market
+// wrap) is not. ticker — the original CFR ticker, never symbol, AV's own
+// spelling — is what carries the company name/alias lookup through ctx.
+func articlesFor(ctx context.Context, data *avNewsFeed, symbol, ticker string) []article {
+	want := avSymbol(symbol)
 	var out []article
 	for _, item := range data.Feed {
+		var tags []string
+		for _, ts := range item.TickerSentiment {
+			tags = append(tags, ts.Ticker)
+		}
 		for _, ts := range item.TickerSentiment {
 			if strings.ToUpper(strings.TrimSpace(ts.Ticker)) != want {
 				continue
@@ -358,6 +423,8 @@ func articlesFor(data *avNewsFeed, ticker string) []article {
 			if a.publisher == "" {
 				a.publisher = a.domain
 			}
+			a.relevant = isSubjectRelevant(ctx, tags, a.title, a.summary, ticker) ||
+				a.relevance >= AVRelevanceFloor
 			out = append(out, a)
 			break
 		}

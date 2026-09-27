@@ -297,6 +297,20 @@ func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary,
 	return len(symbols) <= 3
 }
 
+// IsSubjectRelevant exports isSubjectRelevant's rule for callers outside this
+// package that need to re-derive coverage from facts already saved to disk,
+// rather than from a live Fetch: internal/orchestrator's news-relevance
+// acceptance audit (news_relevance_audit_test.go) re-tests a past run's saved
+// headlines against the current rule, and it needs both this package's text
+// matching and internal/universe's name/alias lookup in the same place —
+// exactly the combination WithCompanyNames exists to avoid an import cycle
+// over. A prior version of that audit kept a second, hand-copied implementation
+// of this rule instead and warned it had to be "kept in sync"; exporting the
+// real function removes that drift risk.
+func IsSubjectRelevant(ctx context.Context, symbols []string, headline, summary, ticker string) bool {
+	return isSubjectRelevant(ctx, symbols, headline, summary, ticker)
+}
+
 // headlineFacts renders the articles the prompt will see, newest first, or
 // nothing plus a warning when not one of them is about this company.
 //

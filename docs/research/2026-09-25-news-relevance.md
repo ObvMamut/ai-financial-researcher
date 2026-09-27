@@ -319,3 +319,140 @@ Fix round 2 (final branch review):
 - Tests: `TestIsSubjectRelevantRequiresExactCaseForAWordLikeRoot`,
   `TestIsSubjectRelevantReadsANameAsAProperNoun` (new); label and warning substrings in
   `alpacanews_test.go` and `yahoonews_test.go` updated.
+
+## 2026-09-27 addendum (A1): AlphaVantage gets the same rule
+
+Plan: `docs/plans/2026-09-27-close-news-gap-test-drift.md`, Wave A, task A1.
+
+### The gap this closes
+
+A2 (above) fixed Alpaca and Yahoo. It never touched AlphaVantage: `articlesFor`
+(`internal/marketdata/alphavantage.go`) kept *any* feed item carrying a `ticker_sentiment`
+entry for the requested ticker, with no relevance threshold and no call to
+`isSubjectRelevant`. A `ticker_sentiment` entry is AlphaVantage's own tag-list membership —
+the same claim Alpaca's `symbols` list and Yahoo's `relatedTickers` list make, and no
+stronger a claim that the story is *about* this company. 39 of the 45 news-scored shipped
+ideas in the `runs/` history audited below rest on AlphaVantage coverage; none of A2's fix
+reached them.
+
+### The fix
+
+`articlesFor` now takes `ctx` and the original CFR ticker, builds the item's *full*
+`ticker_sentiment` tag list (every ticker AlphaVantage associated with that one story, not
+just the one being asked about), and calls the same `isSubjectRelevant` Alpaca and Yahoo
+call. Passing the item's real tag list is what makes `isSubjectRelevant`'s own "≤3 symbols"
+branch mean the same thing here as there: a story tagging one or two names is informative on
+its own; a story tagging a dozen (a market wrap, a multi-holdings alert) is not, and needs an
+actual textual mention to count. An item counts as coverage if `isSubjectRelevant` reads its
+headline or summary as naming the company (ticker root, ADR symbol, company name, or a
+curated alias — see the main doc above), **or** its own `relevance_score` clears
+`AVRelevanceFloor`. A non-subject item is still rendered as a headline fact — AlphaVantage's
+format carries its own per-article relevance and sentiment score, worth keeping visible as
+context — but labelled `context, not about this company` (the identical phrase A2 gave
+Alpaca/Yahoo, so one instruction in `agents/news.md` now covers both feeds), and it is
+dropped from the domain's aggregate `News Sentiment Score`, which is now a mean over
+subject-relevant articles only.
+
+### Choosing `AVRelevanceFloor`: the relevance-score distribution
+
+The ruling was to pin the floor from the saved data, not guess it. Method: every AlphaVantage
+headline fact across `runs/*/data/news.json` (label shape `Headline N (relevance R, sentiment
+...)`) was re-tested against the text rule, with the same universe-backed `ctx` a live run
+wires (company names + `aliases.csv`). Because a saved fact keeps only the rendered
+headline/summary and not AlphaVantage's raw `ticker_sentiment` array, the "≤3 symbols" branch
+cannot be re-derived from disk (the same structural limit the main doc already names for
+Alpaca's `symbols`/Yahoo's `relatedTickers`); the re-test pads the reconstructed tag list to
+length 4 so every item is forced through the real text match, never that branch's free pass —
+conservative, the same bias the original audit adopted.
+
+**Result, 628 AlphaVantage headline facts across 17 runs and 33 tickers:**
+
+| | n | min relevance | max | mean |
+|---|---|---|---|---|
+| Passes the text rule | 550 | 0.980 | 1.000 | 0.9997 |
+| Fails the text rule | 78 | 0.650 | 1.000 | 0.9738 |
+
+This is a less tidy picture than "relevance separates subject from non-subject": **72 of the
+78 text-rule fails carry relevance 1.00** — the same score the bulk of the passes carry.
+AlphaVantage's own score does not, on this evidence, reliably distinguish a story that is
+about this company from one it scores highly for some other reason. Three concrete fails at
+relevance 1.00, read by hand:
+
+- `ISRG`, *"Robot-assisted surgery shows clinical advantages over laparoscopic surgery for
+  gastric cancer"* — plausibly real coverage of Intuitive Surgical's clinical domain, but the
+  captured headline/summary never says "Intuitive Surgical" or "ISRG", so the text rule can't
+  confirm it. A genuine miss on this rule's side, not a false high score from AlphaVantage.
+- `MU`, *"Micron Announces Leadership Appointments to Accelerate Innovation and Growth"* and
+  `MRVL`, *"Marvell Falls 4% Ahead of August 27 Earnings..."* — both real, on-topic headlines
+  that name the company by its short form only ("Micron", "Marvell"), not the universe CSV's
+  full normalized name ("Micron Technology", "Marvell Technology"). This is the same residual
+  limit the main doc already names for Regeneron/Disney/Infineon/Daikin ("a multi-word
+  normalized name where a headline commonly uses just its leading distinctive word") —
+  confirmed here on two more names, not a new defect.
+
+The only place relevance actually separates the two populations is the low end: the sample's
+six weakest fails (relevance 0.65–0.71) are all genuine mismatches — the weakest, read by
+hand, is a MarketBeat 13F-holdings alert titled *"AFG Fiduciary Services Limited Partnership
+Has $3.87 Million Holdings in Amazon.com, Inc. $AMZN"* (`runs/2026-08-31T09-39-06/data/news.json`,
+`ByTicker["TTD"]`), which names Amazon, not Trade Desk, yet carried a `TTD` `ticker_sentiment`
+entry at relevance 0.65 — a multi-holdings alert tagging several names at once, the AV-feed
+equivalent of SAP.DE's four-name wrap. Sweeping `AVRelevanceFloor` from 0.90 to 1.00 changes
+nothing about how many fails it admits (72, every time, because that is where they already
+sit); only a value above ~0.71 excludes this specific low tail.
+
+**Pinned: `AVRelevanceFloor = 0.98`** — the weakest relevance any text-confirmed article in
+this pipeline's whole saved history has carried. It is not a claim that the floor discriminates
+well at the high end (the data says plainly that it does not); it is the most conservative
+value the data actually supports: no stricter than coverage the pipeline already correctly
+counts (0.98 is the passing population's own minimum), and no looser than the one place the
+data shows real separation (it still correctly excludes the six 0.65–0.71 fails). The residual
+— a subject-relevant item that fails the text rule and scores below 0.98, or one that fails
+the text rule, scores at or near 1.00, and is not actually about the company — is named here
+rather than silently absorbed: it is a live limit of AlphaVantage's own relevance score, not
+of `isSubjectRelevant`'s text matching, and no floor value fixes it.
+
+### Acceptance audit: re-run with AlphaVantage included
+
+`internal/orchestrator/news_relevance_audit_test.go`'s `TestNewsRelevanceAcceptanceAudit`,
+gated behind `CFR_NEWS_RELEVANCE_RUNS_DIR` (a prior round of this audit was a script that was
+never committed — the "test drift" this branch is named for; it is committed now, so a future
+rule change can re-run it instead of re-deriving these numbers by hand). Re-run against this
+repository's own `runs/` directory:
+
+```
+28 runs with both ideas.json and data/news.json, 45 news-scored shipped ideas,
+1 flip to uncovered, 1 of those then fails the evidence floor
+```
+
+Identical to the pre-A1 result: **SAP.DE is still the only flip**, and it still fails
+`checkPriceOnlyEvidence` on `quant` alone. AlphaVantage's inclusion changes nothing in this
+particular history, and the reason is now confirmed rather than assumed: of the 39 shipped
+ideas resting on AlphaVantage coverage, every one has at least one headline that clears the
+new rule — via the text match for the large majority (a 33-ticker, 628-item sample where 550
+pass outright), and the six historical AlphaVantage-only-covered tickers whose text match
+happened to hold were already established in the pre-A1 audit (fix round 2's supplementary
+check, main doc above). No historical idea was resting solely on the kind of item this task
+closes off. That is a statement about this saved history, not a guarantee about a future run —
+a name reachable only through a wrap-tagged, low-relevance AlphaVantage item, with no Alpaca
+or Yahoo coverage either, is exactly the case A1 now catches.
+
+### Files changed
+
+- `internal/marketdata/alphavantage.go` — `articlesFor` takes `ctx` and the original ticker,
+  builds each item's real tag list, and sets `article.relevant`; `AVRelevanceFloor` (0.98,
+  exported so the audit test can't drift from production); the aggregate `News Sentiment
+  Score` sums only relevant articles; every headline fact is labelled `tagged to this ticker`
+  or `context, not about this company`.
+- `internal/marketdata/newsfilter.go` — `IsSubjectRelevant`, an exported wrapper around
+  `isSubjectRelevant`, so a cross-package audit can call the real production rule instead of a
+  hand-copied one that has to be "kept in sync" (the prior round's own words for exactly this
+  risk).
+- `internal/orchestrator/news_relevance_audit_test.go` (new, committed this time) —
+  `TestNewsRelevanceAcceptanceAudit`, gated on `CFR_NEWS_RELEVANCE_RUNS_DIR`.
+- `agents/news.md`, `docs/workflow/output-schema.md` — the keyed feed's headlines are now
+  described as carrying the same `tagged to this ticker` / `context, not about this company`
+  label as the global feed, and the floor is named.
+- Tests: `TestNewsSentimentExcludesAWrapTaggedAtLowRelevance` (new, `alphavantage_test.go`) —
+  the real TTD/AFG-Fiduciary wrap fixture above, plus a genuine same-feed headline as a
+  positive control, asserting the label, the aggregate's article count, and that the wrap is
+  excluded from it.

@@ -22,6 +22,10 @@ the rest of the confluence.
     aggregate `News Sentiment Score`, for the names it reaches and while its daily budget
     lasts. **Those scores are enrichment, not a requirement.** A name with headlines and no
     scores is fully covered; read the headlines. A name with neither goes in `missing`.
+    This feed's own headlines are labelled `tagged to this ticker` or `context, not about
+    this company` too, by the same rule — a market wrap or an unrelated holdings alert can
+    still carry a relevance score for this ticker without being about it, and its
+    `News Sentiment Score` already excludes those items from the average.
 - **The verified earnings line** — a fact labelled `Next earnings` with a date, from the
   exchange calendar. It is fetched in bulk before you run. On its own it is a fact about
   the calendar, not a read on the flow: a ticker carrying only this line and no headline

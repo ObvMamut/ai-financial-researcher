@@ -178,6 +178,69 @@ func TestNewsSentimentHyphenatesShareClasses(t *testing.T) {
 	}
 }
 
+// A2's F3 defect one provider over (A1): AlphaVantage's ticker_sentiment entry
+// is membership in the feed's tag list, not a claim the story is about this
+// company — the same gap Alpaca/Yahoo had before isSubjectRelevant
+// (newsfilter.go). The wrap item here is real, from runs/2026-08-31T09-39-06
+// (TTD's saved news.json, "Headline 6 (relevance 0.65, ...)"): a MarketBeat
+// 13F-holdings alert whose own headline names Amazon and $AMZN, not Trade
+// Desk, tagging four names at once the way a real multi-holdings alert does —
+// AV still scored it 0.65 relevant to TTD. A wrap tagged at that relevance,
+// with nothing in its text naming the company, must not count as coverage or
+// be weighted into the aggregate sentiment; a genuine TTD headline in the same
+// feed still must.
+func TestNewsSentimentExcludesAWrapTaggedAtLowRelevance(t *testing.T) {
+	srv, _ := serveAVFixture(t, []byte(`{"feed":[
+		{"title":"AFG Fiduciary Services Limited Partnership Has $3.87 Million Holdings in Amazon.com, Inc. $AMZN — MarketBeat",
+		 "url":"https://www.marketbeat.com/instant-alerts/x/","source":"MarketBeat","source_domain":"marketbeat.com",
+		 "time_published":"20260822T070916",
+		 "ticker_sentiment":[
+			{"ticker":"AMZN","relevance_score":"0.95","ticker_sentiment_score":"0.10","ticker_sentiment_label":"Neutral"},
+			{"ticker":"TTD","relevance_score":"0.65","ticker_sentiment_score":"0.11","ticker_sentiment_label":"Neutral"},
+			{"ticker":"MSFT","relevance_score":"0.40","ticker_sentiment_score":"0.05","ticker_sentiment_label":"Neutral"},
+			{"ticker":"GOOGL","relevance_score":"0.30","ticker_sentiment_score":"0.02","ticker_sentiment_label":"Neutral"}
+		 ]},
+		{"title":"The Trade Desk (TTD) beats Q2 earnings estimates",
+		 "url":"https://reuters.com/ttd-earnings","source":"Reuters","source_domain":"reuters.com",
+		 "time_published":"20260828T120000",
+		 "ticker_sentiment":[{"ticker":"TTD","relevance_score":"0.90","ticker_sentiment_score":"0.40","ticker_sentiment_label":"Bullish"}]}
+	]}`))
+	t.Setenv("CFR_AV_BASE", srv.URL)
+
+	td, err := NewAlphaVantageProvider("testkey", t.TempDir()).Fetch(context.Background(), "news", "TTD")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	var agg, wrap, genuine *Fact
+	for i := range td.Facts {
+		f := &td.Facts[i]
+		switch {
+		case f.Label == "News Sentiment Score":
+			agg = f
+		case strings.Contains(f.Value, "AFG Fiduciary"):
+			wrap = f
+		case strings.Contains(f.Value, "beats Q2 earnings"):
+			genuine = f
+		}
+	}
+	if wrap == nil || genuine == nil {
+		t.Fatalf("expected both headlines rendered as facts, got %+v", td.Facts)
+	}
+	if !strings.HasSuffix(wrap.Label, "context, not about this company)") {
+		t.Errorf("wrap item label = %q, want it marked context, not coverage", wrap.Label)
+	}
+	if !strings.HasSuffix(genuine.Label, "tagged to this ticker)") {
+		t.Errorf("genuine item label = %q, want it marked as coverage", genuine.Label)
+	}
+	if agg == nil {
+		t.Fatal("expected an aggregate News Sentiment Score fact from the one genuine article")
+	}
+	if !strings.Contains(agg.Value, "from 1 articles") {
+		t.Errorf("aggregate should weight only the subject-relevant article, got %q", agg.Value)
+	}
+}
+
 // The tier polices roughly one request per second on top of its daily cap.
 func TestAlphaVantageDoesNotBurst(t *testing.T) {
 	var hits int32

@@ -280,6 +280,19 @@ returned nothing — which is what pulled SAP.DE past the evidence floor on four
 were never about SAP. Full method, the real-run regression cases and the residual gaps
 this rule still misses are in `docs/research/2026-09-25-news-relevance.md`.
 
+AlphaVantage's `NEWS_SENTIMENT` feed carries the same gap one provider over (`articlesFor`,
+`internal/marketdata/alphavantage.go`): a `ticker_sentiment` entry is AV's own tag-list
+membership, not a subject claim, so a market wrap or an unrelated 13F-holdings alert that
+tags this ticker in passing used to count as coverage with no threshold at all. An AV item
+now counts only if `isSubjectRelevant` reads its headline or summary the same way (the
+item's own full `ticker_sentiment` tag list stands in for the ≤3-symbols check), or its own
+`relevance_score` clears `AVRelevanceFloor` (0.98) — a second route pinned from the saved
+data rather than guessed, and one the data shows adds little discriminating power at the
+high end: see the 2026-09-27 addendum to the doc above. A non-subject AV item is still
+printed as a headline fact, labelled `context, not about this company` exactly like a
+non-subject Alpaca/Yahoo one, but it is dropped from the domain's aggregate
+`News Sentiment Score` and is not coverage for the evidence floor.
+
 ## Final trade ideas (Chief Analyst → Go → TUI)
 
 The deliverable: direction, confidence, trade mechanics, quick why.
