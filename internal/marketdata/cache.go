@@ -76,6 +76,55 @@ func (c *Cache) keyOn(daysBack int, source, provider, fn, ticker string) string 
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// permanentDir holds entries written by GetPermanent/SetPermanent: payloads
+// that never change once published, so nothing about them is scoped to a
+// calendar date. It is a subdirectory rather than a flat file next to the
+// date-scoped entries so Prune — which walks direct children of baseDir and
+// already skips anything where e.IsDir() — exempts it without needing its own
+// special case.
+func (c *Cache) permanentDir() string {
+	return filepath.Join(c.baseDir, "permanent")
+}
+
+// permanentKey derives the on-disk filename for a permanent entry. Unlike key
+// and keyOn, no date goes into the hash: the whole point of this path is that
+// the same call made today, tomorrow or next year names the same file.
+func (c *Cache) permanentKey(source, provider, fn, key string) string {
+	h := sha256.New()
+	h.Write([]byte(fmt.Sprintf("v%d|permanent|%s|%s|%s|%s", c.schema, source, provider, fn, key)))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// GetPermanent reads an entry cached with no date scoping and no expiry — for
+// a document that is immutable once published (a closed SEC daily index, a
+// filed submissions page). A caller must only write to this path a payload it
+// knows is finished changing; see SetPermanent.
+func (c *Cache) GetPermanent(source, provider, fn, key string, out interface{}) (bool, error) {
+	path := filepath.Join(c.permanentDir(), c.permanentKey(source, provider, fn, key)+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	err = json.Unmarshal(data, out)
+	return err == nil, err
+}
+
+// SetPermanent writes an entry with no date scoping. See GetPermanent.
+func (c *Cache) SetPermanent(source, provider, fn, key string, val interface{}) error {
+	if err := os.MkdirAll(c.permanentDir(), 0755); err != nil {
+		return err
+	}
+	path := filepath.Join(c.permanentDir(), c.permanentKey(source, provider, fn, key)+".json")
+	data, err := json.Marshal(val)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 func (c *Cache) Get(source, provider, fn, ticker string, out interface{}) (bool, error) {
 	path := filepath.Join(c.baseDir, c.key(source, provider, fn, ticker)+".json")
 	data, err := os.ReadFile(path)
@@ -197,7 +246,8 @@ func (c *Cache) SetTTL(source, provider, fn, ticker string, val interface{}) err
 // went. Keys are date-scoped, so yesterday's entries can never be read again —
 // but nothing removed them, and a universe-wide pre-screen writes a few hundred
 // files a day. Returns the count removed; a maxAge of zero or less prunes
-// nothing.
+// nothing. It never descends into permanentDir — e.IsDir() skips it below — so
+// entries written by SetPermanent are never aged out by this pass.
 func (c *Cache) Prune(maxAge time.Duration) (int, error) {
 	if maxAge <= 0 {
 		return 0, nil

@@ -164,6 +164,46 @@ func TestReportDatesOnceWalksTheIndexOnce(t *testing.T) {
 	}
 }
 
+// The bug this test guards: Cache.Get/Set hash today's UTC date into the key,
+// so an entry written for a closed day is a miss again the moment the
+// calendar date changes — every new day re-walks every daily index the run
+// before it already parsed, at ~1MB apiece. reportFilersOn now goes through
+// Cache.GetPermanent/SetPermanent instead, which carries no date. Two
+// edgarProviders sharing one cache directory but built with Caches on
+// different injected clocks stand in for two runs on two different real
+// days; the second one must make zero HTTP requests for a day the first one
+// already fetched.
+func TestReportFilersOnCachesPermanentlyAcrossADayRollover(t *testing.T) {
+	day := lastWeekday(time.Now().UTC().AddDate(0, 0, -2))
+	hits, closeSrv := secReportServer(t, map[string]string{
+		day.Format("20060102"): dailyIndexHeader + idxRow("10-Q", "American Outdoor", "1808997", day.Format("20060102")),
+	})
+	defer closeSrv()
+
+	dir := t.TempDir()
+	cache1 := NewCache(dir)
+	cache1.now = func() time.Time { return time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC) }
+	p1 := NewEdgarProvider("test@example.com", cache1).(*edgarProvider)
+	got1 := p1.reportFilersOn(context.Background(), day)
+	if len(got1) != 1 || got1[0] != "0001808997" {
+		t.Fatalf("first run: got %v, want [0001808997]", got1)
+	}
+	if *hits != 1 {
+		t.Fatalf("first run made %d HTTP requests, want 1", *hits)
+	}
+
+	cache2 := NewCache(dir)
+	cache2.now = func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }
+	p2 := NewEdgarProvider("test@example.com", cache2).(*edgarProvider)
+	got2 := p2.reportFilersOn(context.Background(), day)
+	if len(got2) != 1 || got2[0] != "0001808997" {
+		t.Fatalf("second run: got %v, want [0001808997]", got2)
+	}
+	if *hits != 1 {
+		t.Errorf("second run (a different day) made %d more HTTP requests, want 0", *hits-1)
+	}
+}
+
 // lastWeekday walks back to the nearest weekday, since the index has no weekend
 // files and the walk skips them.
 func lastWeekday(d time.Time) time.Time {

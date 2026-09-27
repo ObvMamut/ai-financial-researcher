@@ -31,9 +31,11 @@ import (
 // The quarterly full index is one request but 55 MB.
 //
 // The daily index is ~1 MB per session and, once a day has been published, it
-// never changes again. So the parsed result caches permanently, a run fetches
-// only the sessions that have appeared since the last one — normally a single
-// file — and the first build of a lookback window costs a couple of dozen small
+// never changes again. So the parsed result caches permanently (Cache.
+// GetPermanent/SetPermanent — keyed on the day only, no calendar date, so the
+// entry survives past the day it was written), a run fetches only the
+// sessions that have appeared since the last one — normally a single file —
+// and the first build of a lookback window costs a couple of dozen small
 // requests spread over SEC's rate limiter.
 //
 // Only US filers appear. A foreign listing with no US line has no row here, and
@@ -113,16 +115,20 @@ func (p *edgarProvider) ReportDates(ctx context.Context, tickers []string, since
 
 // reportFilersOn returns the CIKs that filed a periodic report on one session.
 //
-// A published day's index is immutable, so the parsed result is cached without
-// expiry. The current day is the exception: it is still being written, so it is
-// re-read each run rather than frozen the first time a run happens to look.
+// A published day's index is immutable, so the parsed result goes through
+// Cache.GetPermanent/SetPermanent — no date in the key, so tomorrow's run
+// reads back the same file instead of re-walking it under a key that rotated
+// with the calendar. (Cache.Get/Set would do exactly that: their key hashes in
+// today's date, so an entry written today is already a miss tomorrow.) The
+// current day is the exception: it is still being written, so it is re-read
+// each run, and never cached at all — permanently or otherwise.
 func (p *edgarProvider) reportFilersOn(ctx context.Context, day time.Time) []string {
 	key := day.Format("20060102")
 	fresh := day.Equal(time.Now().UTC().Truncate(24 * time.Hour))
 
 	var cached []string
 	if p.cache != nil && !fresh {
-		if ok, err := p.cache.Get(p.tickersBase, p.Name(), "reportdates", key, &cached); ok && err == nil {
+		if ok, err := p.cache.GetPermanent(p.tickersBase, p.Name(), "reportdates", key, &cached); ok && err == nil {
 			return cached
 		}
 	}
@@ -138,7 +144,7 @@ func (p *edgarProvider) reportFilersOn(ctx context.Context, day time.Time) []str
 	}
 	ciks := parseReportFilers(string(body))
 	if p.cache != nil && !fresh {
-		_ = p.cache.Set(p.tickersBase, p.Name(), "reportdates", key, ciks)
+		_ = p.cache.SetPermanent(p.tickersBase, p.Name(), "reportdates", key, ciks)
 	}
 	return ciks
 }

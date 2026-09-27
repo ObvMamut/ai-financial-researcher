@@ -150,3 +150,62 @@ func TestCachePruneRemovesOldFiles(t *testing.T) {
 		t.Error("Prune removed a fresh entry")
 	}
 }
+
+// Cache.Get/Set hash today's date into the key, so an entry written today is
+// already a miss tomorrow — the bug GetPermanent/SetPermanent exist to fix.
+// Two Cache instances with different injected clocks stand in for two runs on
+// two different days: a real day rollover produces exactly this, and nothing
+// else distinguishes them.
+func TestCacheGetPermanentIgnoresTheDate(t *testing.T) {
+	dir := t.TempDir()
+	day1 := NewCache(dir)
+	day1.now = func() time.Time { return time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC) }
+	if err := day1.SetPermanent("src", "prov", "reportdates", "20260901", []string{"AAA"}); err != nil {
+		t.Fatalf("SetPermanent: %v", err)
+	}
+
+	day2 := NewCache(dir)
+	day2.now = func() time.Time { return time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC) }
+	var got []string
+	found, err := day2.GetPermanent("src", "prov", "reportdates", "20260901", &got)
+	if err != nil {
+		t.Fatalf("GetPermanent: %v", err)
+	}
+	if !found {
+		t.Fatal("an entry written on one day must still be a hit read from a later day")
+	}
+	if len(got) != 1 || got[0] != "AAA" {
+		t.Errorf("got %v, want [AAA]", got)
+	}
+}
+
+// Prune ages out date-scoped entries by file mtime; a permanent entry must
+// never be touched by it, whatever its mtime, because it can never be
+// legitimately stale.
+func TestCachePruneExemptsPermanentEntries(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache(dir)
+	if err := c.SetPermanent("src", "prov", "reportdates", "20260901", []string{"AAA"}); err != nil {
+		t.Fatalf("SetPermanent: %v", err)
+	}
+
+	entries, err := os.ReadDir(c.permanentDir())
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("permanentDir listing = %v (err %v), want one file", entries, err)
+	}
+	old := filepath.Join(c.permanentDir(), entries[0].Name())
+	past := time.Now().Add(-365 * 24 * time.Hour)
+	if err := os.Chtimes(old, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Prune(7 * 24 * time.Hour); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	var got []string
+	found, err := c.GetPermanent("src", "prov", "reportdates", "20260901", &got)
+	if err != nil || !found {
+		t.Errorf("Prune removed a permanent entry (found %v, err %v)", found, err)
+	}
+}
