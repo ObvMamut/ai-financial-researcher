@@ -132,10 +132,13 @@ func TestSignalsIgnoreBarsAfterDate(t *testing.T) {
 	}
 }
 
-// A signal planted into the forward returns must come back as a strong IC with
-// a large t; a signal of pure noise must not.
-func TestPlantedSignalIsRecovered(t *testing.T) {
-	rng := rand.New(rand.NewPCG(3, 4))
+// plantedSignalRecords builds a synthetic panel spanning 120 weekly
+// rebalances (~2.3 calendar years, 2022-01-07 into 2024) across three
+// indices, with a planted signal in mom12-1 and noise everywhere else.
+// Shared by TestPlantedSignalIsRecovered and the TestsRun gating test below,
+// since both need the same realistic shape (multiple indices, calendar
+// years, non-empty barrier picks) rather than a hand-built minimal fixture.
+func plantedSignalRecords(rng *rand.Rand) []Record {
 	var recs []Record
 	day := time.Date(2022, 1, 7, 0, 0, 0, 0, time.UTC)
 	for w := 0; w < 120; w++ {
@@ -157,7 +160,17 @@ func TestPlantedSignalIsRecovered(t *testing.T) {
 			}
 		}
 	}
-	res := Analyze(recs, nil)
+	return recs
+}
+
+// A signal planted into the forward returns must come back as a strong IC with
+// a large t; a signal of pure noise must not.
+func TestPlantedSignalIsRecovered(t *testing.T) {
+	recs := plantedSignalRecords(rand.New(rand.NewPCG(3, 4)))
+	// replayYears=10 so E1 counts as a decision (see TestsRun below) — this
+	// fixture is about the signal statistics, not about exercising the E1
+	// --years gate.
+	res := Analyze(recs, nil, 10)
 	all := res.Signals["all"]
 	mom, noise := all[SigMom12_1], all[SigRev21]
 	if !(mom.IC[1] > 0.08 && mom.TNW[1] > 8) {
@@ -182,6 +195,35 @@ func TestPlantedSignalIsRecovered(t *testing.T) {
 	// C5 skipped), E2's three paired tests, and the E1 and E3 decisions.
 	if res.TestsRun != 8 {
 		t.Errorf("tests run = %d, want 8 (C1, C3, C4, E2-1, E2-3, E2-off, E1, E3)", res.TestsRun)
+	}
+}
+
+// TestTestsRunExcludesE1BelowTenYears is the end-to-end pin for A3: the same
+// panel Analyze()d as a --years 4 run (the CLI default) must not count E1
+// toward TestsRun, because the majority-of-years rule was only pre-registered
+// at --years 10 (docs/workflow/backtest.md). Same fixture as
+// TestPlantedSignalIsRecovered, same seed, only replayYears differs — so any
+// change in TestsRun is attributable to the gate, not to the data.
+func TestTestsRunExcludesE1BelowTenYears(t *testing.T) {
+	recs := plantedSignalRecords(rand.New(rand.NewPCG(3, 4)))
+	res := Analyze(recs, nil, 4)
+	if res.Years != 4 {
+		t.Errorf("res.Years = %d, want 4", res.Years)
+	}
+	if res.TestsRun != 7 {
+		t.Errorf("tests run = %d, want 7 (C1, C3, C4, E2-1, E2-3, E2-off, E3 — E1 is a comparison look at --years 4)", res.TestsRun)
+	}
+	var e1 TestResult
+	for _, d := range res.Decisions {
+		if d.ID == "E1" {
+			e1 = d
+		}
+	}
+	if e1.Status != "comparison" {
+		t.Errorf("E1 Status = %q, want comparison", e1.Status)
+	}
+	if !strings.Contains(e1.Verdict, "comparison look") {
+		t.Errorf("E1 Verdict = %q, want it labelled a comparison look", e1.Verdict)
 	}
 }
 
@@ -330,7 +372,7 @@ func TestE1DecisionReadsNetOfCostAcrossEveryCalendarYear(t *testing.T) {
 			Top5BetaPct: Num(g), Top5BetaNetPct: Num(g - 100*costPerLeg),
 		})
 	}
-	d := e1Decision(years)
+	d := e1Decision(years, 10)
 	if !d.Fired || d.Status != "run" {
 		t.Fatalf("E1 = %+v, want fired", d)
 	}
@@ -341,12 +383,45 @@ func TestE1DecisionReadsNetOfCostAcrossEveryCalendarYear(t *testing.T) {
 	for i := range years {
 		years[i].Top5BetaNetPct = years[i].Top5BetaPct
 	}
-	if d := e1Decision(years); d.Fired || !strings.Contains(d.Note, "7 of 11") {
+	if d := e1Decision(years, 10); d.Fired || !strings.Contains(d.Note, "7 of 11") {
 		t.Errorf("gross-as-net E1 = %+v, want not triggered at 7 of 11", d)
 	}
 	// An undefined year is not a positive one.
-	if d := e1Decision([]YearStats{{Year: "2020", Top5BetaNetPct: Num(math.NaN())}}); !d.Fired {
+	if d := e1Decision([]YearStats{{Year: "2020", Top5BetaNetPct: Num(math.NaN())}}, 10); !d.Fired {
 		t.Errorf("a NaN-only table did not fire: %+v", d)
+	}
+}
+
+// TestE1DecisionIsAComparisonLookBelowTenYears pins the A3 rule: the
+// majority-of-years decision was pre-registered at --years 10
+// (docs/workflow/backtest.md); below that the per-year arithmetic still runs
+// (the Note keeps counting years) but it is a comparison look, not the
+// registered decision — Status must not be "run" (so run.go's TestsRun loop
+// does not count it) and Fired must not be set (there is no decision to
+// fire), whatever the underlying figures say.
+func TestE1DecisionIsAComparisonLookBelowTenYears(t *testing.T) {
+	years := []YearStats{
+		{Year: "2022", FullYear: true, Top5BetaNetPct: Num(-1)},
+		{Year: "2023", FullYear: true, Top5BetaNetPct: Num(-1)},
+		{Year: "2024", FullYear: false, Top5BetaNetPct: Num(-1)},
+	}
+	d := e1Decision(years, 4)
+	if d.Status == "run" {
+		t.Errorf("Status = %q at --years 4, want anything but run", d.Status)
+	}
+	if d.Fired {
+		t.Error("a comparison look must never set Fired — there is no decision to fire")
+	}
+	if !strings.Contains(d.Verdict, "comparison look") {
+		t.Errorf("Verdict = %q, want it labelled a comparison look", d.Verdict)
+	}
+	if !strings.Contains(d.Note, "0 of 3 calendar years (0 of 2 full years)") {
+		t.Errorf("Note = %q, want the arithmetic to still run", d.Note)
+	}
+
+	// At exactly the floor, it is a decision again.
+	if d := e1Decision(years, 10); d.Status != "run" {
+		t.Errorf("Status = %q at --years 10, want run", d.Status)
 	}
 }
 
@@ -570,7 +645,7 @@ func TestShortfallWarningFiresWhenTheReplayComesBackShort(t *testing.T) {
 	if len(recs) == 0 {
 		t.Fatal("panel is empty; the synthetic series must still produce at least one scorable week")
 	}
-	res := Analyze(recs, data.Series)
+	res := Analyze(recs, data.Series, years)
 	checkShortfall(res, years, end)
 
 	if !res.Shortfall {

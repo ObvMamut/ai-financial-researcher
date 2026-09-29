@@ -280,12 +280,26 @@ func perYearStats(cells []cell, trades []trade) []YearStats {
 	return out
 }
 
+// e1DecisionMinYears is the shortest --years span E1's rule was pre-registered
+// against (docs/workflow/backtest.md): ten calendar years, enough to ask
+// whether the edge holds across regimes rather than across one split. Below
+// it, the per-year table still computes and is worth reading, but it is a
+// comparison look, not the registered decision — a default 4-year run has no
+// business printing "E1 → not triggered" as if the majority-of-years rule had
+// been evaluated on four years of regime.
+const e1DecisionMinYears = 10
+
 // e1Decision applies E1's registered rule (docs/workflow/backtest.md) to the
 // per-year table: it fires when the net beta-adjusted top-5 excess is not
 // positive in a majority of the replay's calendar years. The full-year count
 // is reported beside it and decides nothing; a year with no computable figure
 // counts as not positive.
-func e1Decision(years []YearStats) TestResult {
+//
+// replayYears is the run's requested --years. Below e1DecisionMinYears the
+// arithmetic still runs (the Note keeps reporting the count) but Status is
+// "comparison" rather than "run", so it does not count toward TestsRun (see
+// run.go) and Fired is never set — there is no decision to fire.
+func e1Decision(years []YearStats, replayYears int) TestResult {
 	r := TestResult{
 		ID:        "E1",
 		Title:     "long history: is the screen's top-5 edge a majority-of-years property, net of the lab's 30bp",
@@ -306,6 +320,12 @@ func e1Decision(years []YearStats) TestResult {
 		}
 	}
 	r.Note = fmt.Sprintf("positive in %d of %d calendar years (%d of %d full years)", pos, len(years), fullPos, full)
+	if replayYears < e1DecisionMinYears {
+		r.Status = "comparison"
+		r.Verdict = fmt.Sprintf("comparison look, not a decision (needs --years >= %d, this run used %d): %s",
+			e1DecisionMinYears, replayYears, r.Note)
+		return r
+	}
 	if 2*pos > len(years) {
 		r.Verdict = "not triggered: " + r.Note
 		return r
@@ -343,8 +363,9 @@ type TestResult struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Statistic string `json:"statistic"`
-	// Status is "run", "untestable" or "skipped"; only "run" counts toward the
-	// number of tests the report says it ran.
+	// Status is "run", "untestable", "skipped" or "comparison" (E1 below its
+	// pre-registered --years floor); only "run" counts toward the number of
+	// tests the report says it ran.
 	Status  string         `json:"status"`
 	Note    string         `json:"note,omitempty"`
 	Mean    Num            `json:"mean"`

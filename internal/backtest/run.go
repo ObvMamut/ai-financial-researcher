@@ -100,7 +100,10 @@ type Result struct {
 	Decisions []TestResult `json:"decisions"`
 	// TestsRun counts every registered test this run performed — C-series,
 	// E2's paired tests and the E1/E3 decisions — so it equals the register in
-	// docs/workflow/backtest.md, one look each per run.
+	// docs/workflow/backtest.md, one look each per run. E1 counts only at
+	// --years 10 or more (e1DecisionMinYears); below that its per-year table
+	// is a comparison look, not a decision, and Status is "comparison" rather
+	// than "run".
 	TestsRun int `json:"tests_run"`
 }
 
@@ -195,9 +198,9 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 		return nil, fmt.Errorf("the panel is empty: no member had %d bars at any rebalance date", minHistory)
 	}
 	logf("panel: %d rows", len(recs))
-	res := Analyze(recs, data.Series)
+	res := Analyze(recs, data.Series, cfg.Years)
 	res.GeneratedAt = cfg.Now.UTC().Format(time.RFC3339)
-	res.Range, res.Years, res.Unavailable = rng, cfg.Years, unavailable
+	res.Range, res.Unavailable = rng, unavailable
 	checkShortfall(res, cfg.Years, end)
 	return res, nil
 }
@@ -238,12 +241,14 @@ func checkShortfall(res *Result, years int, end time.Time) {
 }
 
 // Analyze turns a filtered panel into the report. Exposed for tests, which
-// build panels from synthetic series.
-func Analyze(recs []Record, series map[string]*quant.Series) *Result {
+// build panels from synthetic series. replayYears is the run's requested
+// --years (Config.Years), recorded on the result and used to gate E1's
+// decision (e1Decision, e1DecisionMinYears).
+func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *Result {
 	cells := crossSections(recs)
 	mid := midDate(cells)
 	res := &Result{
-		Mid: mid, Rows: len(recs), NamesPerIndex: map[string]int{},
+		Mid: mid, Rows: len(recs), NamesPerIndex: map[string]int{}, Years: replayYears,
 		Survivorship: Survivorship, Departures: Departures, CostNote: costNote,
 		Signals: map[string][]SignalStats{}, BetaAdjusted: map[string][]SignalStats{},
 	}
@@ -276,7 +281,7 @@ func Analyze(recs []Record, series map[string]*quant.Series) *Result {
 	res.Sides = sidesStudy(trades, mid)
 	res.BookGrid = BuildBookGrid(recs, mid)
 	res.Preregistered = preregistered(cells, mid)
-	res.Decisions = []TestResult{e1Decision(res.PerYear), e3Decision(res.Sides)}
+	res.Decisions = []TestResult{e1Decision(res.PerYear, replayYears), e3Decision(res.Sides)}
 	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions} {
 		for _, t := range list {
 			if t.Status == "run" {
