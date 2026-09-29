@@ -123,13 +123,35 @@ type submissionsResp struct {
 	// one this issuer holds in somebody else; see aboutIssuer.
 	Name    string `json:"name"`
 	Filings struct {
-		Recent struct {
-			AccessionNumber []string `json:"accessionNumber"`
-			FilingDate      []string `json:"filingDate"`
-			Form            []string `json:"form"`
-			PrimaryDocument []string `json:"primaryDocument"`
-		} `json:"recent"`
+		Recent filingsPage `json:"recent"`
+		// Files pages an issuer's older filings once `recent` grows past SEC's
+		// ~1,000-row cap — see edgarhistory.go, the only reader of this field.
+		Files []submissionsFilePage `json:"files"`
 	} `json:"filings"`
+}
+
+// filingsPage is one page of an issuer's filing index: SEC's submissions.recent
+// block, and the identically-shaped older filings.files pages edgarhistory.go
+// fetches separately (same parallel-array schema, served at the top level
+// instead of nested under "recent"). Items is populated on 8-K rows only: a
+// comma-separated list of the filing's Item numbers ("2.02,9.01"), which is how
+// an earnings release (Item 2.02) is told apart from every other 8-K.
+type filingsPage struct {
+	AccessionNumber []string `json:"accessionNumber"`
+	FilingDate      []string `json:"filingDate"`
+	Form            []string `json:"form"`
+	PrimaryDocument []string `json:"primaryDocument"`
+	Items           []string `json:"items"`
+}
+
+// submissionsFilePage is one entry of filings.files: a pointer to an older page
+// of an issuer's filing history. FilingFrom/FilingTo bound its contents, which
+// is enough to skip fetching a page that cannot reach a requested lookback
+// window without opening it.
+type submissionsFilePage struct {
+	Name       string `json:"name"`
+	FilingFrom string `json:"filingFrom"`
+	FilingTo   string `json:"filingTo"`
 }
 
 // ownershipDocument is the Form 4 XML. Only the non-derivative table is read:
