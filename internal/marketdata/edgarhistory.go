@@ -92,6 +92,18 @@ func (p *edgarProvider) FilingHistory(ctx context.Context, tickers []string, sin
 // filingHistoryForCIK reads one issuer's full filing history back to `since`:
 // the current `recent` page, plus every older `files` page whose own
 // FilingFrom/FilingTo range cannot be ruled out from reaching the window.
+//
+// A failed `files` page fails the whole ticker (a wrapped error, never
+// swallowed) rather than being dropped in place: unlike the other EDGAR legs
+// (addPlannedSales, addActivistStakes), where a failed fetch degrades one
+// visible fact, a silently short Earnings/Reports slice here is
+// indistinguishable from a filer that genuinely had nothing to report in
+// those years — the drift leg would read "no Item 2.02 in the window" as a
+// fact about the company rather than about the fetch. Failing the ticker
+// (absent from FilingHistory's map, named in its warnings) makes that
+// distinction visible instead of hiding it inside a partial history that
+// looks exactly like a complete one. Also covers `ctx` cancellation and
+// limiter errors surfaced through filingsPage/getJSON.
 func (p *edgarProvider) filingHistoryForCIK(ctx context.Context, cik string, since time.Time) (FilingHistory, error) {
 	sub, err := p.submissionIndex(ctx, cik)
 	if err != nil {
@@ -106,10 +118,7 @@ func (p *edgarProvider) filingHistoryForCIK(ctx context.Context, cik string, sin
 		}
 		page, err := p.filingsPage(ctx, f.Name)
 		if err != nil {
-			// Best-effort: one unreadable older page costs only the filings it
-			// held, the same degrade-per-leg rule addPlannedSales and
-			// addActivistStakes already follow for a failed index.
-			continue
+			return FilingHistory{}, fmt.Errorf("files page %s: %w", f.Name, err)
 		}
 		accumulateFilingHistory(&hist, page, since)
 	}

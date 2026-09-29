@@ -218,6 +218,69 @@ func TestFilingHistoryWarnsPerTickerWithoutFailingTheCall(t *testing.T) {
 	}
 }
 
+// A failed older `files` page must never be dropped in place: that would
+// return a ticker's history as if it were complete when years of Earnings
+// dates are actually missing, and nothing downstream could tell the
+// difference from a filer that genuinely had nothing to report. Fix for
+// review round 1, item 1: filingHistoryForCIK now surfaces the fetch error,
+// so FilingHistory treats the whole ticker as failed — absent from the map,
+// named in a warning — rather than serving a truncated Earnings slice.
+func TestFilingHistoryFailsTheTickerWhenAFilesPageFails(t *testing.T) {
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	recent := []filingRow{{"8-K", now.AddDate(0, 0, -5), "2.02"}}
+	since := now.AddDate(-3, 0, 0)
+	older := now.AddDate(-2, 0, 0)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "company_tickers.json"):
+			fmt.Fprint(w, `{"0":{"cik_str":320193,"ticker":"AAPL","title":"Apple Inc."}}`)
+		case strings.HasSuffix(r.URL.Path, "/submissions/CIK0000320193.json"):
+			fmt.Fprintf(w, `{"cik":"320193","name":"Apple Inc.","filings":{"recent":%s,"files":[`+
+				`{"name":"CIK0000320193-submissions-001.json","filingFrom":"%s","filingTo":"%s"}]}}`,
+				filingsPageJSON(recent), older.AddDate(0, -1, 0).Format("2006-01-02"), older.AddDate(0, 1, 0).Format("2006-01-02"))
+		case strings.HasSuffix(r.URL.Path, "/submissions/CIK0000320193-submissions-001.json"):
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	src := NewFilingHistorySource("test@example.com", NewCache(t.TempDir()))
+	got, warnings := src.FilingHistory(context.Background(), []string{"AAPL"}, since)
+
+	if _, ok := got["AAPL"]; ok {
+		t.Errorf("AAPL should be absent from the map when its files page 500s, got %v — a partial history must never look like a complete one", got["AAPL"])
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "AAPL") && strings.Contains(w, "CIK0000320193-submissions-001.json") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings %v do not name both the failed ticker and the failed page", warnings)
+	}
+}
+
+// pageBeforeWindow must fail open — never skip a page — when its filingTo
+// cannot be parsed, since skipping wrongly would drop real filings from the
+// window with nothing to show for it.
+func TestPageBeforeWindowFailsOpenOnAnUnparseableFilingTo(t *testing.T) {
+	since := time.Now().AddDate(-3, 0, 0)
+	cases := []submissionsFilePage{
+		{Name: "empty.json", FilingFrom: "", FilingTo: ""},
+		{Name: "garbage.json", FilingFrom: "2020-01-01", FilingTo: "not-a-date"},
+	}
+	for _, f := range cases {
+		if pageBeforeWindow(f, since) {
+			t.Errorf("pageBeforeWindow(%+v) = true, want false (fail open on an unparseable filingTo)", f)
+		}
+	}
+}
+
 func TestFilingHistoryIsSilentWithoutAContactEmail(t *testing.T) {
 	src := NewFilingHistorySource("", NewCache(t.TempDir()))
 	got, warnings := src.FilingHistory(context.Background(), []string{"AAPL"}, time.Now().AddDate(-1, 0, 0))
