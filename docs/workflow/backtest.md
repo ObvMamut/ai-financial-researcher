@@ -138,10 +138,21 @@ arms, because a model cannot be replayed without look-ahead.
     beta-adjusted excess, net of the lab's 30bp paid once per name. Its
     Newey-West t uses `nwLags(15)` lags, and it is tested against the same
     scoped bar.
-  - The report's `us_scoped` block (text: "US-scoped looks") shows `drift`'s and
-    `earn_window`'s scoped IC10 and the drift book against that bar. These
-    entries have `status: "unregistered"` and are not counted in `tests_run`;
-    a scoped test is counted only once it is registered below.
+  - The report's `us_scoped` block (text: "US-scoped tests D1–D3") holds the
+    three registered Wave D tests below — `drift`'s scoped IC10 (D1), the drift
+    book (D2) and `earn_window`'s scoped IC10 (D3) — each counted in
+    `tests_run` when it runs. With no release history at all (no SEC contact
+    address) a test has no usable date and is recorded `untestable`, not failed.
+  - Three properties of the scope are disclosed rather than corrected. The
+    pooled US cross-section mixes two benchmarks: ^GSPC for every sp500 row,
+    cross-listed names included, and ^NDX for the nq100-only names; the
+    beta-adjusted target softens that, it does not remove it. Every Item 2.02
+    8-K counts as a release, so an off-cycle one (a preannouncement, a
+    restated quarter) becomes the drift event and restarts `earn_window`'s
+    91-day cadence. And one name is missing in effect: SEC's ticker directory
+    maps XOM to a successor CIK whose filing history begins 2026-07-01, so XOM
+    contributes almost no events. That is missing data and is not
+    special-cased.
 - **Per-calendar-year slices (E1).** Alongside the halves, the composite's IC10
   and IC15 (plain and beta-adjusted) are also reported for every calendar year
   the sample covers, each with its date count. A default 4-year run shows two
@@ -201,7 +212,7 @@ result.
 | Test | Hypothesis | Statistic |
 |---|---|---|
 | **C1**: momentum weighting | ret63's IC is about 0. Raising 12-1 momentum's weight relative to it improves the composite. Variant: `trend = 1.0·z(mom12-1) + 0.5·z(ret63d)`, with penalties and clamps unchanged. This keeps the total weight at 1.5 and is computed by the shipping `ScorePrescreen` with its two inputs swapped. | Per-date IC10(variant) − IC10(shipped composite) |
-| **C2**: earnings-announcement premium | Names with a verified earnings announcement inside the holding window earn a premium, so tilt long into them. | Per-date IC10 of an "announcement inside the next 10 sessions" indicator. **Runs only if** a point-in-time historical announcement-date source exists among the existing providers or cache. Otherwise it is recorded as untestable, not approximated. |
+| **C2**: earnings-announcement premium | Names with a verified earnings announcement inside the holding window earn a premium, so tilt long into them. | Per-date IC10 of an "announcement inside the next 10 sessions" indicator. **Runs only if** a point-in-time historical announcement-date source exists among the existing providers or cache. Otherwise it is recorded as untestable, not approximated. **Superseded 2026-09-27 by D3 (Wave D below).** SEC's per-issuer submissions give point-in-time US release dates (8-K Item 2.02), so C2 is now run for US names only, and approximated: SEC gives past dates only, so the next release is extrapolated from the filer's cadence (last release + 91 days, ±7 days). Against the every-region bar, C2 itself stays untestable, since nothing covers eu50 or asia100. |
 | **C3**: news-conditioned residual reversal | Residual moves without news revert, and moves with news continue. The residual 5-day move is `log(c/c₋₅) − β·log(b/b₋₅)`. The news proxy is abnormal volume: one of the last 5 sessions traded ≥ 2× the mean volume of the 20 sessions before them. Signal: `+resid` with news, `−resid` without. | Per-date IC10 of the C3 signal |
 | **C4**: beta-adjusted targets | The composite's edge is selection rather than bull-market beta, so it survives when the target is `r − β·r_bench` instead of `r − r_bench`. This measures, and does not change, the screen. Every signal's IC is also reported against this target. | Per-date IC10 of the shipped composite against the beta-adjusted target |
 | **C5**: breadth | The composite's t-stat holds on a wider liquid US universe. | **Runs only if** that universe exists without a new list of several hundred names from paid sources. Otherwise it is skipped and noted. |
@@ -217,6 +228,38 @@ changed after it has been seen counts as a new one.
 | **E1**: long history | The edge is a property of the composite, not of the one regime the default 4-year window happens to sample. `cfr backtest --years 10` reaches back through 2018 Q4, 2020 and 2022 as well as the sample already covered. | Composite IC10/IC15 (plain and beta-adjusted) and the top-5 picks' 15-session excess (plain and beta-adjusted, gross and net), one figure per calendar year, from a `--years 10` run. **E1 does not use the adoption bar above**; it decides by calendar year. Decision, verbatim from the plan (§4): *"if the composite's beta-adjusted top-5 excess is not positive in a majority of years, the docs stop describing the screen as having an edge, and the TUI says so."* **Rule as applied (pinned 2026-09-26):** the figure is the beta-adjusted top-5 excess **net of the lab's 30bp** (`top5_excess_beta_adjusted_net_pct`), and "years" is **every calendar year in the replay**, partial years included, with the full-year count reported beside it. The report applies it itself (`decisions`, `e1Decision`). **Gated on `--years 10` (fixed 2026-09-27):** the rule was pre-registered at ten calendar years, so `e1Decision` only decides — `Status: "run"`, counted in `tests_run` — when the run's `--years` is 10 or more. Below that, the per-year table still computes and its `Note` still counts years the same way, but the report labels it `"comparison look, not a decision"` (`Status: "comparison"`, JSON `decisions[].status`), and it is excluded from `tests_run`; nothing fires. Before this, a default 4-year `cfr backtest` printed `E1 → not triggered` as if the majority-of-years rule had been evaluated on four years of one regime, which it was never registered to be. **This pinning came after the gross result had been read, and it changed the outcome.** The plan's wording did not say gross or net. Read gross, the figure is positive in 7 of 11 years (5 of 9 full years) and E1 passes. Read net, it is positive in 5 of 11 (3 of 9 full years) and E1 fires. The controller chose net, because every other top-trade figure in this lab is quoted net and an edge that does not survive the lab's own cost is not one. **Run 2026-09-26: fires.** The docs no longer describe the screen as having an edge, and the TUI results view says the lab finds none net of cost. See [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest). |
 | **E3**: which side carries the result | The 2026-09-23 run's Top-5 row split the barrier study's picks into longs (+1.316%) and shorts (+0.111%) on *plain* excess only; that split does not say whether the short side is real selection or C4's market-beta exposure in reverse. | Same picks' 15-session directional excess (`internal/backtest/sides.go`'s `Result.Sides`), split long vs short, plain and beta-adjusted, for the whole sample and each half. **E3 does not use the adoption bar above** either — it is a diagnostic split of the barrier study's own picks, not a new signal test. Decision, registered before this runs on real data: *"if shorts are ≤0 beta-adjusted in both halves, pre-register 'long-only merit_veto' as a config test for the live shipped arm."* **Run 2026-09-26: not triggered.** Beta-adjusted shorts were −1.046% in H1 and +0.127% in H2 (10 years), and −0.246% / +0.681% over 4 years, so no long-only config test is registered. See [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest). |
 | **E2**: sector-cap grid | One run's default `max_per_sector` (2) held MSFT and SAP.DE to the two IT slots and dropped ORCL on a 0.5% merit gap; one run cannot say whether that cap costs or saves the book. `internal/backtest/book.go` replays a live-shaped weekly book (mechanically standing in for the scout call and the Chief) under `SectorCaps = {1, 2, 3, off}` across every week the panel has. | Per-week difference in beta-adjusted book excess (candidate cap minus the live default's arm, paired by date), Newey-West t at `nwLags(15)`, plus its halves and regions (`BookGrid.PairedTests`). **E2 does not use the adoption bar above** either — like E3, it is a diagnostic replay of the live funnel's own construction, not a new signal test, so its own bar is two-sided: **`|t| > 2.5`, same sign in both halves and every region**, since a departure from the live cap could plausibly help or hurt rather than propose one direction. Decision, registered before this runs on real data: *"a candidate `max_per_sector` value is adopted over the live default only if it clears that bar; otherwise the live default stands."* **Run 2026-09-26: no change.** E2-1 had t −0.50, E2-3 t −0.61 and E2-off t 0.82 (518 weeks). All three fail, so `max_per_sector` stays at 2. See [Run of 2026-09-26](#run-of-2026-09-26-wave-b-e1e3-docsresearch2026-09-25-evidencebacktest). |
+
+## Pre-registered US-scoped tests (Wave D, registered 2026-09-27)
+
+These are registered before they run, the same way as the waves above. Each runs
+once, on one `cfr backtest --years 10`, and adds to the tests-run count, which is
+**11 decision tests** after this round (C1, C3, C4, E1, E2-1, E2-3, E2-off, E3,
+D1, D2, D3). Below `--years 10` E1 is a comparison look, so the same report
+counts 10. All three are **US-scoped** (see Method): evaluated on the pooled
+sp500 ∪ nq100 cross-section only, against the beta-adjusted target, in the
+positive direction, and adoptable for US names only. The every-region leg does
+not apply, because there is no point-in-time release source outside the US.
+
+| Test | Hypothesis | Statistic, bar and decision |
+|---|---|---|
+| **D1**: drift IC | Post-earnings-announcement drift, the one documented effect on this system's 10–15-session clock, continues: the decayed reaction to the last Item 2.02 release predicts the next 10 sessions. | US-scoped Newey-West t of the beta-adjusted IC10 of `drift` **> 2.5**, with the **same sign in both halves**. |
+| **D2**: drift book | The same effect survives cost in the shape the pipeline would trade it. | A US top-5-by-\|drift\| weekly book (held at the drift sign), beta-adjusted 15-session excess **net of 30bp > 0 with NW t > 2.5**, same sign in both halves. |
+| **D3**: C2, earnings premium | C2's hypothesis, approximated per the ±7-day cadence ruling. | US-scoped IC10 of `earn_window` **> 0, t > 2.5, both halves**, or recorded untestable. |
+
+**Decisions fixed before the run:**
+
+- **D1 or D2 passes** → a follow-up plan makes drift the primary US idea source:
+  merit ordering for US names by drift first, plus a `drift` live arm. That is a
+  separate plan, not this one.
+- **Both fail** → the docs, CLAUDE.md and the TUI state that no signal tested on
+  this horizon has shown an edge (screen, model stages, PEAD). The plan then
+  recommends the owner run live only as measurement, at reduced cadence.
+  Changing that cadence stays the owner's call.
+- D3's result is reported either way.
+
+**Known differences from the live drift leg.** The lab anchors drift at the 8-K
+Item 2.02 release date; a live run anchors it at the 10-Q/10-K filing date, which
+can be the same day for large filers and weeks later for others.
 
 ## Results
 
@@ -261,7 +304,7 @@ skipped. No test passed, so nothing ships and `prescreen_version` was not added.
 | Test | Mean of the statistic | NW t | H1 / H2 | US / EU / Asia | Result |
 |---|---:|---:|---|---|---|
 | C1: momentum weighting | +0.0104 (IC10 0.022 vs 0.012) | 1.59 | +0.017 / +0.004 | +0.010 / +0.017 / +0.006 | **Fails.** The sign is positive in every half and region, but t < 2.5. |
-| C2: earnings premium | — | — | — | — | **Untestable.** No existing provider or cache holds point-in-time announcement dates. The Alpha Vantage calendar is keyed and forward-only. EDGAR gives only US 10-Q/10-K *filing* dates, and there is nothing for EU or Asia, so the every-region bar was unreachable. |
+| C2: earnings premium | — | — | — | — | **Untestable.** No existing provider or cache holds point-in-time announcement dates. The Alpha Vantage calendar is keyed and forward-only. EDGAR gives only US 10-Q/10-K *filing* dates, and there is nothing for EU or Asia, so the every-region bar was unreachable. That held on 2026-09-23. SEC's per-issuer submissions JSON has since supplied point-in-time US 8-K Item 2.02 release dates, so C2 is now run for US names as **D3**, with the next release approximated from cadence (see Wave D). |
 | C3: news-conditioned residual reversal | −0.0014 | −0.23 | +0.007 / −0.010 | −0.005 / +0.007 / −0.002 | **Fails.** A null result. |
 | C4: beta-adjusted target | +0.0040 | 0.29 | −0.016 / +0.024 | −0.004 / +0.024 / +0.000 | **Fails.** The composite's IC10 falls from 0.012 to 0.004 once beta is removed. |
 | C5: breadth | — | — | — | — | **Skipped.** It needs a new list of several hundred US names, which no existing file or keyless source provides. |

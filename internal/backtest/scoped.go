@@ -221,10 +221,10 @@ func signalBookTest(r TestResult, recs []Record, region string, sig int, mid str
 	return applyScopedBar(r, all, h1, h2, nwLags(Horizons[bookHorizon]), sign), sb
 }
 
-// ScopedReport is the US-scoped block of the report: the drift and
-// earn_window statistics D1–D3 are registered against, computed here so the
-// numbers are visible, but not registered and not counted in TestsRun —
-// every test here has Status "unregistered".
+// ScopedReport is the US-scoped block of the report: the registered Wave D
+// tests (docs/workflow/backtest.md) — D1, drift's IC10; D2, the drift book;
+// D3, earn_window's IC10 (C2 approximated) — each counted in TestsRun when it
+// runs.
 type ScopedReport struct {
 	Region string `json:"region"`
 	Scope  string `json:"scope"`
@@ -236,30 +236,39 @@ type ScopedReport struct {
 	DriftBook SignalBook   `json:"drift_book"`
 }
 
-// usScoped computes the US-scoped looks at drift and earn_window: the
-// beta-adjusted IC10 of each (earn_window is 0/1, so its IC is a rank IC with
-// ties at average rank; its quintile spreads are not read), and the drift
-// book. Direction +1 throughout.
+// usScoped runs D1–D3, each registered with direction +1: the beta-adjusted
+// IC10 of drift (D1) and of earn_window (D3; earn_window is 0/1, so its IC is
+// a rank IC with ties at average rank, and its quintile spreads are not read),
+// and the top-5-by-|drift| book net of 30bp (D2). A test with no date carrying
+// a finite statistic — no filing history at all, as without an SEC contact
+// address — is recorded "untestable" rather than as a failed run.
 func usScoped(recs []Record, mid string) ScopedReport {
 	cells := scopedCells(recs, "US")
 	rep := ScopedReport{Region: "US", Scope: usScopeNote, Dates: len(cells)}
 	const h10 = 1
-	ic := func(sig int) TestResult {
+	ic := func(id string, sig int, hyp string) TestResult {
 		return evaluateScoped(TestResult{
-			ID:        "US-" + SignalNames[sig] + "-ic10",
-			Title:     "US-scoped beta-adjusted IC10 of " + SignalNames[sig],
+			ID:        id,
+			Title:     "US-scoped beta-adjusted IC10 of " + SignalNames[sig] + ": " + hyp,
 			Statistic: "per-date Spearman IC10 vs beta-adjusted excess over the pooled US cross-section, Newey-West t (3 lags)",
 		}, cells, mid, +1, func(c cell) float64 { return c.bic[sig][h10] })
 	}
 	book, sb := signalBookTest(TestResult{
-		ID:        "US-drift-book",
+		ID:        "D2",
 		Title:     fmt.Sprintf("US top-%d-by-|drift| weekly book, held at drift's sign", picksPerIndex),
 		Statistic: fmt.Sprintf("weekly equal-weighted beta-adjusted %d-session excess net of 30bp, Newey-West t (%d lags)", Horizons[bookHorizon], nwLags(Horizons[bookHorizon])),
 	}, recs, "US", SigDrift, mid, +1)
 	rep.DriftBook = sb
-	rep.Tests = []TestResult{ic(SigDrift), ic(SigEarnWindow), book}
-	for i := range rep.Tests {
-		rep.Tests[i].Status = "unregistered"
+	rep.Tests = []TestResult{
+		ic("D1", SigDrift, "post-earnings drift continues over the next 10 sessions"),
+		book,
+		ic("D3", SigEarnWindow, "C2's earnings-announcement premium, the release date extrapolated from cadence"),
+	}
+	for i, t := range rep.Tests {
+		if t.NDates == 0 {
+			rep.Tests[i].Status, rep.Tests[i].Pass = "untestable", false
+			rep.Tests[i].Verdict = "not run: no date had a finite statistic (no earnings-release history)"
+		}
 	}
 	return rep
 }

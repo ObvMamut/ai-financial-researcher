@@ -339,3 +339,38 @@ func TestEarningsSignalsIgnoreBarsAndFilingsAfterDate(t *testing.T) {
 		}
 	}
 }
+
+// D1–D3 are registered: Analyze reports them in us_scoped with Status "run"
+// and counts them in TestsRun. Without any earnings-release history (drift and
+// earn_window NaN everywhere, as with no SEC contact address) they are
+// "untestable" instead of failed runs, and TestsRun drops by three.
+func TestWaveDTestsAreRegistered(t *testing.T) {
+	recs := scopedPanel(rand.New(rand.NewPCG(21, 22)), 0.01, 0.01)
+	res := Analyze(recs, nil, 10)
+	var ids []string
+	for _, tr := range res.USScoped.Tests {
+		ids = append(ids, tr.ID)
+		if tr.Status != "run" || tr.Scope != "US" {
+			t.Errorf("%s: status %q scope %q, want run/US", tr.ID, tr.Status, tr.Scope)
+		}
+	}
+	if got := strings.Join(ids, ","); got != "D1,D2,D3" {
+		t.Fatalf("us_scoped tests = %s, want D1,D2,D3", got)
+	}
+	if !res.USScoped.Tests[0].Pass {
+		t.Errorf("D1 on planted drift: %s, want a pass", res.USScoped.Tests[0].Verdict)
+	}
+
+	for i := range recs {
+		recs[i].Sig[SigDrift], recs[i].Sig[SigEarnWindow] = math.NaN(), math.NaN()
+	}
+	blind := Analyze(recs, nil, 10)
+	for _, tr := range blind.USScoped.Tests {
+		if tr.Status != "untestable" || tr.Pass {
+			t.Errorf("%s without filings: status %q pass %v, want untestable", tr.ID, tr.Status, tr.Pass)
+		}
+	}
+	if res.TestsRun-blind.TestsRun != 3 {
+		t.Errorf("tests run %d with filings, %d without; want a difference of 3", res.TestsRun, blind.TestsRun)
+	}
+}

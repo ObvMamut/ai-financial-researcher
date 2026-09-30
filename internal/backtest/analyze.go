@@ -363,9 +363,8 @@ type TestResult struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Statistic string `json:"statistic"`
-	// Status is "run", "untestable", "skipped", "comparison" (E1 below its
-	// pre-registered --years floor) or "unregistered" (a scoped look computed
-	// before its test is registered); only "run" counts toward the number of
+	// Status is "run", "untestable", "skipped" or "comparison" (E1 below its
+	// pre-registered --years floor); only "run" counts toward the number of
 	// tests the report says it ran.
 	Status  string         `json:"status"`
 	Note    string         `json:"note,omitempty"`
@@ -434,7 +433,7 @@ func preregistered(cells []cell, mid string) []TestResult {
 		{
 			ID: "C2", Title: "earnings-announcement premium: tilt long into names reporting inside the window",
 			Status: "untestable", Verdict: "not run",
-			Note: "no existing provider or cache holds point-in-time historical earnings-announcement dates: the Alpha Vantage calendar is forward-only and keyed, EDGAR's daily index gives 10-Q/10-K filing dates (weeks after the announcement) for US filers only, and nothing covers eu50 or asia100 — so the every-region bar could not be met even in principle",
+			Note: "untestable against the every-region bar: point-in-time release dates exist for US filers only (SEC 8-K Item 2.02), and nothing covers eu50 or asia100 — run instead as the US-scoped D3, the next release extrapolated from cadence",
 		},
 		evaluate(TestResult{
 			ID: "C3", Title: "news-conditioned residual reversal: fade a residual 5-day move without abnormal volume, follow one with it (any of the last 5 sessions ≥ 2× the mean of the 20 before)",

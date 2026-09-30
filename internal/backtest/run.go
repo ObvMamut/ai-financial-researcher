@@ -108,13 +108,13 @@ type Result struct {
 	Preregistered []TestResult `json:"preregistered"`
 	// Decisions is E1 and E3's registered rules applied to PerYear and Sides.
 	Decisions []TestResult `json:"decisions"`
-	// USScoped is the US-scoped block (scoped.go): drift's and earn_window's
-	// beta-adjusted IC10 over the pooled sp500 ∪ nq100 cross-section and the
-	// top-5-by-|drift| book, each against the scoped bar. Not registered and
-	// not counted in TestsRun.
+	// USScoped is the US-scoped block (scoped.go): the registered Wave D tests
+	// — D1, drift's beta-adjusted IC10 over the pooled sp500 ∪ nq100
+	// cross-section; D2, the top-5-by-|drift| book; D3, earn_window's IC10 —
+	// each against the scoped bar and counted in TestsRun.
 	USScoped ScopedReport `json:"us_scoped"`
 	// TestsRun counts every registered test this run performed — C-series,
-	// E2's paired tests and the E1/E3 decisions — so it equals the register in
+	// E2's paired tests, the E1/E3 decisions and D1–D3 — so it equals the register in
 	// docs/workflow/backtest.md, one look each per run. E1 counts only at
 	// --years 10 or more (e1DecisionMinYears); below that its per-year table
 	// is a comparison look, not a decision, and Status is "comparison" rather
@@ -346,7 +346,7 @@ func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *R
 	res.Preregistered = preregistered(cells, mid)
 	res.Decisions = []TestResult{e1Decision(res.PerYear, replayYears), e3Decision(res.Sides)}
 	res.USScoped = usScoped(recs, mid)
-	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions} {
+	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions, res.USScoped.Tests} {
 		for _, t := range list {
 			if t.Status == "run" {
 				res.TestsRun++
@@ -473,9 +473,13 @@ func (r *Result) Text() string {
 	sb.WriteString("\n")
 
 	u := r.USScoped
-	fmt.Fprintf(&sb, "=== US-scoped looks (unregistered, not in the tests-run count; bar: t > +%.1f, same sign in both halves, beta-adjusted) ===\n", adoptionT)
+	fmt.Fprintf(&sb, "=== US-scoped tests D1–D3 (registered, in the tests-run count; bar: t > +%.1f, same sign in both halves, beta-adjusted) ===\n", adoptionT)
 	fmt.Fprintf(&sb, "%s; %d dates\n", u.Scope, u.Dates)
 	for _, t := range u.Tests {
+		if t.Status != "run" {
+			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Verdict)
+			continue
+		}
 		fmt.Fprintf(&sb, "%s mean %+.4f t %.2f (n=%d of %d; H1 n=%d, H2 n=%d) | H1 %+.4f H2 %+.4f → %s\n",
 			t.ID, t.Mean, t.T, t.NDates, u.Dates, t.HalfNDates["H1"], t.HalfNDates["H2"], t.Halves["H1"], t.Halves["H2"], t.Verdict)
 	}
@@ -483,7 +487,7 @@ func (r *Result) Text() string {
 	fmt.Fprintf(&sb, "drift book: %d weeks (%d with all %d names, mean %.2f), beta-adjusted excess gross %.3f%% net %.3f%% | H1 net %.3f%% H2 net %.3f%%\n\n",
 		db.Weeks, db.FullWeeks, picksPerIndex, db.MeanNames, db.MeanGrossPct, db.MeanNetPct, db.H1NetPct, db.H2NetPct)
 
-	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all, counting E1, E2 and E3; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
+	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all: the C-series below, E2, the decisions run above and D1–D3; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {
 		if t.Status != "run" {
 			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)

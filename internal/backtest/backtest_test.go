@@ -192,9 +192,11 @@ func TestPlantedSignalIsRecovered(t *testing.T) {
 		t.Fatalf("report does not encode: %v", err)
 	}
 	// The register in docs/workflow/backtest.md: C1, C3, C4 (C2 untestable,
-	// C5 skipped), E2's three paired tests, and the E1 and E3 decisions.
-	if res.TestsRun != 8 {
-		t.Errorf("tests run = %d, want 8 (C1, C3, C4, E2-1, E2-3, E2-off, E1, E3)", res.TestsRun)
+	// C5 skipped), E2's three paired tests, the E1 and E3 decisions, and the
+	// US-scoped D1–D3 (the fixture's sp500 rows carry noise in drift and
+	// earn_window, so all three run).
+	if res.TestsRun != 11 {
+		t.Errorf("tests run = %d, want 11 (C1, C3, C4, E2-1, E2-3, E2-off, E1, E3, D1, D2, D3)", res.TestsRun)
 	}
 }
 
@@ -210,8 +212,8 @@ func TestTestsRunExcludesE1BelowTenYears(t *testing.T) {
 	if res.Years != 4 {
 		t.Errorf("res.Years = %d, want 4", res.Years)
 	}
-	if res.TestsRun != 7 {
-		t.Errorf("tests run = %d, want 7 (C1, C3, C4, E2-1, E2-3, E2-off, E3 — E1 is a comparison look at --years 4)", res.TestsRun)
+	if res.TestsRun != 10 {
+		t.Errorf("tests run = %d, want 10 (C1, C3, C4, E2-1, E2-3, E2-off, E3, D1, D2, D3 — E1 is a comparison look at --years 4)", res.TestsRun)
 	}
 	var e1 TestResult
 	for _, d := range res.Decisions {
