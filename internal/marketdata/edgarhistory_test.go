@@ -291,3 +291,33 @@ func TestFilingHistoryIsSilentWithoutAContactEmail(t *testing.T) {
 		t.Error("want a warning explaining why nothing was fetched")
 	}
 }
+
+// A files page that SEC repaginates under the same name (different advertised
+// range) must be refetched, not served from the permanent cache.
+func TestFilingsPageCacheKeyIncludesTheRange(t *testing.T) {
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	older := now.AddDate(-2, 0, 0)
+	const name = "CIK0000320193-submissions-001.json"
+	filesPages := map[string][]filingRow{name: {{"8-K", older, "2.02"}}}
+	srv, hitsFor := filingHistoryServer(t, nil, filesPages, nil)
+	t.Setenv("CFR_SEC_BASE", srv.URL)
+
+	p := NewFilingHistorySource("test@example.com", NewCache(t.TempDir())).(*edgarProvider)
+	fetch := func(from, to time.Time) {
+		t.Helper()
+		f := submissionsFilePage{Name: name, FilingFrom: from.Format("2006-01-02"), FilingTo: to.Format("2006-01-02")}
+		if _, err := p.filingsPage(context.Background(), f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/submissions/" + name
+	fetch(older.AddDate(0, -1, 0), older.AddDate(0, 1, 0))
+	fetch(older.AddDate(0, -1, 0), older.AddDate(0, 1, 0))
+	if n := hitsFor(path); n != 1 {
+		t.Fatalf("same name and range: %d fetches, want 1", n)
+	}
+	fetch(older.AddDate(0, -1, 0), older.AddDate(0, 2, 0))
+	if n := hitsFor(path); n != 2 {
+		t.Errorf("same name, different range: %d fetches, want 2 (fresh fetch)", n)
+	}
+}

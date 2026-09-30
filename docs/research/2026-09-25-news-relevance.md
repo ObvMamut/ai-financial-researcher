@@ -439,7 +439,7 @@ of the text match, and no floor value fixes it.
 
 `internal/orchestrator/news_relevance_audit_test.go`'s `TestNewsRelevanceAcceptanceAudit`,
 gated behind `CFR_NEWS_RELEVANCE_RUNS_DIR` (a prior round of this audit was a script that was
-never committed — the "test drift" this branch is named for; it is committed now, so a future
+never committed; this one is committed, so a future
 rule change can re-run it instead of re-deriving these numbers by hand). Re-run against this
 repository's own `runs/` directory:
 

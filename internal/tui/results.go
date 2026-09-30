@@ -94,7 +94,7 @@ func (m resultsModel) Update(msg tea.Msg) (resultsModel, tea.Cmd) {
 // measurable above that funnel (the 2026-09-23 attribution), and post-earnings
 // drift, the one documented effect on this clock, failed D1 and D2 in the lab.
 // The reader should know that nothing tested on this horizon picks well.
-const screenNoEdgeLine = "  No signal tested on this horizon has shown an edge net of cost:\n  not the pre-screen that ranked these ideas, not the model stages, not post-earnings drift."
+const screenNoEdgeLine = "  No signal tested on this horizon has shown an edge net of cost:\n  not the pre-screen that ranked these ideas, not the model stages,\n  not post-earnings drift."
 
 func (m resultsModel) View() string {
 	if m.detail != nil {

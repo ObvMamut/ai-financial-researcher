@@ -122,6 +122,8 @@ internal/
                 so it caches forever and a run fetches only new days, where the
                 quarterly index is 55MB and per-issuer submissions are ~150
                 requests; it feeds Stage 0.5's drift leg;
+                edgarhistory.go is the lab's point-in-time 8-K/10-Q filing history
+                (SEC submissions pages, read through Cache.GetPermanent's no-expiry store);
                 prices.go routes daily bars per symbol — alpaca.go for US
                 equities (batched, many symbols per request), yahoo.go for
                 foreign listings, index benchmarks and FX; alpacanews.go and
@@ -231,7 +233,9 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    data cache. The composite is a ranking, not a demonstrated edge: the backtest lab's
    10-year replay (E1, `docs/workflow/backtest.md`) finds its beta-adjusted top-5 excess
    positive in only 5 of 11 years net of 30bp, and its beta-adjusted IC10 at t 0.66. The
-   drift leg shows no edge in the lab either: over 10 years of US 8-K Item 2.02 releases,
+   lab finds no edge in post-earnings drift either, though it tested a variant: drift
+   anchored at the 8-K Item 2.02 release date and without the live 1.5σ threshold (the
+   live leg anchors at the 10-Q/10-K filing date). Over 10 years of US releases,
    drift's beta-adjusted IC10 has t −0.67 (D1) and a top-5-by-|drift| book nets −0.006% per
    15-session hold after 30bp (D2, t −0.03).
 1. **Scouts (cheap engine):** one call per index, each screening *eight disjoint ranked
@@ -395,7 +399,7 @@ go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
 go run ./cmd/cfr scoreboard --control              # shipped vs composite, shortlist, Chief shadow, vetoed
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
-go run ./cmd/cfr backtest                          # point-in-time pre-screen replay (keyless Yahoo, no models)
+go run ./cmd/cfr backtest                          # point-in-time pre-screen replay (keyless Yahoo; also keyless SEC when contact_email is set; no models)
 go run ./cmd/cfr acceptance-manifest               # resolved configuration and hashes; no model or data requests
 ```
 

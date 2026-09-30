@@ -116,7 +116,7 @@ func (p *edgarProvider) filingHistoryForCIK(ctx context.Context, cik string, sin
 		if pageBeforeWindow(f, since) {
 			continue
 		}
-		page, err := p.filingsPage(ctx, f.Name)
+		page, err := p.filingsPage(ctx, f)
 		if err != nil {
 			return FilingHistory{}, fmt.Errorf("files page %s: %w", f.Name, err)
 		}
@@ -143,10 +143,17 @@ func pageBeforeWindow(f submissionsFilePage, since time.Time) bool {
 // closes over — so it is read through the permanent cache (A2's
 // GetPermanent/SetPermanent): the first backtest run to reach a given page
 // pays for it once, and every later run of any span reads it back for free.
-func (p *edgarProvider) filingsPage(ctx context.Context, name string) (filingsPage, error) {
+//
+// The cache key is the page name together with the range SEC advertises for
+// it (name|filingFrom|filingTo), not the name alone: if SEC ever repaginates
+// and reuses a name for a shifted range, the stale page becomes a miss and is
+// refetched instead of silently dropping the filings that moved.
+func (p *edgarProvider) filingsPage(ctx context.Context, f submissionsFilePage) (filingsPage, error) {
+	name := f.Name
+	key := name + "|" + f.FilingFrom + "|" + f.FilingTo
 	var page filingsPage
 	if p.cache != nil {
-		if ok, err := p.cache.GetPermanent(p.factsBase, p.Name(), "filingspage", name, &page); ok && err == nil {
+		if ok, err := p.cache.GetPermanent(p.factsBase, p.Name(), "filingspage", key, &page); ok && err == nil {
 			return page, nil
 		}
 	}
@@ -155,7 +162,7 @@ func (p *edgarProvider) filingsPage(ctx context.Context, name string) (filingsPa
 		return filingsPage{}, err
 	}
 	if p.cache != nil {
-		_ = p.cache.SetPermanent(p.factsBase, p.Name(), "filingspage", name, page)
+		_ = p.cache.SetPermanent(p.factsBase, p.Name(), "filingspage", key, page)
 	}
 	return page, nil
 }

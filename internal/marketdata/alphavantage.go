@@ -312,8 +312,8 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 		// shape.
 		return TickerData{Ticker: ticker, Warnings: []string{fmt.Sprintf(
 			"AlphaVantage returned %d %s tagged to this ticker and not one of them is about this company"+
-				" — each names some other company as its subject (a market wrap, an unrelated holdings alert)"+
-				" and scores below the %.2f relevance floor, so AlphaVantage has no coverage of this company",
+				" — none names this company in its headline or summary (a market wrap, an unrelated holdings alert, say)"+
+				" and each scores below the %.2f relevance floor, so AlphaVantage has no coverage of this company",
 			len(arts), plural(len(arts), "item", "items"), AVRelevanceFloor)}}, nil
 	}
 
