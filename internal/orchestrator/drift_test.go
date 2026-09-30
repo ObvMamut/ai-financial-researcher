@@ -358,3 +358,19 @@ func TestFundamentalsSeesTheEarningsReactionAndTheBlindedDomainsDoNot(t *testing
 		}
 	}
 }
+
+func TestEarningsDriftIsNotOKOutsideTheWindow(t *testing.T) {
+	// The exported read tells "no event inside the window" (not ok) apart from
+	// an event whose score has decayed or been retraced (ok, possibly 0).
+	report := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 10)
+	// n bars with the window opening on bar 10 leave n-12 sessions after it.
+	inside := driftBars(12+driftWindowSessions-1, 10, 0.10, 0, 0)
+	v, ok := EarningsDrift(inside, nil, report, 0.02)
+	if !ok || v <= 0 {
+		t.Fatalf("inside the window: (%v, %v), want a positive score", v, ok)
+	}
+	outside := driftBars(12+driftWindowSessions+1, 10, 0.10, 0, 0)
+	if v, ok := EarningsDrift(outside, nil, report, 0.02); ok {
+		t.Errorf("past the window: (%v, true), want not ok", v)
+	}
+}

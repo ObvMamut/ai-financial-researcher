@@ -31,6 +31,14 @@ arms, because a model cannot be replayed without look-ahead.
   Reads go through the shared data cache and are cache-first: a series younger
   than `--cache-age` (default 7 days) is not re-requested. The lab makes no
   model call and reads no credential.
+- **Earnings-release dates (US only).** When `providers.contact_email` is set,
+  each sp500/nq100 member's 8-K Item 2.02 filing dates are read from SEC's
+  keyless per-issuer submissions JSON (`marketdata.NewFilingHistorySource`),
+  from half a year before the first rebalance on, into `Data.Filings`. Names SEC
+  cannot resolve are listed in the report's `filings_unavailable` and carry NaN
+  earnings signals. Without a contact address nothing is fetched, both earnings
+  signals are NaN for every name, and `filings_note` says so. eu50 and asia100
+  have no source and are never asked for.
 - **Rebalance dates.** Every Friday from `--years` before the most recent Friday
   up to that Friday.
 - **Point in time.** At each date *d*, each series is cut at its last bar on or
@@ -53,9 +61,14 @@ arms, because a model cannot be replayed without look-ahead.
   result carries `requested_start`, `shortfall` and `shortfall_note` alongside
   the actual `first_date`/`last_date`/`dates` it always records.
 - **Known departures from a live run.** There is no liquidity floor, because a
-  USD turnover needs each past date's FX rate. There is no drift archetype,
-  because no point-in-time filing dates are cached. The composite does not use
-  drift either way. Prices are Yahoo's for every symbol.
+  USD turnover needs each past date's FX rate. There is no drift archetype: the
+  pre-screen row's `ReportDate` is left unset, so `classifySetups` and the
+  composite are exactly what a live run without an SEC contact address
+  computes, and the composite does not use drift either way. Drift is measured
+  instead as its own signal, `drift`, and its event is the 8-K Item 2.02
+  earnings release where a live run uses the 10-Q/10-K filing date — often the
+  same day for large filers, sometimes weeks later, so the lab reads the
+  release itself. Prices are Yahoo's for every symbol.
 - **Targets.** For horizons of 5, 10 and 15 sessions: the close-to-close return
   less the benchmark's return over the same dates (`universe.BenchmarkFor`), and
   the beta-adjusted version `r − β·r_bench`, with β taken from
@@ -65,6 +78,26 @@ arms, because a model cannot be replayed without look-ahead.
   `rev21`, `hi52`, `lowvol`, `indmom`, `idio_rev5`, `overnight21` and
   `intraday21`. The pre-registered variants `c1_mom_weighted` and `c3_news_rev`
   are added too. Every signal is oriented so that a higher value is bullish.
+  Two earnings signals are US-only and NaN elsewhere:
+  - `drift`: the live drift leg's decayed reaction (`orchestrator.EarningsDrift`,
+    the shipping `computeDrift` and `Score`) to the latest Item 2.02 release
+    dated **strictly before** the rebalance session, on the series and
+    benchmark cut at that session. SEC gives a filing date and no acceptance
+    time, so a release dated on the session itself may have come after its
+    close and is not used. The reaction window is the live one: from the close
+    before the filing date to the close of the session after it. NaN when there
+    is no such release, the window cannot be built, or more than 25 sessions
+    have closed since it; 0 when the market has retraced the whole reaction.
+  - `earn_window`: C2's indicator — 1 when the next release is predicted inside
+    the next 10 sessions, 0 when not. SEC gives past dates only, so the next
+    release is **extrapolated from the filer's cadence**: the latest release
+    strictly before the session plus 91 days, ±7 days. Sessions are counted as
+    weekdays, so a holiday stretches the horizon by a day. NaN with no past
+    release, or once the whole predicted window has passed without one (a
+    broken cadence predicts nothing). This is an approximation, not a
+    calendar: a filer that moves its release by more than a week is misread.
+  Both are summarised in the per-signal tables like every other signal; their
+  pre-registered tests are separate.
 - **Statistics.**
   - Rank IC is the Spearman correlation within one index on one date, with at
     least 15 pairs. It is averaged across indices per date, giving one series

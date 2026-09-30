@@ -158,6 +158,21 @@ func computeDrift(s, bench *quant.Series, date time.Time, sigmaDaily float64) (d
 	return d, true
 }
 
+// EarningsDrift is computeDrift's decayed Score for a caller outside the
+// package: the backtest lab, which measures the same reaction on a series cut
+// at each rebalance date. ok is false when there is no measurable event inside
+// the drift window — the window cannot be built, or more than
+// driftWindowSessions have closed since it — so the caller can tell "no event"
+// from an event the market has since retraced, which is ok with a score of 0,
+// exactly as the live classifier reads it.
+func EarningsDrift(s, bench *quant.Series, date time.Time, sigmaDaily float64) (float64, bool) {
+	d, ok := computeDrift(s, bench, date, sigmaDaily)
+	if !ok || d.Sessions > driftWindowSessions {
+		return 0, false
+	}
+	return d.Score(), true
+}
+
 // returnBetweenDates is the simple return of a series between two dates, using
 // the first bar on or after each. It mirrors the scoreboard's helper of the same
 // shape; the two packages cannot share one without the orchestrator importing

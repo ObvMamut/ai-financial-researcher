@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
@@ -28,6 +29,10 @@ type Config struct {
 	CacheMaxAge time.Duration // how old a cached long series may be; default 7 days
 	Now         time.Time     // the replay ends on the last Friday on or before it
 	Log         func(string)  // progress lines; may be nil
+	// Filings resolves US earnings-release dates for the drift and
+	// earn_window signals. nil — no SEC contact address — leaves both NaN and
+	// says so in the report; everything else is unchanged.
+	Filings marketdata.FilingHistorySource
 }
 
 // DefaultYears is Config.Years' default, and the threshold LongHistorySurvivorship
@@ -51,7 +56,7 @@ const LongHistorySurvivorship = "LONG HISTORY: --years exceeds the default, so t
 // Departures lists where the lab's pre-screen knowingly differs from a live run.
 var Departures = []string{
 	"no liquidity floor: a USD turnover needs the FX rate at each past date, and converting at today's rate would be a look-ahead",
-	"no drift archetype: no point-in-time 10-Q/10-K dates are cached, as in a live run without an SEC contact address; the composite does not use drift",
+	"no drift archetype: row.ReportDate stays unset, as in a live run without an SEC contact address, so the composite and archetypes are unchanged; drift is measured instead as its own signal, from US 8-K Item 2.02 release dates (live: 10-Q/10-K filing dates)",
 	"a name is scored only with the full 253 bars the 12-1 term needs (live: 60), and only in a week it printed a bar",
 	"prices are Yahoo's adjusted daily bars for every symbol (live runs route US equities through Alpaca when keyed)",
 }
@@ -71,12 +76,17 @@ type Result struct {
 	// RequestedStart is end - years, what --years asked the replay to reach
 	// back to. Shortfall is set when Start falls materially later than that —
 	// see checkShortfall.
-	RequestedStart string   `json:"requested_start,omitempty"`
-	Shortfall      bool     `json:"shortfall,omitempty"`
-	ShortfallNote  string   `json:"shortfall_note,omitempty"`
-	Survivorship   string   `json:"survivorship"`
-	Departures     []string `json:"departures"`
-	CostNote       string   `json:"cost_note"`
+	RequestedStart string `json:"requested_start,omitempty"`
+	Shortfall      bool   `json:"shortfall,omitempty"`
+	ShortfallNote  string `json:"shortfall_note,omitempty"`
+	// FilingsNote says why the earnings signals are NaN throughout (no SEC
+	// contact address); FilingsUnavailable names the US tickers whose filing
+	// history could not be resolved, whose earnings signals are NaN.
+	FilingsNote        string   `json:"filings_note,omitempty"`
+	FilingsUnavailable []string `json:"filings_unavailable,omitempty"`
+	Survivorship       string   `json:"survivorship"`
+	Departures         []string `json:"departures"`
+	CostNote           string   `json:"cost_note"`
 	// Signals maps a slice label (all, US, EU, Asia, H1, H2) to every signal's
 	// stats against benchmark-excess returns; BetaAdjusted is the same against
 	// r − β·r_bench (C4).
@@ -193,6 +203,18 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 
 	end := lastFriday(cfg.Now)
 	dates := WeeklyDates(end.AddDate(-cfg.Years, 0, 0), end)
+
+	var filingsNote string
+	var filingsUnavailable []string
+	if cfg.Filings == nil {
+		filingsNote = noFilingsNote
+	} else if len(dates) > 0 {
+		data.Filings, filingsUnavailable = loadFilings(ctx, cfg.Filings, members, dates[0].AddDate(0, 0, -filingLookbackDays))
+		logf("filings: %d US names resolved, %d unavailable", len(data.Filings), len(filingsUnavailable))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	recs := DropWarmupDates(BuildPanel(members, data, dates))
 	if len(recs) == 0 {
 		return nil, fmt.Errorf("the panel is empty: no member had %d bars at any rebalance date", minHistory)
@@ -201,8 +223,44 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 	res := Analyze(recs, data.Series, cfg.Years)
 	res.GeneratedAt = cfg.Now.UTC().Format(time.RFC3339)
 	res.Range, res.Unavailable = rng, unavailable
+	res.FilingsNote, res.FilingsUnavailable = filingsNote, filingsUnavailable
 	checkShortfall(res, cfg.Years, end)
 	return res, nil
+}
+
+// noFilingsNote is the report's line when no filing source was configured.
+const noFilingsNote = "no SEC contact_email configured: no earnings-release dates were fetched, so drift and earn_window are NaN for every name"
+
+// filingLookbackDays is how far before the first rebalance the filing history
+// reaches: past earnWindow's longest reach back (a release up to
+// earnCadenceDays+earnSlackDays before the date still predicts one), so the
+// first rebalance reads the same history every later one does.
+const filingLookbackDays = 183
+
+// loadFilings fetches the earnings-release dates of every US member (sp500 and
+// nq100 samples), each ticker once. Non-US members are never asked for: SEC
+// has nothing on a foreign listing, and their earnings signals stay NaN. A
+// ticker the source could not resolve is absent and named in the warnings.
+func loadFilings(ctx context.Context, src marketdata.FilingHistorySource, members []Member, since time.Time) (map[string][]time.Time, []string) {
+	var tickers []string
+	seen := map[string]bool{}
+	for _, m := range members {
+		t := strings.ToUpper(m.Constituent.Ticker)
+		if Region(m.Constituent.Index) != "US" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		tickers = append(tickers, t)
+	}
+	if len(tickers) == 0 {
+		return nil, nil
+	}
+	hist, warnings := src.FilingHistory(ctx, tickers, since)
+	out := make(map[string][]time.Time, len(hist))
+	for t, h := range hist {
+		out[strings.ToUpper(t)] = h.Earnings
+	}
+	return out, warnings
 }
 
 // shortfallWarnWeeks is how much later than requested the first surviving
@@ -420,6 +478,12 @@ func (r *Result) Text() string {
 	}
 	if len(r.Unavailable) > 0 {
 		fmt.Fprintf(&sb, "\n%d symbol(s) unavailable: %s\n", len(r.Unavailable), strings.Join(r.Unavailable, "; "))
+	}
+	if r.FilingsNote != "" {
+		fmt.Fprintf(&sb, "\nNOTE: %s\n", r.FilingsNote)
+	}
+	if len(r.FilingsUnavailable) > 0 {
+		fmt.Fprintf(&sb, "\n%d filing history lookup(s) unavailable (drift/earn_window NaN): %s\n", len(r.FilingsUnavailable), strings.Join(r.FilingsUnavailable, "; "))
 	}
 	return sb.String()
 }

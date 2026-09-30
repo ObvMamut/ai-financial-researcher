@@ -47,6 +47,8 @@ const (
 	SigIntraday21         // Σ log(close/open), last 21 sessions
 	SigC1                 // pre-registered C1: composite with mom12-1 and ret63 weights swapped
 	SigC3                 // pre-registered C3: news-conditioned residual reversal
+	SigDrift              // post-earnings drift: the reaction to the last Item-2.02 release, decayed (US only)
+	SigEarnWindow         // 1 when the cadence-predicted next Item-2.02 release falls inside the next 10 sessions, else 0 (US only)
 	NumSignals
 )
 
@@ -56,7 +58,7 @@ const (
 var SignalNames = [NumSignals]string{
 	"score", "trend", "mom12_1", "ret63", "strz", "stretch21", "rev5", "rev21",
 	"hi52", "lowvol", "indmom", "idio_rev5", "overnight21", "intraday21",
-	"c1_mom_weighted", "c3_news_rev",
+	"c1_mom_weighted", "c3_news_rev", "drift", "earn_window",
 }
 
 // Region groups the four indices the way the adoption bar reads them.
@@ -107,8 +109,9 @@ type Record struct {
 	// SigmaDaily is quant.Compute's Yang-Zhang daily σ, the unit of the σ stop.
 	SigmaDaily float64
 	// Setup is the archetype ScorePrescreen assigned. Never "drift" here: the
-	// lab has no point-in-time filing dates, exactly as a live run with no SEC
-	// contact address has none.
+	// row's ReportDate stays unset, so classifySetups and the composite are the
+	// ones a live run with no SEC contact address computes. The earnings event
+	// is measured separately, as SigDrift and SigEarnWindow.
 	Setup string
 }
 
@@ -119,10 +122,17 @@ type Member struct {
 }
 
 // Data is everything the panel is built from: each ticker's full daily series
-// and each benchmark's. It is read-only once built.
+// and each benchmark's, and each US ticker's earnings-release dates. It is
+// read-only once built.
 type Data struct {
 	Series map[string]*quant.Series
 	Bench  map[string]*quant.Series
+	// Filings holds each US ticker's 8-K Item 2.02 (earnings release) filing
+	// dates, oldest first, keyed by upper-case ticker. A ticker with no entry —
+	// every non-US name, and any US name SEC could not resolve — has SigDrift
+	// and SigEarnWindow NaN. Only dates strictly before a rebalance session are
+	// ever read at it (lastFilingBefore).
+	Filings map[string][]time.Time
 }
 
 // WeeklyDates returns every Friday from start through end inclusive.
@@ -213,7 +223,7 @@ func BuildPanel(members []Member, data Data, dates []time.Time) []Record {
 			if err != nil || d.Sub(last) > staleDays*24*time.Hour {
 				continue
 			}
-			rec, row := observe(m, s, b, p, params, benchRet63)
+			rec, row := observe(m, s, b, p, params, benchRet63, data.Filings[strings.ToUpper(m.Constituent.Ticker)])
 			rec.Date = ds
 			byDate[di] = append(byDate[di], obs{rec, row})
 		}
@@ -259,7 +269,7 @@ func BuildPanel(members []Member, data Data, dates []time.Time) []Record {
 
 // observe computes one member's record at bar p of its series. The score and
 // trend fields are filled in later, once the whole date's cross-section exists.
-func observe(m Member, s, bench *quant.Series, p int, params orchestrator.PrescreenParams, benchRet63 map[string]float64) (Record, orchestrator.PrescreenRow) {
+func observe(m Member, s, bench *quant.Series, p int, params orchestrator.PrescreenParams, benchRet63 map[string]float64, filings []time.Time) (Record, orchestrator.PrescreenRow) {
 	date := s.Bars[p].Date
 	cut := &quant.Series{Symbol: s.Symbol, Bars: s.Bars[:p+1]}
 	bcut := upTo(bench, date)
@@ -315,6 +325,16 @@ func observe(m Member, s, bench *quant.Series, p int, params orchestrator.Prescr
 	rec.Sig[SigIdioRev5] = -resid
 	rec.Sig[SigC3] = newsConditionedReversal(resid, cut.Bars)
 
+	// The earnings leg. row.ReportDate is deliberately left unset, so the
+	// composite and the archetypes stay what they were; drift is scored as a
+	// signal of its own beside them.
+	if last, ok := lastFilingBefore(filings, date); ok && rec.SigmaDaily > 0 {
+		if v, ok := orchestrator.EarningsDrift(cut, bcut, last, rec.SigmaDaily); ok {
+			rec.Sig[SigDrift] = v
+		}
+	}
+	rec.Sig[SigEarnWindow] = earnWindow(filings, date)
+
 	for k, h := range Horizons {
 		rec.XS[k], rec.BX[k] = nan, nan
 		if p+h >= len(s.Bars) {
@@ -331,6 +351,69 @@ func observe(m Member, s, bench *quant.Series, p int, params orchestrator.Prescr
 		}
 	}
 	return rec, row
+}
+
+// lastFilingBefore is the latest filing dated strictly before session, the
+// point-in-time rule for both earnings signals. SEC's submissions carry a
+// filing *date* and no acceptance time, so a release dated on the session
+// itself may have landed after its close and is not yet known at it.
+func lastFilingBefore(filings []time.Time, session string) (time.Time, bool) {
+	var last time.Time
+	found := false
+	for _, f := range filings {
+		if f.Format("2006-01-02") < session && (!found || f.After(last)) {
+			last, found = f, true
+		}
+	}
+	return last, found
+}
+
+// The earnings-window prediction (C2): the next release is expected one
+// quarter after the last, give or take a week. SEC gives past release dates
+// only, so the expected date is extrapolated from the filer's own cadence —
+// an approximation, and the only point-in-time one available.
+const (
+	earnCadenceDays    = 91
+	earnSlackDays      = 7
+	earnWindowSessions = 10
+)
+
+// earnWindow is 1 when the predicted next release window — the last release
+// strictly before session plus earnCadenceDays ± earnSlackDays — overlaps the
+// next earnWindowSessions sessions after it, and 0 when it does not. It is
+// NaN when there is no past release to extrapolate from, or when the whole
+// predicted window has already passed without one: the cadence has broken
+// (a skipped quarter, a changed filer) and predicts nothing. Sessions are
+// counted as weekdays, so a holiday stretches the horizon by a day.
+func earnWindow(filings []time.Time, session string) float64 {
+	t, err := time.Parse("2006-01-02", session)
+	if err != nil {
+		return math.NaN()
+	}
+	last, ok := lastFilingBefore(filings, session)
+	if !ok {
+		return math.NaN()
+	}
+	lo := last.AddDate(0, 0, earnCadenceDays-earnSlackDays)
+	hi := last.AddDate(0, 0, earnCadenceDays+earnSlackDays)
+	if !hi.After(t) {
+		return math.NaN()
+	}
+	if lo.After(addWeekdays(t, earnWindowSessions)) {
+		return 0
+	}
+	return 1
+}
+
+// addWeekdays is t moved forward n weekdays.
+func addWeekdays(t time.Time, n int) time.Time {
+	for n > 0 {
+		t = t.AddDate(0, 0, 1)
+		if t.Weekday() != time.Saturday && t.Weekday() != time.Sunday {
+			n--
+		}
+	}
+	return t
 }
 
 // Abnormal-volume proxy for news (pre-registered test C3): a session in the

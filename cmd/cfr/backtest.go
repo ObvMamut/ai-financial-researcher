@@ -23,7 +23,10 @@ import (
 //
 // It calls no model. Prices come from the keyless Yahoo chart endpoint through
 // the shared data cache, cache-first, so a re-run inside --cache-age makes no
-// request at all. No credential is read or needed.
+// request at all. No credential is read or needed. With an SEC contact address
+// (providers.contact_email) it also reads each US constituent's earnings-release
+// dates from SEC's keyless submissions JSON for the drift and earn_window
+// signals; without one those two signals are NaN and the report says so.
 //
 // Exit codes: 0 ok, 1 error, 2 bad usage.
 func runBacktest(settings *config.Settings, args []string) int {
@@ -56,9 +59,15 @@ func runBacktest(settings *config.Settings, args []string) int {
 	}
 
 	now := time.Now()
-	res, err := backtest.Run(ctx, marketdata.NewYahooClient(marketdata.NewCache(settings.DataDir)), uni, backtest.Config{
+	cache := marketdata.NewCache(settings.DataDir)
+	var filings marketdata.FilingHistorySource
+	if settings.Providers.ContactEmail != "" {
+		filings = marketdata.NewFilingHistorySource(settings.Providers.ContactEmail, cache)
+	}
+	res, err := backtest.Run(ctx, marketdata.NewYahooClient(cache), uni, backtest.Config{
 		Years: *years, Indices: idx, CacheMaxAge: *cacheAge, Now: now,
-		Log: func(s string) { fmt.Fprintln(os.Stderr, s) },
+		Log:     func(s string) { fmt.Fprintln(os.Stderr, s) },
+		Filings: filings,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
