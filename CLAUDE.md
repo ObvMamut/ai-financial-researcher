@@ -163,7 +163,13 @@ internal/
                 spec and results in docs/workflow/backtest.md. E1 (10 years,
                 2026-09-26): net of cost the screen's beta-adjusted top-5
                 excess is positive in 5 of 11 years, so the lab finds no edge
-                in the screen and the TUI results view says so
+                in the screen. scoped.go runs the US-scoped D1–D3 (drift IC10,
+                top-5 drift book net of 30bp, earn_window IC10 from SEC 8-K
+                Item 2.02 dates); all three failed on 2026-09-30 (t −0.67,
+                −0.03, 1.84), so no signal tested on this horizon — screen,
+                model stages, PEAD — has shown an edge, and the TUI results
+                view says so. Live runs are measurement only, at a cadence
+                the owner sets
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -224,7 +230,10 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    (`internal/marketdata/fx.go`). Persists `prescreen.json`; the price series stay in the
    data cache. The composite is a ranking, not a demonstrated edge: the backtest lab's
    10-year replay (E1, `docs/workflow/backtest.md`) finds its beta-adjusted top-5 excess
-   positive in only 5 of 11 years net of 30bp, and its beta-adjusted IC10 at t 0.66.
+   positive in only 5 of 11 years net of 30bp, and its beta-adjusted IC10 at t 0.66. The
+   drift leg shows no edge in the lab either: over 10 years of US 8-K Item 2.02 releases,
+   drift's beta-adjusted IC10 has t −0.67 (D1) and a top-5-by-|drift| book nets −0.006% per
+   15-session hold after 30bp (D2, t −0.03).
 1. **Scouts (cheap engine):** one call per index, each screening *eight disjoint ranked
    tables* — drift, pullback and base each split into a long and a short half, plus
    continuation and the bottom of the ranking — → ~5–10 nominations each. The counter-trend archetypes are

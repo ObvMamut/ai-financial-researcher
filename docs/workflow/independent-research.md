@@ -459,7 +459,10 @@ The 2026-09-23 attribution study (`docs/research/2026-09-23-evidence/legacy/`) f
 measurable value in any model stage above the funnel: specialist domain ICs of −0.08 to
 +0.07, the top third of base scores doing worst, and the Chief's picks (+0.55%) level with
 the shortlisted names it left out (+0.58%). The scouts' shortlist was the only arm whose
-interval cleared zero. `selection` decides what follows from that.
+interval cleared zero. `selection` decides what follows from that. The lab has since
+tested the screen (E1, 2026-09-26) and post-earnings drift (D1–D3, 2026-09-30) and found no
+edge in either, so no signal tested on this horizon has shown one
+([backtest.md](backtest.md)); live runs are measurement, at a cadence the owner sets.
 
 ### `merit_veto` (default)
 

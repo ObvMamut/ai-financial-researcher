@@ -1,0 +1,9 @@
+prices: 50 of 268 members
+prices: 150 of 268 members
+prices: 200 of 268 members
+prices: 250 of 268 members
+prices: 244 symbols, 0 unavailable
+filings: 119 US names resolved, 0 unavailable
+panel: 136478 rows
+report written to .data/backtest/2026-09-30T15-08-45.json
+exit 0

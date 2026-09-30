@@ -86,13 +86,15 @@ func (m resultsModel) Update(msg tea.Msg) (resultsModel, tea.Cmd) {
 	return m, nil
 }
 
-// screenNoEdgeLine is E1's registered consequence (docs/workflow/backtest.md):
-// in legacy independent research the ideas, their order and their confidence
-// all come out of the pre-screen funnel, and the 10-year lab replay finds its
-// beta-adjusted top-5 excess positive in only 5 of 11 years once its own 30bp
-// cost is paid. The screen is what picks these names; the reader should know
-// the lab cannot show that it picks well.
-const screenNoEdgeLine = "  The backtest lab finds no edge in the pre-screen that ranked these ideas, net of cost."
+// screenNoEdgeLine is E1's and Wave D's registered consequence
+// (docs/workflow/backtest.md): in legacy independent research the ideas, their
+// order and their confidence all come out of the pre-screen funnel, and the
+// 10-year lab replay finds its beta-adjusted top-5 excess positive in only 5
+// of 11 years once its own 30bp cost is paid. The model stages add nothing
+// measurable above that funnel (the 2026-09-23 attribution), and post-earnings
+// drift, the one documented effect on this clock, failed D1 and D2 in the lab.
+// The reader should know that nothing tested on this horizon picks well.
+const screenNoEdgeLine = "  No signal tested on this horizon has shown an edge net of cost:\n  not the pre-screen that ranked these ideas, not the model stages, not post-earnings drift."
 
 func (m resultsModel) View() string {
 	if m.detail != nil {

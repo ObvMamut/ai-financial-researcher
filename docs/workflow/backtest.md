@@ -257,6 +257,10 @@ not apply, because there is no point-in-time release source outside the US.
   Changing that cadence stays the owner's call.
 - D3's result is reported either way.
 
+**Run 2026-09-30: all three fail.** The results were D1 t −0.67, D2 t −0.03 (net −0.006% per
+book) and D3 t 1.84. The "both fail" decision is applied. See [Run of
+2026-09-30](#run-of-2026-09-30-wave-d-d1d3-docsresearch2026-09-30-evidence).
+
 **Known differences from the live drift leg.** The lab anchors drift at the 8-K
 Item 2.02 release date; a live run anchors it at the 10-Q/10-K filing date, which
 can be the same day for large filers and weeks later for others.
@@ -399,6 +403,41 @@ are 3 recomputations that decide nothing. The 4-year run is 8 more comparison-on
 C4, E2-1, E2-3, E2-off, E3 and its per-year E1 table. In all, **16 statistics** were read on
 2026-09-26. The C recomputations all fail the bar, with C1 closest (10-year t 1.44, 4-year t 1.62).
 E1 fired, which changes wording only; no setting changed.
+
+### Run of 2026-09-30: Wave D, D1–D3 (`docs/research/2026-09-30-evidence/`)
+
+One `cfr backtest --years 10 --json`, from a binary built at `16a20dc`. It was run from the repo
+root with every key unset, so no model was called. The write-up is
+`docs/research/2026-09-30-lab-drift.md`, and the raw JSON and stderr are in the evidence
+directory.
+
+- **Sample and coverage.** 521 rebalances from 2016-10-07 to 2026-09-25, with the second half from
+  2021-10-01, and 136,478 rows. Prices had 0 unavailable symbols, and there was no shortfall
+  warning. SEC resolved all 119 US names, with 0 `filings_unavailable`.
+- **Unchanged figures.** Every figure outside `us_scoped` is identical to the 2026-09-26 10-year
+  run.
+- **Usable dates.** Drift had an IC on 455 of 521 dates (219 in H1, 236 in H2).
+- **Tests run.** `tests_run` is 11.
+
+| Test | Mean | NW t | n | H1 / H2 | Result |
+|---|---:|---:|---:|---|---|
+| D1: drift IC10 (β-adj.) | −0.0068 | −0.67 | 455 | −0.0197 / +0.0052 | **Fails** |
+| D2: top-5-by-\|drift\| book, net of 30bp | −0.006% (gross +0.294%) | −0.03 | 517 weeks | −0.510% / +0.505% | **Fails** |
+| D3: earn_window IC10 (β-adj.) | +0.0126 | 1.84 | 518 | +0.0179 / +0.0072 | **Fails**: right sign in both halves, t below 2.5 |
+
+**Consequence, applied.** D1 and D2 both fail, so the pre-fixed decision holds: no signal tested on
+this horizon has shown an edge.
+
+- **The screen:** E1 fired.
+- **The model stages:** the 2026-09-23 attribution found none.
+- **PEAD:** D1 and D2 above.
+
+`CLAUDE.md` and the TUI results view of a legacy independent run now say so. The recommendation is
+to run live only as measurement, at reduced cadence, and that cadence is the owner's call. Drift
+does not become an idea source.
+
+The register now holds **11 decision tests**: C1, C3, C4, E1, E2-1, E2-3, E2-off, E3, D1, D2 and
+D3. None has passed, and E1 fired.
 
 ## E3: which side carries the result (registered 2026-09-25, before this ran)
 
