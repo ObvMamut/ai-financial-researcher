@@ -363,8 +363,9 @@ type TestResult struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Statistic string `json:"statistic"`
-	// Status is "run", "untestable", "skipped" or "comparison" (E1 below its
-	// pre-registered --years floor); only "run" counts toward the number of
+	// Status is "run", "untestable", "skipped", "comparison" (E1 below its
+	// pre-registered --years floor) or "unregistered" (a scoped look computed
+	// before its test is registered); only "run" counts toward the number of
 	// tests the report says it ran.
 	Status  string         `json:"status"`
 	Note    string         `json:"note,omitempty"`
@@ -373,7 +374,12 @@ type TestResult struct {
 	NDates  int            `json:"n_dates,omitempty"`
 	Halves  map[string]Num `json:"halves,omitempty"`
 	Regions map[string]Num `json:"regions,omitempty"`
-	Pass    bool           `json:"pass"`
+	// Scope names the one region a scoped test (scoped.go) was evaluated on;
+	// empty for an every-region test. HalfNDates is each half's count of
+	// dates with a finite statistic, set by scoped tests.
+	Scope      string         `json:"scope,omitempty"`
+	HalfNDates map[string]int `json:"half_n_dates,omitempty"`
+	Pass       bool           `json:"pass"`
 	// Fired is set by a decision rule (E1, E3) rather than a signal test: it
 	// has no t and no adoption bar, only a registered condition that either
 	// triggers its consequence or does not.

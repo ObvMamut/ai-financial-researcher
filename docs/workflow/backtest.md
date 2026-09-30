@@ -108,6 +108,40 @@ arms, because a model cannot be replayed without look-ahead.
     windows overlap.
   - Each is reported for all indices, per region (US = sp500 + nq100, EU, Asia)
     and per half. The second half starts at the median date.
+- **US-scoped tests (`internal/backtest/scoped.go`).** `drift` and `earn_window`
+  exist for US names only, so the every-region leg of the bar cannot be met by
+  construction: there is no point-in-time EU or Asia release source. A test
+  registered as *US-scoped* is evaluated on US names alone and, if it passes,
+  may be adopted for US names only. Its bar is otherwise the lab's: the
+  Newey-West t clears **2.5** in the registered direction, the mean has that
+  sign in **both halves** (same median-date split), and the target is the
+  beta-adjusted excess.
+  - **The US scope is sp500 ∪ nq100, one row per ticker per date.** 35 of
+    nq100's 56 names are also in sp500. The per-region rows of the signal tables
+    average the two indices' per-date ICs, which reads a cross-listed name twice
+    on one date. A scoped statistic instead pools the region into one
+    cross-section per date. A name in both indices enters once, as its sp500 row,
+    measured against ^GSPC. nq100-only names keep their ^NDX benchmark
+    (`scopeRecords`, `scopedCells`).
+  - The minimum cross-section stays at 15 pairs. It applies to the pooled US
+    cross-section, of about 119 names, rather than to each index's. A date where
+    fewer than 15 US names carry a finite signal has no IC. Each scoped result
+    reports how many dates were usable, overall and per half (`n_dates`,
+    `half_n_dates`), beside the scope's date count.
+  - `earn_window` is 0/1, so its scoped statistic is the per-date rank IC10.
+    Ties take average ranks. Its quintile spreads are not read.
+  - **Signal book** (`signalBookTest`): each week, the five US names with the
+    largest |signal|, each held at the signal's sign for 15 sessions and
+    equal-weighted. A NaN or zero signal is not held. When fewer than five names
+    are eligible, the book holds what there is, and the report gives the
+    full-week count and the mean book size. The statistic is the weekly
+    beta-adjusted excess, net of the lab's 30bp paid once per name. Its
+    Newey-West t uses `nwLags(15)` lags, and it is tested against the same
+    scoped bar.
+  - The report's `us_scoped` block (text: "US-scoped looks") shows `drift`'s and
+    `earn_window`'s scoped IC10 and the drift book against that bar. These
+    entries have `status: "unregistered"` and are not counted in `tests_run`;
+    a scoped test is counted only once it is registered below.
 - **Per-calendar-year slices (E1).** Alongside the halves, the composite's IC10
   and IC15 (plain and beta-adjusted) are also reported for every calendar year
   the sample covers, each with its date count. A default 4-year run shows two
