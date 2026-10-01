@@ -169,9 +169,14 @@ internal/
                 top-5 drift book net of 30bp, earn_window IC10 from SEC 8-K
                 Item 2.02 dates); all three failed on 2026-09-30 (t −0.67,
                 −0.03, 1.84), so no signal tested on this horizon — screen,
-                model stages, PEAD — has shown an edge, and the TUI results
-                view says so. Live runs are measurement only, at a cadence
-                the owner sets
+                model stages, PEAD — has shown an edge. horizon.go adds 21-
+                and 63-session holds (v5, 2026-10-01): the screen's top-5
+                book (H1, t 1.08 / 2.31) and 12-1 momentum alone (H2, t 0.68
+                / 0.91) all fail too; holm.go gives every test a p and a Holm
+                p over the 15 run, none below 0.05. The TUI results view
+                says so. Live runs are measurement only, at a cadence the
+                owner sets; the keep/cut/stop memo is
+                docs/research/2026-10-01-keep-cut-stop.md
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -237,7 +242,11 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    anchored at the 8-K Item 2.02 release date and without the live 1.5σ threshold (the
    live leg anchors at the 10-Q/10-K filing date). Over 10 years of US releases,
    drift's beta-adjusted IC10 has t −0.67 (D1) and a top-5-by-|drift| book nets −0.006% per
-   15-session hold after 30bp (D2, t −0.03).
+   15-session hold after 30bp (D2, t −0.03). A longer hold does not rescue the screen (v5, H1–H2):
+   the top-5 book nets +0.34% per 21-session hold (t 1.08) and +2.14% per 63 (t 2.31, the
+   closest miss on the register, and the figure survivorship flatters most), and 12-1
+   momentum's beta-adjusted IC weakens rather than strengthens past 15 sessions (t 0.68 at
+   21, 0.91 at 63, both negative in the US).
 1. **Scouts (cheap engine):** one call per index, each screening *eight disjoint ranked
    tables* — drift, pullback and base each split into a long and a short half, plus
    continuation and the bottom of the ranking — → ~5–10 nominations each. The counter-trend archetypes are

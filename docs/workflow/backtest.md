@@ -69,7 +69,8 @@ arms, because a model cannot be replayed without look-ahead.
   earnings release where a live run uses the 10-Q/10-K filing date — often the
   same day for large filers, sometimes weeks later, so the lab reads the
   release itself. Prices are Yahoo's for every symbol.
-- **Targets.** For horizons of 5, 10 and 15 sessions: the close-to-close return
+- **Targets.** For horizons of 5, 10, 15, 21 and 63 sessions (the last two added
+  for v5's horizon tests): the close-to-close return
   less the benchmark's return over the same dates (`universe.BenchmarkFor`), and
   the beta-adjusted version `r − β·r_bench`, with β taken from
   `quant.Compute` at *d*.
@@ -108,6 +109,11 @@ arms, because a model cannot be replayed without look-ahead.
     windows overlap.
   - Each is reported for all indices, per region (US = sp500 + nq100, EU, Asia)
     and per half. The second half starts at the median date.
+  - **p-values and Holm (`internal/backtest/holm.go`).** Every test with status
+    `run` carries a `p` and a Holm-adjusted `p_holm`, under the rules registered
+    with v5 below. The report's `multiple_testing` block lists the whole family
+    (`family_size` equals `tests_run`) sorted by p. Holm is reported, and no
+    verdict reads it.
 - **US-scoped tests (`internal/backtest/scoped.go`).** `drift` and `earn_window`
   exist for US names only, so the every-region leg of the bar cannot be met by
   construction: there is no point-in-time EU or Asia release source. A test
@@ -312,6 +318,12 @@ Holm sorts the p-values in ascending order and sets
 the decisions below use the bar above. With m = 15, the smallest p must be
 below 0.0033 (t > 2.71) to survive Holm at 5%.
 
+**Run 2026-10-01: all four fail.** H1-21 had t 1.08, H1-63 t 2.31 (positive in
+both halves and every region, below the bar), H2-21 t 0.68 and H2-63 t 0.91
+(negative in the US). No test in the 15-test family has a Holm p below 0.05;
+the smallest is H1-63's 0.159. The "all fail" decision is applied. See [Run of
+2026-10-01](#run-of-2026-10-01-v5-h1h2-docsresearch2026-10-01-evidence).
+
 **Decisions fixed before the run:**
 
 - **Any of H1-21, H1-63, H2-21 or H2-63 passes** → the write-up says so and
@@ -503,6 +515,39 @@ does not become an idea source.
 
 The register now holds **11 decision tests**: C1, C3, C4, E1, E2-1, E2-3, E2-off, E3, D1, D2 and
 D3. None has passed, and E1 fired.
+
+### Run of 2026-10-01: v5, H1–H2 (`docs/research/2026-10-01-evidence/`)
+
+One `cfr backtest --years 10 --json`, from a binary built at `bb14aa9`, run from the repo root with
+every key unset at 2026-10-01T09:57:58Z. No model was called. The write-up is
+`docs/research/2026-10-01-lab-horizon.md`, and the owner memo the decision calls for is
+`docs/research/2026-10-01-keep-cut-stop.md`.
+
+- **Sample and coverage.** 521 rebalances from 2016-10-07 to 2026-09-25, with the second half from
+  2021-10-01, and 136,478 rows. 244 price symbols had 0 unavailable, there was no shortfall
+  warning, and SEC resolved all 119 US names.
+- **Unchanged figures.** Every figure that existed before v5 is identical to the 2026-09-30 run.
+- **Counts.** `tests_run` is 15, and the Holm family size is 15.
+
+| Test | Mean | NW t (lags) | n | H1 / H2 | US / EU / Asia | p | Holm p | Result |
+|---|---:|---:|---:|---|---|---:|---:|---|
+| H1-21: top-5 book, net, 21 sessions | +0.335% | 1.08 (5) | 516 | +0.282% / +0.390% | +0.549% / +0.104% / +0.127% | 0.139 | 1 | **Fails** |
+| H1-63: top-5 book, net, 63 sessions | +2.136% | 2.31 (13) | 508 | +1.937% / +2.344% | +3.249% / +1.042% / +1.010% | 0.011 | 0.159 | **Fails**: t below 2.5 |
+| H2-21: mom12_1 β-adj. IC21 | +0.0088 | 0.68 (5) | 516 | +0.0013 / +0.0164 | −0.0074 / +0.0466 / +0.0033 | 0.248 | 1 | **Fails** |
+| H2-63: mom12_1 β-adj. IC63 | +0.0179 | 0.91 (13) | 508 | +0.0084 / +0.0278 | −0.0121 / +0.0876 / +0.0081 | 0.181 | 1 | **Fails** |
+| H1-15 (reference only) | +0.144% | 0.67 (4) | 518 | +0.133% / +0.154% | +0.241% / +0.026% / +0.036% | — | — | not a test |
+
+Momentum's beta-adjusted t falls as the horizon lengthens: 1.64, 1.18, 1.08, 0.68 and 0.91 at 5,
+10, 15, 21 and 63 sessions. The 63-session book is the closest miss on the register. It is also
+the figure survivorship flatters most, because a longer hold gives a name missing from today's
+index more time to have collapsed.
+
+**Consequence, applied.** Every test failed, so no follow-up plan changes the live time exit or
+the scoreboard horizon. `CLAUDE.md` and the TUI's no-edge line now cover the longer holds and
+momentum alone. The owner has the keep/cut/stop memo. No setting or default changed.
+
+The register now holds **15 decision tests**: C1, C3, C4, E1, E2-1, E2-3, E2-off, E3, D1, D2, D3,
+H1-21, H1-63, H2-21 and H2-63. None has passed, E1 fired, and no Holm-adjusted p is below 0.05.
 
 ## E3: which side carries the result (registered 2026-09-25, before this ran)
 

@@ -137,9 +137,9 @@ commit. No further push unless asked.
 |---|---|
 | 0 push | done: origin/main = e4a3565 |
 | 1 pre-registration | done (this commit) |
-| 2 horizons + H2 | pending |
-| 3 H1 horizon book | pending |
-| 4 Holm | pending |
-| 5 the one run | pending |
-| 6 write-up and sync | pending |
-| 7 final review | pending |
+| 2 horizons + H2 | done: 1e43822 |
+| 3 H1 horizon book | done: 07963ff |
+| 4 Holm | done: bb14aa9 |
+| 5 the one run | done: 2026-10-01T09:57:58Z from bb14aa9 — all four fail (H1-21 t 1.08, H1-63 t 2.31, H2-21 t 0.68, H2-63 t 0.91); family 15, smallest Holm p 0.159 |
+| 6 write-up and sync | done: lab-horizon.md, keep-cut-stop.md memo, backtest.md, CLAUDE.md, TUI |
+| 7 final review | done before the run (ruling: a figure-changing fix had to precede the one run); post-run fixes reviewed |
