@@ -79,6 +79,26 @@ type trade struct {
 // pickTrades selects each (date, index)'s five largest |composite| names with a
 // non-zero score and a known σ, and cuts their forward paths.
 func pickTrades(recs []Record, series map[string]*quant.Series) []trade {
+	var out []trade
+	for _, r := range topPicks(recs) {
+		s := series[strings.ToUpper(r.Ticker)]
+		if s == nil || r.P+barrierHorizon >= len(s.Bars) {
+			continue
+		}
+		out = append(out, trade{
+			date: r.Date, dir: math.Copysign(1, r.Sig[SigScore]), sigma: r.SigmaDaily,
+			path: s.Bars[r.P+1 : r.P+1+barrierHorizon], xs15: r.XS[2], bx15: r.BX[2],
+		})
+	}
+	return out
+}
+
+// topPicks is the composite's weekly selection, shared by the barrier study and
+// the v5 H1 book: per (date, index), the picksPerIndex names with the largest
+// |composite|, skipping a missing or zero score and a missing σ. Groups come in
+// first-seen (date, index) order; within a group, by descending |score|, ties
+// in input order.
+func topPicks(recs []Record) []Record {
 	type key struct{ date, index string }
 	groups := map[key][]Record{}
 	var order []key
@@ -92,23 +112,14 @@ func pickTrades(recs []Record, series map[string]*quant.Series) []trade {
 		}
 		groups[k] = append(groups[k], r)
 	}
-	var out []trade
+	var out []Record
 	for _, k := range order {
 		g := groups[k]
 		sort.SliceStable(g, func(i, j int) bool { return math.Abs(g[i].Sig[SigScore]) > math.Abs(g[j].Sig[SigScore]) })
 		if len(g) > picksPerIndex {
 			g = g[:picksPerIndex]
 		}
-		for _, r := range g {
-			s := series[strings.ToUpper(r.Ticker)]
-			if s == nil || r.P+barrierHorizon >= len(s.Bars) {
-				continue
-			}
-			out = append(out, trade{
-				date: r.Date, dir: math.Copysign(1, r.Sig[SigScore]), sigma: r.SigmaDaily,
-				path: s.Bars[r.P+1 : r.P+1+barrierHorizon], xs15: r.XS[2], bx15: r.BX[2],
-			})
-		}
+		out = append(out, g...)
 	}
 	return out
 }

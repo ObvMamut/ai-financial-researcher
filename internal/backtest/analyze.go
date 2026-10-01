@@ -396,7 +396,6 @@ func evaluate(r TestResult, cells []cell, mid string, lags int, f func(cell) flo
 	r.Mean, r.T = Num(m), Num(t)
 	r.NDates = len(finite(v))
 	r.Halves, r.Regions = map[string]Num{}, map[string]Num{}
-	consistent := true
 	for _, sl := range slices(mid)[1:] {
 		_, sv := dateSeries(cells, sl.Keep, f)
 		sm, _ := meanSD(sv)
@@ -405,12 +404,23 @@ func evaluate(r TestResult, cells []cell, mid string, lags int, f func(cell) flo
 		} else {
 			r.Regions[sl.Label] = Num(sm)
 		}
-		if !(sm > 0) {
-			consistent = false
-		}
+	}
+	return applyBar(r)
+}
+
+// applyBar sets Pass and Verdict from a result's T, halves and regions: t above
+// adoptionT, and a positive mean in both halves and every region. It is the one
+// place the adoption bar lives; evaluate and the v5 H1 tests both end here.
+func applyBar(r TestResult) TestResult {
+	consistent := true
+	for _, m := range r.Halves {
+		consistent = consistent && float64(m) > 0
+	}
+	for _, m := range r.Regions {
+		consistent = consistent && float64(m) > 0
 	}
 	switch {
-	case !(t > adoptionT):
+	case !(float64(r.T) > adoptionT):
 		r.Verdict = "fails: t does not clear +2.5"
 	case !consistent:
 		r.Verdict = "fails: sign not positive in both halves and every region"

@@ -349,7 +349,7 @@ func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *R
 	res.Preregistered = preregistered(cells, mid)
 	res.Decisions = []TestResult{e1Decision(res.PerYear, replayYears), e3Decision(res.Sides)}
 	res.USScoped = usScoped(recs, mid)
-	res.Horizon = horizonTests(cells, mid)
+	res.Horizon = horizonTests(recs, cells, mid)
 	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions, res.USScoped.Tests, res.Horizon.Tests} {
 		for _, t := range list {
 			if t.Status == "run" {
@@ -491,27 +491,21 @@ func (r *Result) Text() string {
 	fmt.Fprintf(&sb, "drift book: %d weeks (%d with all %d names, mean %.2f), beta-adjusted excess gross %.3f%% net %.3f%% | H1 net %.3f%% H2 net %.3f%%\n\n",
 		db.Weeks, db.FullWeeks, picksPerIndex, db.MeanNames, db.MeanGrossPct, db.MeanNetPct, db.H1NetPct, db.H2NetPct)
 
-	fmt.Fprintf(&sb, "=== v5 horizon tests (H1, H2; bar: t > +%.1f at nwLags(h), positive in both halves and every region) ===\n", adoptionT)
-	for _, t := range r.Horizon.Tests {
-		if t.Status != "run" {
-			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)
-			continue
-		}
-		fmt.Fprintf(&sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
-			t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
-			t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
+	fmt.Fprintf(&sb, "=== v5 horizon tests (H1-15 reference, H1, H2; bar: t > +%.1f at nwLags(h), positive in both halves and every region) ===\n", adoptionT)
+	ref := r.Horizon.Reference
+	ref.Status = "run" // printed in full, its verdict already says it is a reference
+	for _, t := range append([]TestResult{ref}, r.Horizon.Tests...) {
+		writeTestLine(&sb, t)
+	}
+	for _, b := range r.Horizon.Books {
+		fmt.Fprintf(&sb, "H1 book %d sessions: %d weeks, mean %.2f picks, beta-adjusted gross %.3f%% net %.3f%% | H1 net %.3f%% H2 net %.3f%%\n",
+			b.Horizon, b.Weeks, b.MeanPicks, b.GrossPct, b.NetPct, b.H1NetPct, b.H2NetPct)
 	}
 	sb.WriteString("\n")
 
 	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all: the C-series below, E2, the decisions run above, D1–D3 and the v5 tests above; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {
-		if t.Status != "run" {
-			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)
-			continue
-		}
-		fmt.Fprintf(&sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
-			t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
-			t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
+		writeTestLine(&sb, t)
 	}
 	if len(r.Unavailable) > 0 {
 		fmt.Fprintf(&sb, "\n%d symbol(s) unavailable: %s\n", len(r.Unavailable), strings.Join(r.Unavailable, "; "))
@@ -523,4 +517,16 @@ func (r *Result) Text() string {
 		fmt.Fprintf(&sb, "\n%d filing history lookup(s) unavailable (drift/earn_window NaN): %s\n", len(r.FilingsUnavailable), strings.Join(r.FilingsUnavailable, "; "))
 	}
 	return sb.String()
+}
+
+// writeTestLine prints one pre-registered test in the report's one-line format;
+// a test that did not run gets its note instead of numbers.
+func writeTestLine(sb *strings.Builder, t TestResult) {
+	if t.Status != "run" {
+		fmt.Fprintf(sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)
+		return
+	}
+	fmt.Fprintf(sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
+		t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
+		t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
 }
