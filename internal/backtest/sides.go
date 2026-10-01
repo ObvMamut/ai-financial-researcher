@@ -95,6 +95,7 @@ func e3Decision(s SidesReport) TestResult {
 		Title:     "which side carries the result: are shorts ≤0 beta-adjusted in both halves",
 		Statistic: "the top-5 picks' short-side 15-session beta-adjusted excess (gross), per half",
 		Status:    "run", Mean: Num(math.NaN()), T: Num(math.NaN()),
+		P: 1, PHolm: Num(math.NaN()),
 		Halves: map[string]Num{"H1": s.H1.ShortBetaPct, "H2": s.H2.ShortBetaPct},
 	}
 	h1, h2 := float64(s.H1.ShortBetaPct), float64(s.H2.ShortBetaPct)

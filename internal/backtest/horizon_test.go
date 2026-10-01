@@ -81,8 +81,8 @@ func TestH1BookByHand(t *testing.T) {
 	}
 	// Three dates are too few for five lags: both sides are NaN. The lag
 	// count itself is checked on the long panel below.
-	if want := NeweyWestT(series, nwLags(21)); !almostEqual(float64(tr.T), want) && !(math.IsNaN(float64(tr.T)) && math.IsNaN(want)) {
-		t.Errorf("t = %v, want %v (nwLags(21) = %d)", tr.T, want, nwLags(21))
+	if !math.IsNaN(float64(tr.T)) {
+		t.Errorf("t = %v, want NaN (3 dates cannot support nwLags(21) = %d)", tr.T, nwLags(21))
 	}
 	wantHalves := map[string]float64{"H1": series[0], "H2": (series[1] + series[2]) / 2}
 	for k, w := range wantHalves {
@@ -140,7 +140,7 @@ func h1Panel(rng *rand.Rand, edge map[string]float64) []Record {
 				score := rng.NormFloat64()
 				r := h1Rec(ds, idx, fmt.Sprintf("%s%d", idx, i), score, 0)
 				bx := edge[r.Region]*score + 0.02*rng.NormFloat64()
-				for _, k := range []int{2, h21, h63} {
+				for _, k := range []int{h15, h21, h63} {
 					r.XS[k], r.BX[k] = bx, bx
 				}
 				recs = append(recs, r)

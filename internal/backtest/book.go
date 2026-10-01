@@ -360,6 +360,7 @@ func pairedCapTest(id, title string, cand, def map[string]bookWeek, dates []stri
 	m, _ := meanSD(all)
 	t := NeweyWestT(all, nwLags(Horizons[bookHorizon]))
 	r.Mean, r.T = Num(m), Num(t)
+	r.P = Num(twoSidedP(t))
 
 	var h1dates, h2dates []string
 	for _, d := range dates {

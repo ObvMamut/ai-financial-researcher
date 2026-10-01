@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,6 +124,9 @@ type Result struct {
 	// is a comparison look, not a decision, and Status is "comparison" rather
 	// than "run".
 	TestsRun int `json:"tests_run"`
+	// MultipleTesting is the Holm adjustment over exactly the TestsRun tests
+	// (holm.go); reported, never a gate.
+	MultipleTesting MultipleTesting `json:"multiple_testing"`
 }
 
 const costNote = "IC is per-date Spearman within index vs forward benchmark-excess return, averaged across indices per date. Quintile spreads pay 30bp round trip on each leg (60bp); top-quintile and barrier trades pay 30bp once."
@@ -350,12 +354,23 @@ func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *R
 	res.Decisions = []TestResult{e1Decision(res.PerYear, replayYears), e3Decision(res.Sides)}
 	res.USScoped = usScoped(recs, mid)
 	res.Horizon = horizonTests(recs, cells, mid)
+	// One iteration is both the count and the Holm family: a test that did not
+	// run has no p-value and is outside both.
+	var family []*TestResult
 	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions, res.USScoped.Tests, res.Horizon.Tests} {
-		for _, t := range list {
+		for i := range list {
+			t := &list[i]
 			if t.Status == "run" {
 				res.TestsRun++
+				family = append(family, t)
+			} else {
+				t.P, t.PHolm = Num(math.NaN()), Num(math.NaN())
 			}
 		}
+	}
+	res.MultipleTesting = buildHolm(family)
+	if res.MultipleTesting.FamilySize != res.TestsRun {
+		panic("backtest: Holm family size differs from TestsRun")
 	}
 	return res
 }
@@ -498,7 +513,7 @@ func (r *Result) Text() string {
 		writeTestLine(&sb, t)
 	}
 	for _, b := range r.Horizon.Books {
-		fmt.Fprintf(&sb, "H1 book %d sessions: %d weeks, mean %.2f picks, beta-adjusted gross %.3f%% net %.3f%% | H1 net %.3f%% H2 net %.3f%%\n",
+		fmt.Fprintf(&sb, "H1 book %d sessions: %d weeks, mean %.2f picks, beta-adjusted gross %.3f%% net %.3f%% | 1st half net %.3f%% 2nd half net %.3f%%\n",
 			b.Horizon, b.Weeks, b.MeanPicks, b.GrossPct, b.NetPct, b.H1NetPct, b.H2NetPct)
 	}
 	sb.WriteString("\n")
@@ -507,6 +522,20 @@ func (r *Result) Text() string {
 	for _, t := range r.Preregistered {
 		writeTestLine(&sb, t)
 	}
+	mt := r.MultipleTesting
+	fmt.Fprintf(&sb, "\n=== Multiple testing: Holm over all %d tests run (family size %d) ===\n", r.TestsRun, mt.FamilySize)
+	sig := 0
+	for _, row := range mt.Rows {
+		verdict := "fail"
+		if row.Pass {
+			verdict = "pass"
+		}
+		fmt.Fprintf(&sb, "%-7s %-22s t %6.2f  p %.4f  Holm p %.4f  %s\n", row.ID, row.Sided, row.T, row.P, row.PHolm, verdict)
+		if float64(row.PHolm) < 0.05 {
+			sig++
+		}
+	}
+	fmt.Fprintf(&sb, "%d of %d tests have Holm p < 0.05.\n", sig, mt.FamilySize)
 	if len(r.Unavailable) > 0 {
 		fmt.Fprintf(&sb, "\n%d symbol(s) unavailable: %s\n", len(r.Unavailable), strings.Join(r.Unavailable, "; "))
 	}

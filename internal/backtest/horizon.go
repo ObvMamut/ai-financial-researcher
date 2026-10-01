@@ -62,6 +62,7 @@ func horizonTests(recs []Record, cells []cell, mid string) HorizonReport {
 	}
 	rep.Reference = tests[0]
 	rep.Reference.Status, rep.Reference.Pass = "comparison", false
+	rep.Reference.P, rep.Reference.PHolm = Num(math.NaN()), Num(math.NaN())
 	rep.Reference.Verdict = "reference, not a test: " + rep.Reference.Verdict
 	rep.Books = books[:]
 	rep.Tests = []TestResult{tests[1], tests[2], h2(h21), h2(h63)}

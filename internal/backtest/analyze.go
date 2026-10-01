@@ -305,6 +305,7 @@ func e1Decision(years []YearStats, replayYears int) TestResult {
 		Title:     "long history: is the screen's top-5 edge a majority-of-years property, net of the lab's 30bp",
 		Statistic: "calendar years whose beta-adjusted top-5 15-session excess, net of 30bp, is > 0",
 		Status:    "run", Mean: Num(math.NaN()), T: Num(math.NaN()),
+		P: Num(math.NaN()), PHolm: Num(math.NaN()),
 	}
 	pos, full, fullPos := 0, 0, 0
 	for _, y := range years {
@@ -326,6 +327,7 @@ func e1Decision(years []YearStats, replayYears int) TestResult {
 			e1DecisionMinYears, replayYears, r.Note)
 		return r
 	}
+	r.P = Num(binomialSignP(pos, len(years)))
 	if 2*pos > len(years) {
 		r.Verdict = "not triggered: " + r.Note
 		return r
@@ -366,10 +368,14 @@ type TestResult struct {
 	// Status is "run", "untestable", "skipped" or "comparison" (E1 below its
 	// pre-registered --years floor); only "run" counts toward the number of
 	// tests the report says it ran.
-	Status  string         `json:"status"`
-	Note    string         `json:"note,omitempty"`
-	Mean    Num            `json:"mean"`
-	T       Num            `json:"t_nw"`
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+	Mean   Num    `json:"mean"`
+	T      Num    `json:"t_nw"`
+	// P is the test's p-value (holm.go) and PHolm its Holm-adjusted value over
+	// the whole family run; NaN (null) where none was computed.
+	P       Num            `json:"p"`
+	PHolm   Num            `json:"p_holm"`
 	NDates  int            `json:"n_dates,omitempty"`
 	Halves  map[string]Num `json:"halves,omitempty"`
 	Regions map[string]Num `json:"regions,omitempty"`
@@ -412,6 +418,7 @@ func evaluate(r TestResult, cells []cell, mid string, lags int, f func(cell) flo
 // adoptionT, and a positive mean in both halves and every region. It is the one
 // place the adoption bar lives; evaluate and the v5 H1 tests both end here.
 func applyBar(r TestResult) TestResult {
+	r.P = Num(oneSidedP(float64(r.T)))
 	consistent := true
 	for _, m := range r.Halves {
 		consistent = consistent && float64(m) > 0

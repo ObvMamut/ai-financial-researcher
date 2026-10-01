@@ -82,6 +82,7 @@ func applyScopedBar(r TestResult, all, h1, h2 []float64, lags, sign int) TestRes
 	m, _ := meanSD(all)
 	t := NeweyWestT(all, lags)
 	r.Mean, r.T, r.NDates = Num(m), Num(t), len(finite(all))
+	r.P = Num(signedP(t, sign))
 	h1m, _ := meanSD(h1)
 	h2m, _ := meanSD(h2)
 	r.Halves = map[string]Num{"H1": Num(h1m), "H2": Num(h2m)}
