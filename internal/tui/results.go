@@ -93,8 +93,10 @@ func (m resultsModel) Update(msg tea.Msg) (resultsModel, tea.Cmd) {
 // of 11 years once its own 30bp cost is paid. The model stages add nothing
 // measurable above that funnel (the 2026-09-23 attribution), and post-earnings
 // drift, the one documented effect on this clock, failed D1 and D2 in the lab.
+// v5 (2026-10-01) found the screen's top-5 book at 21 and 63 sessions and 12-1
+// momentum alone at 21 and 63 failing too (H1, H2).
 // The reader should know that nothing tested on this horizon picks well.
-const screenNoEdgeLine = "  No signal tested on this horizon has shown an edge net of cost:\n  not the pre-screen that ranked these ideas, not the model stages,\n  not post-earnings drift."
+const screenNoEdgeLine = "  No signal tested has shown an edge net of cost: not the pre-screen\n  that ranked these ideas, held 15, 21 or 63 sessions, not 12-1\n  momentum alone, not the model stages, not post-earnings drift."
 
 func (m resultsModel) View() string {
 	if m.detail != nil {

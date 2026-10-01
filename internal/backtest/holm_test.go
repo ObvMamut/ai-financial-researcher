@@ -73,3 +73,11 @@ func TestMultipleTestingMatchesTestsRun(t *testing.T) {
 		t.Error("H1-15 reference must carry no p")
 	}
 }
+
+// The upper tail at large t must not underflow to 0 the way 1 − Φ(t) does.
+func TestOneSidedPLargeT(t *testing.T) {
+	p := oneSidedP(9)
+	if !(p > 0) || math.Abs(p-1.1286e-19)/1.1286e-19 > 1e-3 {
+		t.Errorf("oneSidedP(9) = %g, want ≈ 1.13e-19", p)
+	}
+}

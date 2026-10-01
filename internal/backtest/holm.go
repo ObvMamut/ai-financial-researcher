@@ -9,10 +9,10 @@ import (
 func normalCDF(x float64) float64 { return 0.5 * math.Erfc(-x/math.Sqrt2) }
 
 // oneSidedP is the p-value of t against a registered positive direction.
-func oneSidedP(t float64) float64 { return 1 - normalCDF(t) }
+func oneSidedP(t float64) float64 { return 0.5 * math.Erfc(t/math.Sqrt2) }
 
 // twoSidedP is the p-value of t with no registered direction.
-func twoSidedP(t float64) float64 { return 2 * (1 - normalCDF(math.Abs(t))) }
+func twoSidedP(t float64) float64 { return math.Erfc(math.Abs(t) / math.Sqrt2) }
 
 // signedP is the p-value for a registered direction: +1 upper tail, −1 lower
 // tail, 0 two-sided (applyScopedBar's sign convention).

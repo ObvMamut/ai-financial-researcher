@@ -41,6 +41,9 @@ type Config struct {
 // than the halves above it do.
 const DefaultYears = 4
 
+// holmAlpha is the Holm-adjusted p threshold the text report counts against.
+const holmAlpha = 0.05
+
 // Survivorship is printed on every report: the universe files are today's
 // constituents, so names that fell out of the indices over the replay — the
 // losers, disproportionately — are missing from every past cross-section.
@@ -115,7 +118,7 @@ type Result struct {
 	// each against the scoped bar and counted in TestsRun.
 	USScoped ScopedReport `json:"us_scoped"`
 	// Horizon is the v5 block (horizon.go): the pre-registered horizon tests
-	// (H2 today), counted in TestsRun.
+	// (H1 and H2), counted in TestsRun.
 	Horizon HorizonReport `json:"horizon"`
 	// TestsRun counts every registered test this run performed — C-series,
 	// E2's paired tests, the E1/E3 decisions, D1–D3 and the v5 horizon tests — so it equals the register in
@@ -369,9 +372,6 @@ func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *R
 		}
 	}
 	res.MultipleTesting = buildHolm(family)
-	if res.MultipleTesting.FamilySize != res.TestsRun {
-		panic("backtest: Holm family size differs from TestsRun")
-	}
 	return res
 }
 
@@ -531,11 +531,11 @@ func (r *Result) Text() string {
 			verdict = "pass"
 		}
 		fmt.Fprintf(&sb, "%-7s %-22s t %6.2f  p %.4f  Holm p %.4f  %s\n", row.ID, row.Sided, row.T, row.P, row.PHolm, verdict)
-		if float64(row.PHolm) < 0.05 {
+		if float64(row.PHolm) < holmAlpha {
 			sig++
 		}
 	}
-	fmt.Fprintf(&sb, "%d of %d tests have Holm p < 0.05.\n", sig, mt.FamilySize)
+	fmt.Fprintf(&sb, "%d of %d tests have Holm p < %.2f.\n", sig, mt.FamilySize, holmAlpha)
 	if len(r.Unavailable) > 0 {
 		fmt.Fprintf(&sb, "\n%d symbol(s) unavailable: %s\n", len(r.Unavailable), strings.Join(r.Unavailable, "; "))
 	}

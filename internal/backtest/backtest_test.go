@@ -155,7 +155,7 @@ func plantedSignalRecords(rng *rand.Rand) []Record {
 					r.XS[h] = 0.004*planted + 0.03*rng.NormFloat64()
 					r.BX[h] = r.XS[h]
 				}
-				r.SigmaDaily = math.NaN()
+				r.SigmaDaily = 0.01
 				recs = append(recs, r)
 			}
 		}
@@ -294,7 +294,7 @@ func TestPerYearStats(t *testing.T) {
 					}
 					r.BX[h] = r.XS[h]
 				}
-				r.SigmaDaily = math.NaN()
+				r.SigmaDaily = 0.01
 				recs = append(recs, r)
 			}
 		}

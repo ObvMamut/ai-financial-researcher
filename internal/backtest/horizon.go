@@ -66,6 +66,12 @@ func horizonTests(recs []Record, cells []cell, mid string) HorizonReport {
 	rep.Reference.Verdict = "reference, not a test: " + rep.Reference.Verdict
 	rep.Books = books[:]
 	rep.Tests = []TestResult{tests[1], tests[2], h2(h21), h2(h63)}
+	for i, t := range rep.Tests {
+		if t.NDates == 0 {
+			rep.Tests[i].Status, rep.Tests[i].Pass = "untestable", false
+			rep.Tests[i].Verdict = "not run: no date had a finite statistic"
+		}
+	}
 	return rep
 }
 

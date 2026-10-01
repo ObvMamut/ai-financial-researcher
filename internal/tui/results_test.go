@@ -88,14 +88,16 @@ func TestJSONTextAndTUIAgreeOnChiefAndResearchCounts(t *testing.T) {
 
 // TestResultsSayTheScreenHasNoEdge holds E1's and Wave D's consequence: a
 // legacy independent run's ideas are the pre-screen's picks, and the view says
-// no signal tested on this horizon — that screen, the model stages, drift —
-// has shown an edge net of cost. Thesis ideas are not ranked
+// no signal tested — that screen held 15, 21 or 63 sessions, 12-1 momentum,
+// the model stages, drift — has shown an edge net of cost. Thesis ideas are not ranked
 // by the screen, and an empty run has nothing ranked, so neither carries it.
 func TestResultsSayTheScreenHasNoEdge(t *testing.T) {
 	idea := model.TradeIdea{Rank: 1, Ticker: "AAA", Direction: model.DirectionBuy, Confidence: 50}
 	legacy := newResultsModel(&model.IdeasResult{Mode: "independent", Ideas: []model.TradeIdea{idea}}, "runs/x").View()
-	if !strings.Contains(legacy, "No signal tested on this horizon has shown an edge") {
-		t.Errorf("legacy independent results do not carry the no-edge line:\n%s", legacy)
+	for _, want := range []string{"No signal tested has shown an edge", "held 15, 21 or 63 sessions"} {
+		if !strings.Contains(legacy, want) {
+			t.Errorf("legacy independent results lack %q:\n%s", want, legacy)
+		}
 	}
 	for name, ideas := range map[string]*model.IdeasResult{
 		"thesis": {Mode: "independent", ResearchMode: "thesis", Ideas: []model.TradeIdea{idea}},

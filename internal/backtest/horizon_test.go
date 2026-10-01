@@ -214,3 +214,17 @@ func TestH1ReferenceIsNotATest(t *testing.T) {
 		t.Errorf("order = %v", ids)
 	}
 }
+
+// A horizon test with no date carrying a finite statistic is untestable, so it
+// leaves TestsRun and the Holm family rather than counting as a failed run.
+func TestHorizonTestsUntestableWithoutData(t *testing.T) {
+	rep := horizonTests(nil, nil, "")
+	if len(rep.Tests) != 4 {
+		t.Fatalf("tests = %d, want 4", len(rep.Tests))
+	}
+	for _, tr := range rep.Tests {
+		if tr.Status != "untestable" || tr.Pass || tr.Verdict != "not run: no date had a finite statistic" {
+			t.Errorf("%s status %q pass %v verdict %q, want untestable", tr.ID, tr.Status, tr.Pass, tr.Verdict)
+		}
+	}
+}
