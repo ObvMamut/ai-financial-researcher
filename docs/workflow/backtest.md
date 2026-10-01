@@ -265,6 +265,71 @@ book) and D3 t 1.84. The "both fail" decision is applied. See [Run of
 Item 2.02 release date; a live run anchors it at the 10-Q/10-K filing date, which
 can be the same day for large filers and weeks later for others.
 
+## Pre-registered horizon tests (v5, registered 2026-10-01)
+
+Plan: `docs/plans/2026-10-01-horizon-test.md`. The question is whether the
+holding period, rather than the signals, is the problem. The only term with a
+consistent sign so far is 12-1 momentum, a monthly-horizon factor, while the
+system holds for 15 sessions. These tests are registered here and committed
+before the code that computes them exists and before any run. Each runs once,
+on one `cfr backtest --years 10`. This brings the register to **15 decision
+tests**: the 11 above plus H1-21, H1-63, H2-21 and H2-63. D3 is not revisited.
+
+The lab gains two forward horizons, 21 and 63 sessions, appended to 5/10/15.
+Newey-West lags follow the existing `nwLags(h) = h/5 + 1`: 5 lags at 21
+sessions and 13 at 63, which covers the ~12.6 weekly rebalances that one
+63-session hold overlaps.
+
+| Test | Hypothesis | Statistic |
+|---|---|---|
+| **H1-21**, **H1-63**: composite top-5 at longer holds | The screen earns at a monthly or quarterly hold even though it does not at 15 sessions. | Each date's picks are E1's picks: per (date, index), the five largest \|composite\|, with a non-zero score and a known σ, held at the composite's sign, with cross-listed names not deduped. The statistic is the per-date mean over those picks of `dir·BX[h] − 0.003`, the beta-adjusted h-session excess net of 30bp paid once per name. A pick whose window runs past the data is dropped, and so is a date with none left. Region series take the same mean over that region's picks. |
+| **H2-21**, **H2-63**: 12-1 momentum alone | Momentum's IC belongs to its own monthly horizon. | Per-date beta-adjusted rank IC of `mom12_1` at h sessions, averaged across indices per date, as for C1/C3/C4. |
+
+**Bar, all four tests:** the C-series bar at the test's own horizon. The
+Newey-West t, with `nwLags(h)` lags, must exceed **+2.5**. The mean must also be
+positive in **both halves** (the same median-date split) and in **every
+region** (US, EU and Asia). A **15-session H1 row** is reported beside them as
+a reference (`status: "comparison"`). It is not a test, and it is neither
+counted nor included in the family below.
+
+**Multiple testing.** The report gives every test with status `run` a p-value
+and a Holm-adjusted p-value. The family is all of those tests, **15** at
+`--years 10`, because the run recomputes the earlier 11 from the same cache.
+The p-values are computed as follows:
+
+- One-sided t tests (C1, C3, C4, D1, D2, D3, H1-21, H1-63, H2-21 and H2-63) use
+  `p = 1 − Φ(t)`, a normal approximation to the Newey-West t.
+- E2-1, E2-3 and E2-off were registered two-sided, so they use
+  `p = 2(1 − Φ(|t|))`.
+- E1 has a majority-of-years rule and no t. Its p is a one-sided binomial sign
+  test, `P(X ≥ positive years | n = years, ½)`.
+- E3 is a diagnostic decision rule with no statistic. It takes `p = 1` and
+  stays in the family, so m remains 15 and every other adjustment is at least
+  as strict.
+
+Holm sorts the p-values in ascending order and sets
+`adj_(i) = max_{j≤i} min(1, (m−j+1)·p_(j))`. It is reported, not used as a gate:
+the decisions below use the bar above. With m = 15, the smallest p must be
+below 0.0033 (t > 2.71) to survive Holm at 5%.
+
+**Decisions fixed before the run:**
+
+- **Any of H1-21, H1-63, H2-21 or H2-63 passes** → the write-up says so and
+  gives its Holm p. A follow-up plan, separate from this one, then changes the
+  live time exit and the scoreboard horizon. This plan changes no live
+  behaviour.
+- **All four fail** → the owner gets a one-page memo,
+  `docs/research/2026-10-01-keep-cut-stop.md`, with three options: keep CFR as
+  a measurement and research tool, cut the live cadence, or stop. For each it
+  gives the evidence, the cost and the consequence, then makes a
+  recommendation. No code change to live behaviour follows, and the owner
+  decides. The docs, CLAUDE.md and the TUI's no-edge line are extended to cover
+  the screen at 15, 21 and 63 sessions and 12-1 momentum at 21 and 63.
+- **One run.** An earlier figure that differs from the 2026-09-30 artifact is
+  recorded with its cause. A run with unavailable symbols or a shortfall warning
+  is recorded as failed evidence and handed to the owner. Neither is followed
+  by a second run.
+
 ## Results
 
 ### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
