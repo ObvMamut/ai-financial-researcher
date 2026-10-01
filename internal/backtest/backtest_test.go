@@ -195,8 +195,8 @@ func TestPlantedSignalIsRecovered(t *testing.T) {
 	// C5 skipped), E2's three paired tests, the E1 and E3 decisions, and the
 	// US-scoped D1–D3 (the fixture's sp500 rows carry noise in drift and
 	// earn_window, so all three run).
-	if res.TestsRun != 11 {
-		t.Errorf("tests run = %d, want 11 (C1, C3, C4, E2-1, E2-3, E2-off, E1, E3, D1, D2, D3)", res.TestsRun)
+	if res.TestsRun != 13 {
+		t.Errorf("tests run = %d, want 13 (C1, C3, C4, E2-1, E2-3, E2-off, E1, E3, D1, D2, D3, H2-21, H2-63)", res.TestsRun)
 	}
 }
 
@@ -212,8 +212,8 @@ func TestTestsRunExcludesE1BelowTenYears(t *testing.T) {
 	if res.Years != 4 {
 		t.Errorf("res.Years = %d, want 4", res.Years)
 	}
-	if res.TestsRun != 10 {
-		t.Errorf("tests run = %d, want 10 (C1, C3, C4, E2-1, E2-3, E2-off, E3, D1, D2, D3 — E1 is a comparison look at --years 4)", res.TestsRun)
+	if res.TestsRun != 12 {
+		t.Errorf("tests run = %d, want 12 (C1, C3, C4, E2-1, E2-3, E2-off, E3, D1, D2, D3, H2-21, H2-63 — E1 is a comparison look at --years 4)", res.TestsRun)
 	}
 	var e1 TestResult
 	for _, d := range res.Decisions {
@@ -690,5 +690,48 @@ func TestNoShortfallWarningWithinTheOrdinaryWarmupSlop(t *testing.T) {
 	checkShortfall(res2, 4, end)
 	if !res2.Shortfall {
 		t.Errorf("shortfall not flagged at %s, 9 weeks after the requested start — want it past the grace window", res2.Start)
+	}
+}
+
+// Forward excess at the 21- and 63-session horizons (Horizons[3], [4]) is
+// r − r_bench and r − β·r_bench over exactly that many bars, and NaN once the
+// window runs past the data while the shorter horizons are still finite.
+func TestForwardExcessAtLongHorizons(t *testing.T) {
+	if Horizons != [5]int{5, 10, 15, 21, 63} {
+		t.Fatalf("Horizons = %v, want {5 10 15 21 63}", Horizons)
+	}
+	members, data := synthUniverse(7, 700)
+	m := members[0]
+	s, b := data.Series[m.Constituent.Ticker], data.Bench[m.Bench]
+	const p = 450
+	date := s.Bars[p].Date
+	day, _ := time.Parse("2006-01-02", date)
+	recs := BuildPanel(members[:1], data, []time.Time{day})
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	rec := recs[0]
+	for k, h := range Horizons {
+		r := s.Bars[p+h].Close/s.Bars[p].Close - 1
+		br := closeAsOf(b, s.Bars[p+h].Date)/closeAsOf(b, date) - 1
+		if !almostEqual(rec.XS[k], r-br) {
+			t.Errorf("XS[%d] (h=%d) = %v, want %v", k, h, rec.XS[k], r-br)
+		}
+		if !almostEqual(rec.BX[k], r-rec.Beta*br) {
+			t.Errorf("BX[%d] (h=%d) = %v, want %v", k, h, rec.BX[k], r-rec.Beta*br)
+		}
+	}
+
+	// 18 bars of future: 15 fits, 21 and 63 do not.
+	late := len(s.Bars) - 18
+	day, _ = time.Parse("2006-01-02", s.Bars[late].Date)
+	rec = BuildPanel(members[:1], data, []time.Time{day})[0]
+	if math.IsNaN(rec.XS[2]) || math.IsNaN(rec.BX[2]) {
+		t.Errorf("XS[2], BX[2] = %v, %v, want finite", rec.XS[2], rec.BX[2])
+	}
+	for _, k := range []int{3, 4} {
+		if !math.IsNaN(rec.XS[k]) || !math.IsNaN(rec.BX[k]) {
+			t.Errorf("XS[%d], BX[%d] = %v, %v, want NaN past the data", k, k, rec.XS[k], rec.BX[k])
+		}
 	}
 }

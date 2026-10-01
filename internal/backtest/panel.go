@@ -25,8 +25,13 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 )
 
+// numHorizons is len(Horizons), as a constant for the array types below.
+const numHorizons = 5
+
 // Horizons are the forward windows, in sessions, every signal is scored over.
-var Horizons = [3]int{5, 10, 15}
+// 21 and 63 are appended after the original 5/10/15, so indices 0..2 keep their
+// meaning everywhere (bookHorizon, barrierHorizon, the C-series' h10).
+var Horizons = [numHorizons]int{5, 10, 15, 21, 63}
 
 // Signal identifiers. Every one is oriented so that a *higher* value is a
 // bullish reading, which is what makes a positive rank IC mean "works".
@@ -102,8 +107,8 @@ type Record struct {
 	// close-to-close return less its benchmark's over the same dates. BX is the
 	// beta-adjusted version, r − β·r_bench (pre-registered test C4). NaN when the
 	// window runs past the data.
-	XS [3]float64
-	BX [3]float64
+	XS [numHorizons]float64
+	BX [numHorizons]float64
 	// Beta is quant.Compute's 252-session beta against Bench; NaN if not computable.
 	Beta float64
 	// SigmaDaily is quant.Compute's Yang-Zhang daily σ, the unit of the σ stop.

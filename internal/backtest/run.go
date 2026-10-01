@@ -113,8 +113,11 @@ type Result struct {
 	// cross-section; D2, the top-5-by-|drift| book; D3, earn_window's IC10 —
 	// each against the scoped bar and counted in TestsRun.
 	USScoped ScopedReport `json:"us_scoped"`
+	// Horizon is the v5 block (horizon.go): the pre-registered horizon tests
+	// (H2 today), counted in TestsRun.
+	Horizon HorizonReport `json:"horizon"`
 	// TestsRun counts every registered test this run performed — C-series,
-	// E2's paired tests, the E1/E3 decisions and D1–D3 — so it equals the register in
+	// E2's paired tests, the E1/E3 decisions, D1–D3 and the v5 horizon tests — so it equals the register in
 	// docs/workflow/backtest.md, one look each per run. E1 counts only at
 	// --years 10 or more (e1DecisionMinYears); below that its per-year table
 	// is a comparison look, not a decision, and Status is "comparison" rather
@@ -346,7 +349,8 @@ func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *R
 	res.Preregistered = preregistered(cells, mid)
 	res.Decisions = []TestResult{e1Decision(res.PerYear, replayYears), e3Decision(res.Sides)}
 	res.USScoped = usScoped(recs, mid)
-	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions, res.USScoped.Tests} {
+	res.Horizon = horizonTests(cells, mid)
+	for _, list := range [][]TestResult{res.Preregistered, res.BookGrid.PairedTests, res.Decisions, res.USScoped.Tests, res.Horizon.Tests} {
 		for _, t := range list {
 			if t.Status == "run" {
 				res.TestsRun++
@@ -390,11 +394,11 @@ func (r *Result) Text() string {
 
 	table := func(title string, rows []SignalStats) {
 		fmt.Fprintf(&sb, "=== %s ===\n", title)
-		fmt.Fprintf(&sb, "%-16s %7s %7s %7s %7s %7s %7s %7s %7s %8s %8s %7s\n",
-			"signal", "IC5", "tNW5", "IC10", "IR10", "tNW10", "IC15", "tNW15", "QS10%", "QS10net", "TopQnet", "tQS10")
+		fmt.Fprintf(&sb, "%-16s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %7s %8s %8s %7s\n",
+			"signal", "IC5", "tNW5", "IC10", "IR10", "tNW10", "IC15", "tNW15", "IC21", "tNW21", "IC63", "tNW63", "QS10%", "QS10net", "TopQnet", "tQS10")
 		for _, s := range rows {
-			fmt.Fprintf(&sb, "%-16s %7.3f %7.2f %7.3f %7.3f %7.2f %7.3f %7.2f %7.3f %8.3f %8.3f %7.2f\n",
-				s.Signal, s.IC[0], s.TNW[0], s.IC[1], s.IR[1], s.TNW[1], s.IC[2], s.TNW[2],
+			fmt.Fprintf(&sb, "%-16s %7.3f %7.2f %7.3f %7.3f %7.2f %7.3f %7.2f %7.3f %7.2f %7.3f %7.2f %7.3f %8.3f %8.3f %7.2f\n",
+				s.Signal, s.IC[0], s.TNW[0], s.IC[1], s.IR[1], s.TNW[1], s.IC[2], s.TNW[2], s.IC[3], s.TNW[3], s.IC[4], s.TNW[4],
 				s.QS10Pct, s.QS10NetPct, s.Top10NetPct, s.TQS10)
 		}
 		sb.WriteString("\n")
@@ -487,7 +491,19 @@ func (r *Result) Text() string {
 	fmt.Fprintf(&sb, "drift book: %d weeks (%d with all %d names, mean %.2f), beta-adjusted excess gross %.3f%% net %.3f%% | H1 net %.3f%% H2 net %.3f%%\n\n",
 		db.Weeks, db.FullWeeks, picksPerIndex, db.MeanNames, db.MeanGrossPct, db.MeanNetPct, db.H1NetPct, db.H2NetPct)
 
-	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all: the C-series below, E2, the decisions run above and D1–D3; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
+	fmt.Fprintf(&sb, "=== v5 horizon tests (H1, H2; bar: t > +%.1f at nwLags(h), positive in both halves and every region) ===\n", adoptionT)
+	for _, t := range r.Horizon.Tests {
+		if t.Status != "run" {
+			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)
+			continue
+		}
+		fmt.Fprintf(&sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
+			t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
+			t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
+	}
+	sb.WriteString("\n")
+
+	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all: the C-series below, E2, the decisions run above, D1–D3 and the v5 tests above; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {
 		if t.Status != "run" {
 			fmt.Fprintf(&sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Note)

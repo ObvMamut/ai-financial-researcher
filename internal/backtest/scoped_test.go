@@ -64,7 +64,7 @@ func TestEvaluateScopedIgnoresOtherRegions(t *testing.T) {
 	if got.NDates != 80 || got.HalfNDates["H1"]+got.HalfNDates["H2"] != 80 {
 		t.Errorf("n dates %d, halves %v: want 80 split across H1/H2", got.NDates, got.HalfNDates)
 	}
-	if every := evaluate(TestResult{ID: "x"}, crossSections(recs), mid, driftIC10); every.Pass {
+	if every := evaluate(TestResult{ID: "x"}, crossSections(recs), mid, nwLags(10), driftIC10); every.Pass {
 		t.Errorf("every-region evaluate passed with EU planted the other way: %s", every.Verdict)
 	}
 
@@ -212,8 +212,8 @@ func TestSignalBookNetOfCostArithmetic(t *testing.T) {
 				r.Sig[s] = nan
 			}
 			r.Sig[SigDrift] = drift
-			r.BX = [3]float64{nan, nan, bx15}
-			r.XS = [3]float64{nan, nan, bx15}
+			r.BX = [5]float64{nan, nan, bx15, nan, nan}
+			r.XS = [5]float64{nan, nan, bx15, nan, nan}
 			recs = append(recs, r)
 		}
 		mk("sp500", "A", 3, 0.02+shift)     // long, +0.02

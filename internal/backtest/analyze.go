@@ -14,8 +14,8 @@ const costPerLeg = 0.003
 // cell is one (date, index) cross-section's per-signal statistics.
 type cell struct {
 	date, index, region string
-	ic                  [NumSignals][3]float64 // Spearman vs benchmark-excess, per horizon
-	bic                 [NumSignals][3]float64 // Spearman vs beta-adjusted excess (C4)
+	ic                  [NumSignals][numHorizons]float64 // Spearman vs benchmark-excess, per horizon
+	bic                 [NumSignals][numHorizons]float64 // Spearman vs beta-adjusted excess (C4)
 	qs10, qs15, top10   [NumSignals]float64
 }
 
@@ -48,7 +48,7 @@ func crossSections(recs []Record) []cell {
 			}
 			return xs
 		}
-		var xs, bx [3][]float64
+		var xs, bx [numHorizons][]float64
 		for h := range Horizons {
 			xs[h] = col(func(r Record) float64 { return r.XS[h] })
 			bx[h] = col(func(r Record) float64 { return r.BX[h] })
@@ -105,11 +105,11 @@ func dateSeries(cells []cell, keep func(cell) bool, f func(cell) float64) ([]str
 
 // SignalStats is one signal's summary over one slice of the panel.
 type SignalStats struct {
-	Signal string `json:"signal"`
-	IC     [3]Num `json:"ic"`      // mean per-date rank IC, horizons 5/10/15
-	IR     [3]Num `json:"icir"`    // mean / sd of the per-date IC
-	TNW    [3]Num `json:"t_nw"`    // Newey-West t, lags h/5+1
-	NDates int    `json:"n_dates"` // dates with a finite IC10
+	Signal string           `json:"signal"`
+	IC     [numHorizons]Num `json:"ic"`      // mean per-date rank IC, horizons 5/10/15/21/63
+	IR     [numHorizons]Num `json:"icir"`    // mean / sd of the per-date IC
+	TNW    [numHorizons]Num `json:"t_nw"`    // Newey-West t, lags h/5+1
+	NDates int              `json:"n_dates"` // dates with a finite IC10
 	// Quintile spreads, % per holding period, against benchmark excess.
 	QS10Pct     Num `json:"qs10_gross_pct"`
 	QS10NetPct  Num `json:"qs10_net_pct"` // less 30bp on each leg
@@ -388,11 +388,11 @@ type TestResult struct {
 
 // evaluate applies the adoption bar to one per-cell statistic whose
 // pre-registered direction is positive.
-func evaluate(r TestResult, cells []cell, mid string, f func(cell) float64) TestResult {
+func evaluate(r TestResult, cells []cell, mid string, lags int, f func(cell) float64) TestResult {
 	r.Status = "run"
 	_, v := dateSeries(cells, func(cell) bool { return true }, f)
 	m, _ := meanSD(v)
-	t := NeweyWestT(v, nwLags(10))
+	t := NeweyWestT(v, lags)
 	r.Mean, r.T = Num(m), Num(t)
 	r.NDates = len(finite(v))
 	r.Halves, r.Regions = map[string]Num{}, map[string]Num{}
@@ -429,7 +429,7 @@ func preregistered(cells []cell, mid string) []TestResult {
 		evaluate(TestResult{
 			ID: "C1", Title: "raise mom12-1's weight relative to ret63d (1.0·z(mom12-1) + 0.5·z(ret63d), penalties and clamps unchanged)",
 			Statistic: "per-date IC10(variant) − IC10(shipped composite), Newey-West t (3 lags)",
-		}, cells, mid, func(c cell) float64 { return c.ic[SigC1][h10] - c.ic[SigScore][h10] }),
+		}, cells, mid, nwLags(10), func(c cell) float64 { return c.ic[SigC1][h10] - c.ic[SigScore][h10] }),
 		{
 			ID: "C2", Title: "earnings-announcement premium: tilt long into names reporting inside the window",
 			Status: "untestable", Verdict: "not run",
@@ -438,11 +438,11 @@ func preregistered(cells []cell, mid string) []TestResult {
 		evaluate(TestResult{
 			ID: "C3", Title: "news-conditioned residual reversal: fade a residual 5-day move without abnormal volume, follow one with it (any of the last 5 sessions ≥ 2× the mean of the 20 before)",
 			Statistic: "per-date IC10 of the C3 signal, Newey-West t (3 lags)",
-		}, cells, mid, func(c cell) float64 { return c.ic[SigC3][h10] }),
+		}, cells, mid, nwLags(10), func(c cell) float64 { return c.ic[SigC3][h10] }),
 		evaluate(TestResult{
 			ID: "C4", Title: "beta-adjusted target: the shipped composite's IC10 against r − β·r_bench instead of r − r_bench",
 			Statistic: "per-date IC10 of the shipped composite vs beta-adjusted excess, Newey-West t (3 lags)",
-		}, cells, mid, func(c cell) float64 { return c.bic[SigScore][h10] }),
+		}, cells, mid, nwLags(10), func(c cell) float64 { return c.bic[SigScore][h10] }),
 		{
 			ID: "C5", Title: "breadth: the composite's t on a wider liquid US universe",
 			Status: "skipped", Verdict: "not run",
