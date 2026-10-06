@@ -285,10 +285,10 @@ func (a *Attribution) Lines(minN int) []string {
 				label, k, b.N, b.WinRate*100, b.AvgR, b.AvgPnL))
 		}
 	}
-	add("setup", a.BySetup)
-	add("coverage", a.ByCoverage)
-	add("agreement", a.ByConsensus)
-	add("sector", a.BySector)
+	add(familySetup, a.BySetup)
+	add(familyCoverage, a.ByCoverage)
+	add(familyAgreement, a.ByConsensus)
+	add(familySector, a.BySector)
 
 	f := a.Fills
 	out = append(out, fmt.Sprintf("fills: %d of %d replayable ideas filled, %d never traded their limit, %d still inside the window, %d had no usable history, %d had no levels to replay",
@@ -298,7 +298,7 @@ func (a *Attribution) Lines(minN int) []string {
 		if b.N < minN {
 			continue
 		}
-		out = append(out, fmt.Sprintf("entry %s: n=%d, %.0f%% filled, avg %+.2fR over %d closed",
+		out = append(out, fmt.Sprintf(familyEntry+" %s: n=%d, %.0f%% filled, avg %+.2fR over %d closed",
 			k, b.N, b.FillRate*100, b.AvgR, b.Closed))
 	}
 	return out
@@ -322,26 +322,63 @@ func sortedFillKeys(m map[string]FillBucket) []string {
 	return keys
 }
 
-// Cells is every bucket label the attribution actually contains, which is what
-// a lesson has to name to be checkable.
-func (a *Attribution) Cells(minN int) map[string]bool {
-	out := map[string]bool{}
+// The family prefixes Lines renders in front of each bucket key. Cells reads the
+// same constants, so what the prompt shows and what a lesson may cite cannot
+// drift apart.
+const (
+	familySetup     = "setup"
+	familyCoverage  = "coverage"
+	familyAgreement = "agreement"
+	familySector    = "sector"
+	familyEntry     = "entry"
+)
+
+// attributionCell is one countable cell: the labels a lesson may name it by
+// (lower-cased) and its own n.
+type attributionCell struct {
+	labels [2]string // "<family> <key>" as Lines renders it, then the bare key
+	n      int
+}
+
+// cellList is every cell in the attribution, whatever its n.
+func (a *Attribution) cellList() []attributionCell {
 	if a == nil {
-		return out
+		return nil
 	}
-	if minN < 1 {
-		minN = 1
+	var out []attributionCell
+	add := func(family, key string, n int) {
+		k := strings.ToLower(key)
+		out = append(out, attributionCell{labels: [2]string{family + " " + k, k}, n: n})
 	}
-	for _, m := range []map[string]Bucket{a.BySetup, a.ByCoverage, a.ByConsensus, a.BySector} {
-		for k, b := range m {
-			if b.N >= minN {
-				out[strings.ToLower(k)] = true
-			}
+	for _, f := range []struct {
+		family string
+		m      map[string]Bucket
+	}{
+		{familySetup, a.BySetup}, {familyCoverage, a.ByCoverage},
+		{familyAgreement, a.ByConsensus}, {familySector, a.BySector},
+	} {
+		for k, b := range f.m {
+			add(f.family, k, b.N)
 		}
 	}
 	for k, b := range a.Fills.ByOffset {
-		if b.N >= minN {
-			out[strings.ToLower(k)] = true
+		add(familyEntry, k, b.N)
+	}
+	return out
+}
+
+// Cells is every cell label the attribution actually contains, both as the
+// table renders it ("setup sell/wide-stop") and as the bare bucket key, which is
+// what a lesson has to name to be checkable.
+func (a *Attribution) Cells(minN int) map[string]bool {
+	out := map[string]bool{}
+	if minN < 1 {
+		minN = 1
+	}
+	for _, c := range a.cellList() {
+		if c.n >= minN {
+			out[c.labels[0]] = true
+			out[c.labels[1]] = true
 		}
 	}
 	return out

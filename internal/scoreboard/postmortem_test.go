@@ -1,6 +1,7 @@
 package scoreboard
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -163,5 +164,61 @@ func TestClosedTradesBlockCarriesTheStatedReasoning(t *testing.T) {
 	}
 	if strings.Contains(block, "still running") {
 		t.Errorf("an open position is not a closed trade:\n%s", block)
+	}
+}
+
+func cellAttribution() *Attribution {
+	return &Attribution{
+		NClosed:    35,
+		BySetup:    map[string]Bucket{"sell/wide-stop": {N: 7}, "buy/wide-stop": {N: 8}, "buy/medium-stop": {N: 9}, "drift": {N: 2}},
+		ByCoverage: map[string]Bucket{"1-2 domains": {N: 7}, "3-4 domains": {N: 7}, "5 domains": {N: 5}},
+		BySector:   map[string]Bucket{"Information Technology": {N: 6}},
+		Fills: FillRecord{ByOffset: map[string]FillBucket{
+			"-1.5% to -0.25%":                          {N: 26},
+			"at the close (±0.25%)":                    {N: 36},
+			"below -1.5% (waiting for a better price)": {N: 16},
+		}},
+	}
+}
+
+// The prompt shows cells as "<family> <key>" and tells the model to spell them
+// that way, so that spelling has to be accepted.
+func TestPostMortemAcceptsCellsSpelledAsTheTableRendersThem(t *testing.T) {
+	pm, err := ParsePostMortem(`{"lessons":[
+		{"cell":"setup sell/wide-stop","n":0,"finding":"a","action":"b"},
+		{"cell":"  Entry At The Close (±0.25%) ","n":1,"finding":"c","action":"d"},
+		{"cell":"sell/wide-stop","n":7,"finding":"bare key still works","action":"e"},
+		{"cell":"setup drift","n":2,"finding":"thin","action":"f"},
+		{"cell":"setup invented","n":9,"finding":"invented","action":"g"}
+	]}`, cellAttribution())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pm.Lessons) != 3 {
+		t.Fatalf("kept %d lessons, want 3: %+v rejected=%v", len(pm.Lessons), pm.Lessons, pm.Rejected)
+	}
+	if pm.Lessons[0].N != 7 || pm.Lessons[1].N != 36 {
+		t.Errorf("n not taken from the table: %+v", pm.Lessons)
+	}
+}
+
+// Regression: in runs/2026-10-06T18-07-24 all 8 lessons cited cells exactly as
+// the table rendered them and every one was rejected.
+func TestPostMortemReplayOfTheRunThatRejectedEveryLesson(t *testing.T) {
+	raw, err := os.ReadFile("testdata/postmortem-2026-10-06.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pm, err := ParsePostMortem(string(raw), cellAttribution())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run produced 8 lessons; the ceiling is MaxLessons, so min(8, MaxLessons) are kept.
+	want := 8
+	if MaxLessons < want {
+		want = MaxLessons
+	}
+	if len(pm.Lessons) != want {
+		t.Fatalf("kept %d lessons, want %d; rejected=%v", len(pm.Lessons), want, pm.Rejected)
 	}
 }

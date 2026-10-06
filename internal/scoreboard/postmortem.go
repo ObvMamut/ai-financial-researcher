@@ -149,13 +149,9 @@ func (a *Attribution) cellCounts() map[string]int {
 	if a == nil {
 		return out
 	}
-	for _, m := range []map[string]Bucket{a.BySetup, a.ByCoverage, a.ByConsensus, a.BySector} {
-		for k, b := range m {
-			out[strings.ToLower(k)] = b.N
-		}
-	}
-	for k, b := range a.Fills.ByOffset {
-		out[strings.ToLower(k)] = b.N
+	for _, c := range a.cellList() {
+		out[c.labels[0]] = c.n
+		out[c.labels[1]] = c.n
 	}
 	return out
 }
