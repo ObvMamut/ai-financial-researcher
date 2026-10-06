@@ -321,7 +321,7 @@ func TestNewsSentimentPremiumEndpointStopsAsking(t *testing.T) {
 	t.Setenv("CFR_AV_BASE", srv.URL)
 
 	p := NewAlphaVantageProvider("testkey", t.TempDir())
-	_, err := p.Fetch(context.Background(), "sentiment", "NVDA")
+	td1, err := p.Fetch(context.Background(), "sentiment", "NVDA")
 	if !errors.Is(err, ErrNotApplicable) {
 		t.Fatalf("first premium refusal = %v, want ErrNotApplicable", err)
 	}
@@ -331,11 +331,21 @@ func TestNewsSentimentPremiumEndpointStopsAsking(t *testing.T) {
 	// An already-cancelled context proves the second call never reaches the limiter.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := p.Fetch(ctx, "sentiment", "AAPL"); !errors.Is(err, ErrNotApplicable) {
+	td2, err := p.Fetch(ctx, "sentiment", "AAPL")
+	if !errors.Is(err, ErrNotApplicable) {
 		t.Fatalf("second ticker = %v, want ErrNotApplicable", err)
 	}
-	if _, err := p.Fetch(context.Background(), "news", "MSFT"); !errors.Is(err, ErrNotApplicable) {
+	td3, err := p.Fetch(context.Background(), "news", "MSFT")
+	if !errors.Is(err, ErrNotApplicable) {
 		t.Fatalf("news domain = %v, want ErrNotApplicable", err)
+	}
+	if len(td1.Diagnostics) != 1 || td1.Diagnostics[0].Ticker != "NVDA" || td1.Diagnostics[0].Stage != "news" ||
+		td1.Diagnostics[0].Reason != "not_applicable" || td1.Diagnostics[0].Disposition != "expected" ||
+		td1.Diagnostics[0].Message != "NEWS_SENTIMENT is a premium endpoint on this key; disabled for this process" {
+		t.Fatalf("first refusal diagnostics = %+v", td1.Diagnostics)
+	}
+	if len(td2.Diagnostics)+len(td3.Diagnostics) != 0 {
+		t.Fatalf("later calls must carry no diagnostic: %+v %+v", td2.Diagnostics, td3.Diagnostics)
 	}
 	if n := hits.Load(); n != 1 {
 		t.Fatalf("server saw %d NEWS_SENTIMENT requests, want 1", n)
@@ -397,5 +407,26 @@ func TestNewsDomainWarnsOnlyOnGenuineNewsFailure(t *testing.T) {
 	}
 	if !hasNewsUnavailableWarning(td) {
 		t.Fatalf("a genuine news failure must still warn: %v", td.Warnings)
+	}
+}
+
+// The pack records the provider's own premium diagnostic once, and not the
+// generic "does not cover" line beside it — with a calendar fact in hand
+// (NVDA) and without one (JPM, absent from the calendar).
+func TestPackRecordsPremiumDiagnosticOnce(t *testing.T) {
+	srv := serveAVNewsAndCalendar(t, `{"Information":"This is a premium endpoint."}`)
+	t.Setenv("CFR_AV_BASE", srv.URL)
+	for _, tickers := range [][]string{{"NVDA", "JPM"}, {"JPM", "NVDA"}} {
+		svc := NewService(nil, NewAlphaVantageProvider("testkey", t.TempDir()))
+		pack := svc.BuildPack(context.Background(), "news", tickers)
+		var premium int
+		for _, d := range pack.Diagnostics {
+			if strings.Contains(d.Message, "premium endpoint on this key") {
+				premium++
+			}
+		}
+		if premium != 1 {
+			t.Errorf("%v: premium diagnostics = %d, want 1: %+v", tickers, premium, pack.Diagnostics)
+		}
 	}
 }

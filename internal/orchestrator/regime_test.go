@@ -134,3 +134,29 @@ func TestPickBookRefillAfterAVetoRespectsCorrelation(t *testing.T) {
 		t.Errorf("book = %s, want A,C (B correlates with A)", got)
 	}
 }
+
+// A name the first pass skipped as correlated or sector-capped cannot ship while
+// its partner stays, so it is not offered to the Chief as a reserve.
+func TestReservesForOmitsCorrelatedAndCappedNames(t *testing.T) {
+	buy := model.DirectionBuy
+	eligible := []model.TradeIdea{{Ticker: "A", Direction: buy}, {Ticker: "B", Direction: buy},
+		{Ticker: "C", Direction: buy}, {Ticker: "D", Direction: buy}, {Ticker: "E", Direction: buy}}
+	book, capped, corr := pickBook(eligible, nil, nil, 2, 0, corrBookSeries(), 0.75)
+	if got := bookTickers(book); got != "A,C" || corr["B"].With != "A" {
+		t.Fatalf("setup: book = %s corr = %v", got, corr)
+	}
+	if got := bookTickers(reservesFor(eligible, book, capped, corr, 2)); got != "D,E" {
+		t.Errorf("reserves = %s, want D,E (B correlates with A)", got)
+	}
+	if got := bookTickers(reservesFor(eligible, book, map[string]bool{"D": true}, corr, 2)); got != "E" {
+		t.Errorf("reserves = %s, want E (D sector-capped, B correlated)", got)
+	}
+}
+
+func TestSelectionBlockListsACorrelatedSkipAsExcluded(t *testing.T) {
+	rows := []model.SelectionRow{{Ticker: "A", Direction: "BUY"}, {Ticker: "B", Direction: "BUY"}}
+	got := selectionBlock(rows, []model.TradeIdea{{Ticker: "A"}}, nil, 1, map[string]pairCorrelation{"B": {With: "A", Rho: 0.83}})
+	if !strings.Contains(got, "- B BUY · correlates 0.83 with A already in the book") {
+		t.Errorf("block lacks the correlated exclusion:\n%s", got)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/redact"
 )
 
@@ -310,7 +311,12 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 	if msg := firstNonEmpty(data.ErrorMessage, data.Information, data.Note); msg != "" {
 		if strings.Contains(strings.ToLower(msg), "premium endpoint") {
 			p.newsPremium.Store(true)
-			return TickerData{}, errNewsPremium()
+			// The one call that learned it names the cause; every later call
+			// returns no diagnostic, so the run log carries it once.
+			return TickerData{Ticker: ticker, Diagnostics: []model.SourceDiagnostic{
+				sourceDiagnostic(p.Name(), ticker, "news", "not_applicable", "expected",
+					"NEWS_SENTIMENT is a premium endpoint on this key; disabled for this process"),
+			}}, errNewsPremium()
 		}
 		rememberDailyQuota(p.limiter, msg)
 		// AlphaVantage answers a rejected call by quoting the query string it
