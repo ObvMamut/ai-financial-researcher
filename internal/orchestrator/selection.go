@@ -12,6 +12,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/agents"
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/parse"
+	"github.com/mamut/claude-financial-researcher/internal/quant"
 	"github.com/mamut/claude-financial-researcher/internal/store"
 )
 
@@ -41,6 +42,7 @@ const (
 	excludedVetoed      = "vetoed"
 	excludedRiskGate    = "risk_gate"
 	excludedSectorCap   = "sector_cap"
+	excludedCorrelated  = "correlated"
 	excludedBelowCut    = "below_cut"
 )
 
@@ -205,12 +207,24 @@ func meritCandidates(cfg Config, rows []model.SelectionRow, v verified) ([]model
 	return eligible, byTicker
 }
 
+// pairCorrelation names the already-picked name a skipped one moves with.
+type pairCorrelation struct {
+	With string
+	Rho  float64
+}
+
 // pickBook walks the eligible ideas in merit order and takes the first topN
-// that no one vetoed, holding each sector to the risk gate's own limit. It
-// returns the book and the names the sector limit passed over.
-func pickBook(eligible []model.TradeIdea, sectorOf map[string]string, vetoed map[string]bool, topN, maxPerSector int) ([]model.TradeIdea, map[string]bool) {
+// that no one vetoed, holding each sector to the risk gate's own limit and
+// skipping a name whose daily returns correlate above maxCorr with a
+// same-direction name already in the book (gateBook's own test; maxCorr >= 1
+// disables it, and a name with no usable series is never skipped). It returns
+// the book, the names the sector limit passed over and the names correlation
+// passed over, each with its partner.
+func pickBook(eligible []model.TradeIdea, sectorOf map[string]string, vetoed map[string]bool, topN, maxPerSector int,
+	series map[string]*quant.Series, maxCorr float64) ([]model.TradeIdea, map[string]bool, map[string]pairCorrelation) {
 	var book []model.TradeIdea
 	capped := map[string]bool{}
+	correlated := map[string]pairCorrelation{}
 	perSector := map[string]int{}
 	for _, idea := range eligible {
 		if len(book) == topN {
@@ -224,11 +238,28 @@ func pickBook(eligible []model.TradeIdea, sectorOf map[string]string, vetoed map
 			capped[t] = true
 			continue
 		}
+		if maxCorr < 1 {
+			var hit *pairCorrelation
+			for _, b := range book {
+				if b.Direction != idea.Direction {
+					continue
+				}
+				c, ok := quant.Correlation(series[strings.ToUpper(b.Ticker)], series[strings.ToUpper(idea.Ticker)])
+				if ok && c > maxCorr {
+					hit = &pairCorrelation{With: b.Ticker, Rho: c}
+					break
+				}
+			}
+			if hit != nil {
+				correlated[t] = *hit
+				continue
+			}
+		}
 		perSector[sectorOf[t]]++
 		idea.Rank = len(book) + 1
 		book = append(book, idea)
 	}
-	return book, capped
+	return book, capped, correlated
 }
 
 // chiefWriterResult is the Chief's answer under merit_veto: prose for the names
@@ -357,7 +388,7 @@ func runMeritVeto(ctx context.Context, ch chan<- Event, cfg Config, run *store.R
 			log(ch, fmt.Sprintf("selection: %s has no scout direction", r.Ticker))
 		}
 	}
-	book, _ := pickBook(eligible, sectorOf, nil, topN, risk.MaxPerSector)
+	book, _, _ := pickBook(eligible, sectorOf, nil, topN, risk.MaxPerSector, v.Series, risk.MaxPairCorr)
 	inBook := map[string]bool{}
 	for _, i := range book {
 		inBook[normTicker(i.Ticker)] = true
@@ -470,7 +501,7 @@ func runMeritVeto(ctx context.Context, ch chan<- Event, cfg Config, run *store.R
 		}
 	}
 
-	final, capped := pickBook(eligible, sectorOf, chiefVetoed, topN, risk.MaxPerSector)
+	final, capped, correlated := pickBook(eligible, sectorOf, chiefVetoed, topN, risk.MaxPerSector, v.Series, risk.MaxPairCorr)
 	for i := range final {
 		t := normTicker(final[i].Ticker)
 		if p, ok := prose[t]; ok && p[0] != "" {
@@ -514,6 +545,9 @@ func runMeritVeto(ctx context.Context, ch chan<- Event, cfg Config, run *store.R
 			r.Excluded = excludedVetoed
 		case capped[t]:
 			r.Excluded = excludedSectorCap
+		case correlated[t].With != "":
+			r.Excluded = excludedCorrelated
+			r.CorrelatedWith, r.Correlation = correlated[t].With, correlated[t].Rho
 		default:
 			r.Excluded = excludedBelowCut
 		}

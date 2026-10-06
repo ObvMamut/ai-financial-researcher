@@ -116,8 +116,13 @@ type SelectionRow struct {
 	// RiskGate is the hard risk-gate finding that made the name ineligible.
 	RiskGate string `json:"risk_gate,omitempty"`
 	// Excluded says why an unshipped name did not ship: no_direction,
-	// vetoed, risk_gate, sector_cap or below_cut. Empty for a shipped name.
-	Excluded        string         `json:"excluded,omitempty"`
+	// vetoed, risk_gate, sector_cap, correlated or below_cut. Empty for a shipped name.
+	Excluded string `json:"excluded,omitempty"`
+	// CorrelatedWith is the same-direction name already in the book that a
+	// correlated-excluded name moves with, and Correlation their daily-return
+	// correlation.
+	CorrelatedWith  string         `json:"correlated_with,omitempty"`
+	Correlation     float64        `json:"correlation,omitempty"`
 	Selected        bool           `json:"selected"`
 	ShippedRank     int            `json:"shipped_rank,omitempty"`
 	ChiefShadowRank int            `json:"chief_shadow_rank,omitempty"`
