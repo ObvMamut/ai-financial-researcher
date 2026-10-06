@@ -69,7 +69,9 @@ A Go TUI dashboard that orchestrates AI agents to propose **swing trades**. Two 
     (`throttleCLI`/`throttleSem` in `pool.go`), covering gemini and local.
   (HTTP to *market-data* sources remains fine and expected — `internal/marketdata` talks to
   the keyless Yahoo Finance chart and option-chain APIs and to SEC EDGAR, and optionally
-  FRED/AlphaVantage/Alpaca when keyed. Alpaca is a market-data source like the others and
+  FRED/AlphaVantage/Alpaca when keyed; AlphaVantage's NEWS_SENTIMENT became a premium
+  endpoint in 2026-10, so the first refusal disables it for the run and news comes from
+  Alpaca and Yahoo, while its EARNINGS_CALENDAR is still free. Alpaca is a market-data source like the others and
   sits *inside* this rule, not as an exception to it: the constraint is about model access.)
 - **Cost split:** the **cheap engine** (agy CLI, remote API, *or* a local model) does cheap,
   parallel research (screening + domain reports); **the selected Chief engine** does the single heavy
@@ -347,7 +349,8 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    (`selection.go`) takes ranking away from the models: Go orders the shortlist by the
    funnel's own `meritScore`, drops names with no scout direction, names any specialist
    vetoed and names the per-idea risk gate (incl. the evidence floor) refuses, holds each
-   sector to `max_per_sector`, and ships the top 5 **in the scout's direction** as
+   sector to `max_per_sector`, skips a name correlating above `max_pair_corr` with a
+   same-direction pick already in the book (`excluded: "correlated"`), and ships the top 5 **in the scout's direction** as
    `market_on_open` ideas (reference close, catastrophe stop, no target, 15-session time
    exit; confidence = the base score, informational). The Chief is called once with
    `agents/chief-writer.md`: it writes `why`/`position_note` for the book and five

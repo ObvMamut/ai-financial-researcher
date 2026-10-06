@@ -475,7 +475,13 @@ Implementation: `internal/orchestrator/selection.go`; Chief persona `agents/chie
    gate** refuses on its own (every per-idea hard check, including the evidence floor) is
    ineligible, with the reason recorded.
 3. Go takes the eligible names in merit order, holding each sector to the gate's
-   `max_per_sector`, until it has five. Each ships in the **scout's direction** as a
+   `max_per_sector` and skipping a name whose daily returns correlate above
+   `max_pair_corr` (default 0.75) with a same-direction name already in the book, until it
+   has five. Both are the risk gate's own book limits: `gateBook` only reports a breach,
+   and under this policy nothing else would act on it. A skipped name is recorded in
+   `data/selection.json` as `excluded: "correlated"`, with `correlated_with` and
+   `correlation`. `max_pair_corr >= 1` turns the pair check off. Added 2026-10-06, after a
+   live run shipped ENI.MI and TTE.PA at 0.81. Each ships in the **scout's direction** as a
    `market_on_open` idea: entry is the verified last close, the stop is the
    `catastrophe_stop_sigma·σ_daily·√15` floor, there is no target, and the time exit is
    15 sessions. Confidence is the computed base score for that direction — informational;
@@ -528,7 +534,7 @@ Specialists (parallel; 4 under merit_veto, 5 with macro under chief; each covers
         │
 computed base scores (weighted domain confluence, no model call)
         │
-merit_veto (default): merit order − vetoes − risk-gate refusals → top 5 at the
+merit_veto (default): merit order − vetoes − risk-gate refusals − sector/pair caps → top 5 at the
                       scout's direction, market-on-open, catastrophe stop, time exit
         │             Chief (one call): prose, closed-enum vetoes, shadow_rank
 chief:                Chief Analyst → top 5 ideas (direction, confidence, levels, why)

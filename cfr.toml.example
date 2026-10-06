@@ -457,6 +457,9 @@
 # failed at 1.62 was fixed by dropping a five-domain idea for a quant-only one
 # whose only merit was a low beta. Every position adds to the new figure, so the
 # only way down is to drop or shrink the exposure itself.
+# max_pair_corr also binds under selection = "merit_veto": a candidate correlating above
+# it with a same-direction pick already in the book is skipped and the next merit name
+# takes the slot (data/selection.json: excluded = "correlated"). 1.0 turns that off.
 #max_pair_corr      = 0.75
 #max_portfolio_beta = 1.5
 
