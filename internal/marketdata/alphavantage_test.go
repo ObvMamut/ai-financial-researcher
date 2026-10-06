@@ -341,3 +341,61 @@ func TestNewsSentimentPremiumEndpointStopsAsking(t *testing.T) {
 		t.Fatalf("server saw %d NEWS_SENTIMENT requests, want 1", n)
 	}
 }
+
+// serveAVNewsAndCalendar answers NEWS_SENTIMENT with newsBody and the calendar
+// with one upcoming NVDA report date.
+func serveAVNewsAndCalendar(t *testing.T, newsBody string) *httptest.Server {
+	t.Helper()
+	soon := time.Now().AddDate(0, 0, 9).Format("2006-01-02")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("function") == "EARNINGS_CALENDAR" {
+			w.Write([]byte(calendarCSV("NVDA,NVIDIA Corp," + soon + ",2026-10-31,1.20,USD")))
+			return
+		}
+		w.Write([]byte(newsBody))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func hasNewsUnavailableWarning(td TickerData) bool {
+	for _, w := range td.Warnings {
+		if strings.Contains(w, "news feed unavailable") {
+			return true
+		}
+	}
+	return false
+}
+
+// A premium-gated news feed is an expected gap: the calendar fact ships alone
+// and no per-ticker warning is raised. A genuine failure still warns.
+func TestNewsDomainWarnsOnlyOnGenuineNewsFailure(t *testing.T) {
+	premium := serveAVNewsAndCalendar(t, `{"Information":"This is a premium endpoint."}`)
+	t.Setenv("CFR_AV_BASE", premium.URL)
+	td, err := NewAlphaVantageProvider("testkey", t.TempDir()).Fetch(context.Background(), "news", "NVDA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var haveDate bool
+	for _, f := range td.Facts {
+		if f.Label == EarningsFactLabel {
+			haveDate = true
+		}
+	}
+	if !haveDate {
+		t.Fatal("calendar fact must still ship")
+	}
+	if hasNewsUnavailableWarning(td) {
+		t.Fatalf("premium news must not warn per ticker: %v", td.Warnings)
+	}
+
+	failing := serveAVNewsAndCalendar(t, `{"Error Message":"Invalid API call."}`)
+	t.Setenv("CFR_AV_BASE", failing.URL)
+	td, err = NewAlphaVantageProvider("testkey", t.TempDir()).Fetch(context.Background(), "news", "NVDA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasNewsUnavailableWarning(td) {
+		t.Fatalf("a genuine news failure must still warn: %v", td.Warnings)
+	}
+}

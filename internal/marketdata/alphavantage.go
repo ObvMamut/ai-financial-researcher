@@ -3,6 +3,7 @@ package marketdata
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +28,10 @@ type alphaVantageProvider struct {
 	// newsPremium is set once AlphaVantage has answered NEWS_SENTIMENT with its
 	// "premium endpoint" message; it is per process and never persisted.
 	newsPremium atomic.Bool
+	// newsMu serialises NEWS_SENTIMENT requests so that concurrent first calls
+	// cannot each spend a request before the premium flag is set. The limiter
+	// already paces these calls to one at a time, so this costs nothing.
+	newsMu sync.Mutex
 }
 
 // NewAlphaVantageProvider builds the provider for the free tier (25 requests per
@@ -147,7 +153,12 @@ func (p *alphaVantageProvider) fetchNews(ctx context.Context, ticker string) (Ti
 		if len(td.Facts) == 0 {
 			return td, newsErr
 		}
-		td.Warnings = append(td.Warnings, "news feed unavailable: "+newsErr.Error())
+		// A not-applicable feed (premium-gated key, no US line) is an expected
+		// gap, not a failure: the calendar facts ship alone, with no per-ticker
+		// warning to reach data_errors.
+		if !errors.Is(newsErr, ErrNotApplicable) {
+			td.Warnings = append(td.Warnings, "news feed unavailable: "+newsErr.Error())
+		}
 	}
 	return td, nil
 }
@@ -262,6 +273,11 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 		return TickerData{}, fmt.Errorf("%w: %s is not a US listing and has no US line", ErrNotApplicable, ticker)
 	}
 	if p.newsPremium.Load() {
+		return TickerData{}, errNewsPremium()
+	}
+	p.newsMu.Lock()
+	defer p.newsMu.Unlock()
+	if p.newsPremium.Load() { // another call learned it while this one queued
 		return TickerData{}, errNewsPremium()
 	}
 	if err := p.limiter.Wait(ctx); err != nil {
