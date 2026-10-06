@@ -2,6 +2,7 @@ package marketdata
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,5 +302,42 @@ func TestAlphaVantageDoesNotBurst(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&hits); n > 1 {
 		t.Errorf("%d requests fired inside 300ms; AlphaVantage answers a burst with a rate-limit notice, not data", n)
+	}
+}
+
+// A key without the premium plan gets the same refusal for every ticker. The
+// first one marks NEWS_SENTIMENT not applicable for the process; no later call
+// may spend a request or wait on the limiter.
+func TestNewsSentimentPremiumEndpointStopsAsking(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("function") != "NEWS_SENTIMENT" {
+			return // the calendar is a different endpoint; this test counts news asks
+		}
+		hits.Add(1)
+		w.Write([]byte(`{"Information":"Thank you for using Alpha Vantage! This is a premium endpoint. You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to instantly unlock all premium endpoints"}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_AV_BASE", srv.URL)
+
+	p := NewAlphaVantageProvider("testkey", t.TempDir())
+	_, err := p.Fetch(context.Background(), "sentiment", "NVDA")
+	if !errors.Is(err, ErrNotApplicable) {
+		t.Fatalf("first premium refusal = %v, want ErrNotApplicable", err)
+	}
+	if !strings.Contains(err.Error(), "premium endpoint on this key") {
+		t.Fatalf("error should name the cause: %v", err)
+	}
+	// An already-cancelled context proves the second call never reaches the limiter.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.Fetch(ctx, "sentiment", "AAPL"); !errors.Is(err, ErrNotApplicable) {
+		t.Fatalf("second ticker = %v, want ErrNotApplicable", err)
+	}
+	if _, err := p.Fetch(context.Background(), "news", "MSFT"); !errors.Is(err, ErrNotApplicable) {
+		t.Fatalf("news domain = %v, want ErrNotApplicable", err)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("server saw %d NEWS_SENTIMENT requests, want 1", n)
 	}
 }

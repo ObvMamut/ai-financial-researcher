@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/redact"
@@ -21,6 +22,10 @@ type alphaVantageProvider struct {
 	baseURL  string // overridable in tests
 	limiter  *Limiter
 	calendar *earningsCalendar
+
+	// newsPremium is set once AlphaVantage has answered NEWS_SENTIMENT with its
+	// "premium endpoint" message; it is per process and never persisted.
+	newsPremium atomic.Bool
 }
 
 // NewAlphaVantageProvider builds the provider for the free tier (25 requests per
@@ -234,6 +239,18 @@ type article struct {
 	relevant bool
 }
 
+// errNewsPremium is what a premium-gated NEWS_SENTIMENT answers with: not
+// applicable on this key, so the pack records an expected gap, not a failure.
+func errNewsPremium() error {
+	return fmt.Errorf("%w: AlphaVantage NEWS_SENTIMENT is a premium endpoint on this key", ErrNotApplicable)
+}
+
+// 2026-10: a key without the premium plan gets {"Information": "... This is a
+// premium endpoint ..."} for every NEWS_SENTIMENT call, and each one spent a
+// request from the 25/day budget shared with EARNINGS_CALENDAR. The first such
+// answer now marks NEWS_SENTIMENT unavailable on this provider for the rest of
+// the process (not persisted); it and every later call return ErrNotApplicable
+// without waiting on the limiter or making a request.
 func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker string) (TickerData, error) {
 	// AlphaVantage rejects a dotted foreign symbol ("Invalid ticker format:
 	// 2330.TW"). Spending one of 25 daily requests to be told so wastes half the
@@ -243,6 +260,9 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 	symbol, ok := providerSymbol(ticker)
 	if !ok {
 		return TickerData{}, fmt.Errorf("%w: %s is not a US listing and has no US line", ErrNotApplicable, ticker)
+	}
+	if p.newsPremium.Load() {
+		return TickerData{}, errNewsPremium()
 	}
 	if err := p.limiter.Wait(ctx); err != nil {
 		return TickerData{}, fmt.Errorf("%w: AlphaVantage: %v", ErrUnavailable, err)
@@ -272,6 +292,10 @@ func (p *alphaVantageProvider) fetchNewsSentiment(ctx context.Context, ticker st
 		return TickerData{}, redact.Error(err)
 	}
 	if msg := firstNonEmpty(data.ErrorMessage, data.Information, data.Note); msg != "" {
+		if strings.Contains(strings.ToLower(msg), "premium endpoint") {
+			p.newsPremium.Store(true)
+			return TickerData{}, errNewsPremium()
+		}
 		rememberDailyQuota(p.limiter, msg)
 		// AlphaVantage answers a rejected call by quoting the query string it
 		// was sent. That prose is the credential-echo path this redaction was
