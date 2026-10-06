@@ -395,18 +395,23 @@ func applyEntryPolicy(idea *model.TradeIdea, v verified, cfg model.RiskConfig) [
 	}
 	// Measured on the unrounded close, the same unit gateIdea checks against.
 	floor := cfg.CatastropheStopSigma * m.SigmaDaily * math.Sqrt(h) * m.LastClose
-	var widened float64
+	// No stop given is a placement, not a widening: only a positive stop nearer
+	// than the floor (or on the wrong side) is reported as widened.
+	given := idea.Stop > 0
+	var placed float64
 	if idea.Direction == model.DirectionSell {
-		if idea.Stop <= 0 || idea.Stop-ref < floor {
-			widened = math.Ceil((ref+floor)*100) / 100
+		if !given || idea.Stop-ref < floor {
+			placed = math.Ceil((ref+floor)*100) / 100
 		}
-	} else if idea.Stop <= 0 || ref-idea.Stop < floor {
-		widened = math.Floor((ref-floor)*100) / 100
+	} else if !given || ref-idea.Stop < floor {
+		placed = math.Floor((ref-floor)*100) / 100
 	}
-	if widened > 0 {
-		msgs = append(msgs, fmt.Sprintf("stop %.2f widened to %.2f, the %.1fσ√%.0f catastrophe-stop floor from the reference close %.2f",
-			idea.Stop, widened, cfg.CatastropheStopSigma, h, ref))
-		idea.Stop = widened
+	if placed > 0 {
+		if given {
+			msgs = append(msgs, fmt.Sprintf("stop %.2f widened to %.2f, the %.1fσ√%.0f catastrophe-stop floor from the reference close %.2f",
+				idea.Stop, placed, cfg.CatastropheStopSigma, h, ref))
+		}
+		idea.Stop = placed
 	}
 	return msgs
 }

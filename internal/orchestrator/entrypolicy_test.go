@@ -108,7 +108,8 @@ func TestEntryPolicyRebasesAndFloorsTheStop(t *testing.T) {
 		{"long inside the floor", model.DirectionBuy, 100, 95, 80, 1, true},
 		{"short inside the floor", model.DirectionSell, 100, 105, 120, 1, true},
 		{"long stop on the wrong side", model.DirectionBuy, 100, 110, 80, 1, true},
-		{"long with no stop", model.DirectionBuy, 100, 0, 80, 1, true},
+		{"long with no stop is placed silently", model.DirectionBuy, 100, 0, 80, 0, false},
+		{"short with no stop is placed silently", model.DirectionSell, 100, 0, 120, 0, false},
 		{"wider stop kept", model.DirectionBuy, 100, 70, 70, 0, false},
 		{"entry re-based to the close", model.DirectionBuy, 101.5, 70, 70, 1, false},
 	}
