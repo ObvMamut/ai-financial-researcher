@@ -46,7 +46,7 @@ type History struct {
 }
 
 // HistoryIndices are the indices that have a point-in-time history.
-func HistoryIndices() []string { return []string{"sp500"} }
+func HistoryIndices() []string { return []string{"sp500", "nq100"} }
 
 // LoadHistory reads data/history/<index>_changes.csv.
 func LoadHistory(index string) (*History, error) {

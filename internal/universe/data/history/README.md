@@ -1,6 +1,7 @@
 # Point-in-time index membership
 
-`sp500_changes.csv` is the S&P 500's membership on every date since 2015-01-01.
+`sp500_changes.csv` and `nq100_changes.csv` are the S&P 500's and the
+Nasdaq-100's membership on every date since 2015-01-01.
 `internal/universe/history.go` loads it, and the lab's point-in-time universe
 reads it. It is data, so rebuild it rather than editing rows.
 
@@ -45,3 +46,21 @@ between 501 and 505 on every date.
 company that held it then. FB as of 2020 is Meta, and FI as of 2018 is Frank's
 International rather than Fiserv. So the lab prices each interval with `asof` set
 to that interval's last day, when its ticker was certainly valid.
+
+## Nasdaq-100
+
+`nq100_changes.csv` is built by `build_nq100.py` from jmccarrell/n100tickers
+(MIT). That project publishes yearly files, each giving January 1 membership
+plus every dated change. The build checks each year's January 1 list against
+the previous year replayed through its changes, and all 2015–2026 lists match.
+Membership stays between 101 and 107 tickers.
+
+Spot-checks match the public record:
+- AZN replaced XLNX on 2022-02-22.
+- The 2023-12-18 reconstitution added CCEP, CDW, DASH, MDB, ROP and SPLK, and
+  removed ALGN, EBAY, ENPH, JD, LCID and ZM.
+- FB became META on 2022-06-09.
+
+The project's own `nq100.csv` sample contains 11 names that are not current
+members (NET, SNOW, OKTA, TTD and others). It was chosen as a representative
+sample, not as the membership list.

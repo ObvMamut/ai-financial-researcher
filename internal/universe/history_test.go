@@ -107,3 +107,33 @@ func TestParseHistoryRejectsAnInconsistentFile(t *testing.T) {
 		}
 	}
 }
+
+func TestNQ100HistoryMatchesKnownIndexEvents(t *testing.T) {
+	h, err := LoadHistory("nq100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		ticker, in, out string
+	}{
+		{"XLNX", "2022-02-01", "2022-03-01"}, // replaced by AZN on 2022-02-22, after AMD's acquisition
+		{"AZN", "2022-03-01", "2022-02-01"},
+		{"CDW", "2023-12-26", "2023-12-11"}, // December 2023 reconstitution
+		{"ZM", "2023-12-11", "2023-12-26"},
+		{"FB", "2022-06-01", "2022-06-16"}, // became META 2022-06-09
+		{"CELG", "2019-11-01", "2019-12-02"},
+	}
+	for _, c := range cases {
+		if !slices.Contains(h.MembersOn(date(c.in)), c.ticker) {
+			t.Errorf("%s not a member on %s", c.ticker, c.in)
+		}
+		if slices.Contains(h.MembersOn(date(c.out)), c.ticker) {
+			t.Errorf("%s still a member on %s", c.ticker, c.out)
+		}
+	}
+	for d := h.Baseline; d.Before(date("2026-10-03")); d = d.AddDate(0, 0, 7) {
+		if n := len(h.MembersOn(d)); n < 99 || n > 108 {
+			t.Fatalf("%d members on %s", n, d.Format("2006-01-02"))
+		}
+	}
+}
