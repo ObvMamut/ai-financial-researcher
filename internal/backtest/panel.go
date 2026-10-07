@@ -23,6 +23,7 @@ import (
 	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/orchestrator"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
+	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
 
 // numHorizons is len(Horizons), as a constant for the array types below.
@@ -113,6 +114,9 @@ type Record struct {
 	Beta float64
 	// SigmaDaily is quant.Compute's Yang-Zhang daily σ, the unit of the σ stop.
 	SigmaDaily float64
+	// Key is the member's series key (Member.SeriesKey), which is how the
+	// barrier study finds its forward path.
+	Key string
 	// Setup is the archetype ScorePrescreen assigned. Never "drift" here: the
 	// row's ReportDate stays unset, so classifySetups and the composite are the
 	// ones a live run with no SEC contact address computes. The earnings event
@@ -124,6 +128,22 @@ type Record struct {
 type Member struct {
 	Constituent model.Constituent
 	Bench       string
+	// Interval, in the point-in-time universe, is the one membership this
+	// member stands for: the panel scores it only on dates inside it. nil in
+	// the sample universe, whose members count on every date.
+	Interval *universe.Interval
+	// Key is the member's price-series key. In the point-in-time universe one
+	// ticker can name two companies (FOX before and after 2019-03-19), so the
+	// key is ticker@interval-start; empty means the upper-case ticker.
+	Key string
+}
+
+// SeriesKey is the key of the member's series in Data.Series.
+func (m Member) SeriesKey() string {
+	if m.Key != "" {
+		return m.Key
+	}
+	return strings.ToUpper(m.Constituent.Ticker)
 }
 
 // Data is everything the panel is built from: each ticker's full daily series
@@ -213,12 +233,15 @@ func BuildPanel(members []Member, data Data, dates []time.Time) []Record {
 
 	benchRet63 := map[string]float64{} // bench|date → 63d return, as the live screen feeds RS63
 	for _, m := range members {
-		s := data.Series[strings.ToUpper(m.Constituent.Ticker)]
+		s := data.Series[m.SeriesKey()]
 		b := data.Bench[m.Bench]
 		if s == nil || len(s.Bars) < minHistory {
 			continue
 		}
 		for di, d := range dates {
+			if m.Interval != nil && !m.Interval.Contains(d) {
+				continue
+			}
 			ds := d.Format("2006-01-02")
 			p := barAtOrBefore(s.Bars, ds)
 			if p < minHistory-1 {
@@ -229,7 +252,7 @@ func BuildPanel(members []Member, data Data, dates []time.Time) []Record {
 				continue
 			}
 			rec, row := observe(m, s, b, p, params, benchRet63, data.Filings[strings.ToUpper(m.Constituent.Ticker)])
-			rec.Date = ds
+			rec.Date, rec.Key = ds, m.SeriesKey()
 			byDate[di] = append(byDate[di], obs{rec, row})
 		}
 	}

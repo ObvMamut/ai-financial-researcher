@@ -35,6 +35,7 @@ func runBacktest(settings *config.Settings, args []string) int {
 	indices := fs.String("indices", "", "comma-separated index keys (default: all four)")
 	cacheAge := fs.Duration("cache-age", 7*24*time.Hour, "serve a cached long price series younger than this without a request")
 	asJSON := fs.Bool("json", false, "print the report as JSON on stdout instead of the text summary")
+	universeFlag := fs.String("universe", "sample", "sample (today's constituents) or pit (sp500/nq100 members as of each rebalance date, priced through Alpaca; needs Alpaca keys)")
 	evaluateOOS := fs.Bool("evaluate-oos", false, "the one registered OOS-H1-63 run: held-out weeks only, refused until 52 have matured (docs/workflow/backtest.md)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -65,11 +66,27 @@ func runBacktest(settings *config.Settings, args []string) int {
 	if settings.Providers.ContactEmail != "" {
 		filings = marketdata.NewFilingHistorySource(settings.Providers.ContactEmail, cache)
 	}
+	var asOf backtest.AsOfLoader
+	switch *universeFlag {
+	case "sample":
+	case backtest.UniversePIT:
+		a := marketdata.NewAlpacaPrices(settings.Providers.AlpacaKeyID, settings.Providers.AlpacaSecret, cache)
+		if !a.Available() {
+			fmt.Fprintln(os.Stderr, "error: --universe pit prices departed names through Alpaca, and no Alpaca key is configured")
+			return 1
+		}
+		asOf = a
+	default:
+		fmt.Fprintf(os.Stderr, "error: --universe must be sample or pit, not %q\n", *universeFlag)
+		return 2
+	}
 	res, err := backtest.Run(ctx, marketdata.NewYahooClient(cache), uni, backtest.Config{
 		Years: *years, Indices: idx, CacheMaxAge: *cacheAge, Now: now,
 		Log:         func(s string) { fmt.Fprintln(os.Stderr, s) },
 		Filings:     filings,
 		EvaluateOOS: *evaluateOOS,
+		Universe:    *universeFlag,
+		AsOf:        asOf,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

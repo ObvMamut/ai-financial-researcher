@@ -40,6 +40,16 @@ type Config struct {
 	// EvaluateOOS is the registered out-of-sample run: only the held-out dates,
 	// and only once OOSMatureDates of them have a matured 63-session window.
 	EvaluateOOS bool
+	// Universe is "pit" for the point-in-time universe; anything else is
+	// today's sample.
+	Universe string
+	// AsOf prices point-in-time members (marketdata.AlpacaPrices). Required
+	// in the point-in-time universe.
+	AsOf AsOfLoader
+	// Histories and Sectors override the embedded membership histories and
+	// sector map (tests); nil loads the embedded ones.
+	Histories map[string]*universe.History
+	Sectors   map[string]string
 }
 
 // OOSHoldoutAfter is the last rebalance date the 2026-10-01 horizon run used.
@@ -106,8 +116,10 @@ type Result struct {
 	FilingsNote        string   `json:"filings_note,omitempty"`
 	FilingsUnavailable []string `json:"filings_unavailable,omitempty"`
 	Survivorship       string   `json:"survivorship"`
-	Departures         []string `json:"departures"`
-	CostNote           string   `json:"cost_note"`
+	// Universe is "pit" when the replay used point-in-time membership.
+	Universe   string   `json:"universe,omitempty"`
+	Departures []string `json:"departures"`
+	CostNote   string   `json:"cost_note"`
 	// Signals maps a slice label (all, US, EU, Asia, H1, H2) to every signal's
 	// stats against benchmark-excess returns; BetaAdjusted is the same against
 	// r − β·r_bench (C4).
@@ -191,12 +203,58 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 		}
 	}
 	rng := yahooRange(cfg.Years)
+	pit := cfg.Universe == UniversePIT
+	if pit && cfg.AsOf == nil {
+		return nil, fmt.Errorf("the point-in-time universe needs an asof price source (Alpaca keys)")
+	}
+
+	holdout := cfg.HoldoutAfter
+	if holdout.IsZero() {
+		holdout = OOSHoldoutAfter
+	}
+	end := lastFriday(cfg.Now)
+	start := end.AddDate(-cfg.Years, 0, 0)
+	var holdoutNote string
+	switch {
+	case cfg.EvaluateOOS:
+		start = holdout.AddDate(0, 0, 1)
+	case end.After(holdout):
+		end = holdout
+		start = end.AddDate(-cfg.Years, 0, 0)
+		holdoutNote = fmt.Sprintf("HOLDOUT: rebalance dates after %s are reserved for OOS-H1-63 and are not replayed; the one evaluation runs with --evaluate-oos once %d of them have matured", holdout.Format("2006-01-02"), OOSMatureDates)
+	}
+	dates := WeeklyDates(start, end)
+	if len(dates) == 0 {
+		return nil, fmt.Errorf("no rebalance dates between %s and %s", start.Format("2006-01-02"), end.Format("2006-01-02"))
+	}
 
 	var members []Member
+	var sectors map[string]string
 	for _, idx := range cfg.Indices {
 		cs := uni.Constituents(idx)
 		if len(cs) == 0 {
 			return nil, fmt.Errorf("unknown or empty index %q", idx)
+		}
+		if pit {
+			h := cfg.Histories[idx]
+			if h == nil && hasHistory(idx) {
+				var err error
+				if h, err = universe.LoadHistory(idx); err != nil {
+					return nil, err
+				}
+			}
+			if h != nil {
+				if sectors == nil {
+					if sectors = cfg.Sectors; sectors == nil {
+						var err error
+						if sectors, err = universe.HistorySectors(); err != nil {
+							return nil, err
+						}
+					}
+				}
+				members = append(members, pitMembers(idx, h, cs, sectors, dates[0], dates[len(dates)-1])...)
+				continue
+			}
 		}
 		for _, c := range cs {
 			members = append(members, Member{Constituent: c, Bench: universe.BenchmarkFor(idx, c.Ticker)})
@@ -219,7 +277,10 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 		}
 	}
 	for i, m := range members {
-		t := strings.ToUpper(m.Constituent.Ticker)
+		if m.Interval != nil {
+			continue // priced through the asof source below
+		}
+		t := m.SeriesKey()
 		if _, ok := data.Series[t]; ok {
 			continue
 		}
@@ -231,30 +292,27 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 			logf("prices: %d of %d members", i+1, len(members))
 		}
 	}
+	if pit {
+		// Warm-up: a full momentum window before the first rebalance.
+		from := dates[0].AddDate(-1, -3, 0)
+		missing, err := loadPIT(ctx, cfg.AsOf, members, data, from, cfg.Now)
+		if err != nil {
+			return nil, err
+		}
+		unavailable = append(unavailable, missing...)
+	}
 	logf("prices: %d symbols, %d unavailable", len(data.Series)+len(data.Bench), len(unavailable))
-
-	holdout := cfg.HoldoutAfter
-	if holdout.IsZero() {
-		holdout = OOSHoldoutAfter
-	}
-	end := lastFriday(cfg.Now)
-	start := end.AddDate(-cfg.Years, 0, 0)
-	var holdoutNote string
-	switch {
-	case cfg.EvaluateOOS:
-		start = holdout.AddDate(0, 0, 1)
-	case end.After(holdout):
-		end = holdout
-		start = end.AddDate(-cfg.Years, 0, 0)
-		holdoutNote = fmt.Sprintf("HOLDOUT: rebalance dates after %s are reserved for OOS-H1-63 and are not replayed; the one evaluation runs with --evaluate-oos once %d of them have matured", holdout.Format("2006-01-02"), OOSMatureDates)
-	}
-	dates := WeeklyDates(start, end)
 
 	var filingsNote string
 	var filingsUnavailable []string
-	if cfg.Filings == nil {
+	switch {
+	case pit:
+		// Filing histories are keyed by today's ticker; a departed or reused
+		// one would resolve to the wrong filer.
+		filingsNote = pitFilingsNote
+	case cfg.Filings == nil:
 		filingsNote = noFilingsNote
-	} else if len(dates) > 0 {
+	default:
 		data.Filings, filingsUnavailable = loadFilings(ctx, cfg.Filings, members, dates[0].AddDate(0, 0, -filingLookbackDays))
 		logf("filings: %d US names resolved, %d unavailable", len(data.Filings), len(filingsUnavailable))
 		if err := ctx.Err(); err != nil {
@@ -277,9 +335,15 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 	res.Range, res.Unavailable = rng, unavailable
 	res.FilingsNote, res.FilingsUnavailable = filingsNote, filingsUnavailable
 	res.HoldoutNote = holdoutNote
+	if pit {
+		res.Universe, res.Survivorship = UniversePIT, PITSurvivorship
+	}
 	checkShortfall(res, cfg.Years, end)
 	return res, nil
 }
+
+// pitFilingsNote is the report's line in the point-in-time universe.
+const pitFilingsNote = "point-in-time universe: earnings-release dates are not fetched (SEC resolves today's tickers only), so drift and earn_window are NaN for every name"
 
 // noFilingsNote is the report's line when no filing source was configured.
 const noFilingsNote = "no SEC contact_email configured: no earnings-release dates were fetched, so drift and earn_window are NaN for every name"
@@ -611,4 +675,14 @@ func maturedDates(recs []Record, k int) int {
 		}
 	}
 	return len(seen)
+}
+
+// hasHistory reports whether idx has an embedded point-in-time history.
+func hasHistory(idx string) bool {
+	for _, h := range universe.HistoryIndices() {
+		if h == idx {
+			return true
+		}
+	}
+	return false
 }

@@ -81,7 +81,11 @@ type trade struct {
 func pickTrades(recs []Record, series map[string]*quant.Series) []trade {
 	var out []trade
 	for _, r := range topPicks(recs) {
-		s := series[strings.ToUpper(r.Ticker)]
+		key := r.Key
+		if key == "" {
+			key = strings.ToUpper(r.Ticker)
+		}
+		s := series[key]
 		if s == nil || r.P+barrierHorizon >= len(s.Bars) {
 			continue
 		}
