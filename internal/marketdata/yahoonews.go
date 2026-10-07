@@ -99,7 +99,11 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 	}
 
 	td, unresolved := p.newsData(ctx, resp, ticker, ticker)
-	if !unresolved {
+	// An empty local feed counts as unresolved too: Yahoo indexed no news
+	// under HDFCBANK.NS, PHIA.AS or BBVA.MC on 2026-10-07 while their ADR lines
+	// carried the issuer stories, and treating that as a quiet name left all
+	// three without news coverage.
+	if !unresolved && len(resp.News) > 0 {
 		return td, nil
 	}
 	adr := adrMap[strings.ToUpper(ticker)]
@@ -107,7 +111,8 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 		return td, nil
 	}
 	// One mapped major-exchange query only, after an unresolved local feed.
-	// Transport errors, stale-only responses and quiet names never trigger it.
+	// Transport errors and stale-only responses never trigger it; an empty
+	// local feed does (see above).
 	fallback, err := p.search(ctx, adr)
 	if err != nil {
 		return td, err

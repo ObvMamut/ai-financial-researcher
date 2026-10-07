@@ -227,11 +227,20 @@ says so explicitly through `TickerData.Warnings`, which `pack.go` folds into `da
   ticker at once with no error. The open-interest positioning leg is unaffected and still
   ships; a chain with *some* volume stays a plain `classifyUnusualOptions` abstention and
   warns about nothing.
+  The mirror case (volume but no open interest) and an implausible ATM IV warn too, except
+  when Yahoo's `marketState` is `PRE`/`PREPRE`: a pre-open chain has not been republished
+  for the day, so it becomes one `expected` `off_session` source diagnostic and is not
+  cached.
 - **Yahoo and Alpaca news** — a feed that returned items and kept none of them reports the drop
   breakdown by reason (missing `providerPublishTime`, past the 21-day cutoff, empty title,
   duplicate). "20 items, 20 with no usable timestamp" is a schema change; "20 items, 20
   older than the cutoff" is a genuinely stale name. An empty `news` array warns about
-  nothing — that one really is a quiet name. Coverage stays false either way. Both feeds
+  nothing — that one really is a quiet name — except for a foreign listing mapped in
+  `adr_map.csv`, where Yahoo's empty local feed sends the one ADR query (HDFCBANK.NS,
+  PHIA.AS and BBVA.MC all had empty local feeds and issuer news under the ADR on
+  2026-10-07). Alpaca keeps headline-only items for an ADR line (`exclude_contentless`
+  stays on for US listings), because those issuers' stories arrive headline-only. Coverage
+  stays false either way. Both feeds
   share the accounting (`internal/marketdata/newsfilter.go`) and each names its own
   timestamp field — `providerPublishTime` for Yahoo, `created_at` for Alpaca — so the
   message points at the field that actually changed.

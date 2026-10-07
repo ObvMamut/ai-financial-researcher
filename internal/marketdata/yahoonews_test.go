@@ -291,7 +291,10 @@ func TestYahooNewsMappedFallbackIsBoundedAndKeepsLocalIdentity(t *testing.T) {
 	}{
 		{"unresolved", newsItem("unrelated", "Wire", 2, "OTHER"), newsItem("issuer release", "Issuer", 1, "ASML"), "ASML.AS", 2, 1},
 		{"still unrelated", newsItem("unrelated", "Wire", 2, "OTHER"), newsItem("also unrelated", "Wire", 1, "OTHER"), "ASML.AS", 2, 0},
-		{"quiet", "", newsItem("issuer release", "Issuer", 1, "ASML"), "ASML.AS", 1, 0},
+		// Yahoo indexes no news under the local symbol for HDFCBANK.NS, PHIA.AS or
+		// BBVA.MC (2026-10-07: empty arrays), while their ADR lines carry the issuer
+		// stories. An empty local feed for a mapped listing is not a quiet name.
+		{"empty local feed", "", newsItem("issuer release", "Issuer", 1, "ASML"), "ASML.AS", 2, 1},
 		{"stale", newsItem("stale", "Wire", 24*30, "ASML.AS"), "", "ASML.AS", 1, 0},
 		{"local works", newsItem("local release", "Issuer", 1, "ASML.AS"), "", "ASML.AS", 1, 1},
 		{"OTC excluded", newsItem("unrelated", "Wire", 2, "OTHER"), "", "BMW.DE", 1, 0},

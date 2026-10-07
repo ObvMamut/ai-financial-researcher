@@ -302,3 +302,26 @@ func TestAlpacaNewsGenuineCompanyStoryIsCoverage(t *testing.T) {
 		t.Error("a headline naming the company must ground the news domain")
 	}
 }
+
+func TestAlpacaNewsKeepsHeadlineOnlyItemsForAnADRLine(t *testing.T) {
+	// exclude_contentless dropped every issuer story on HDB, PHG and BBVA over
+	// 21 days on 2026-10-07 — "HDFC Bank appointed Anup Bagchi as CEO" is a
+	// headline-only item — leaving those names with no news at all. US names,
+	// which have plenty, keep the filter.
+	got := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got[r.URL.Query().Get("symbols")] = r.URL.Query().Get("exclude_contentless")
+		fmt.Fprint(w, `{"news":[],"next_page_token":null}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_ALPACA_BASE", srv.URL)
+	p := NewAlpacaNewsProvider("k", "s")
+	for _, tk := range []string{"HDFCBANK.NS", "MU"} {
+		if _, err := p.Fetch(context.Background(), "news", tk); err != nil {
+			t.Fatalf("%s: %v", tk, err)
+		}
+	}
+	if got["HDB"] != "false" || got["MU"] != "true" {
+		t.Errorf("exclude_contentless by symbol = %v, want HDB false and MU true", got)
+	}
+}

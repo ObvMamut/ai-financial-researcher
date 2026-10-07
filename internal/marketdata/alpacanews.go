@@ -93,7 +93,7 @@ func (p *alpacaNewsProvider) Fetch(ctx context.Context, domain string, ticker st
 		return TickerData{}, fmt.Errorf("%w: %s has no US listing Alpaca covers", ErrNotApplicable, ticker)
 	}
 
-	resp, err := p.search(ctx, symbol)
+	resp, err := p.search(ctx, symbol, symbol == ticker)
 	if err != nil {
 		return TickerData{}, err
 	}
@@ -165,7 +165,12 @@ func (p *alpacaNewsProvider) Fetch(ctx context.Context, domain string, ticker st
 	return td, nil
 }
 
-func (p *alpacaNewsProvider) search(ctx context.Context, symbol string) (alpacaNewsResp, error) {
+// excludeContentless drops headline-only items. It is on for a US listing,
+// which has plenty of full articles, and off for a foreign listing's US line:
+// on 2026-10-07 the filter left HDB, PHG and BBVA with no news over 21 days,
+// because their issuer stories ("HDFC Bank appointed Anup Bagchi as CEO") were
+// all headline-only.
+func (p *alpacaNewsProvider) search(ctx context.Context, symbol string, excludeContentless bool) (alpacaNewsResp, error) {
 	var out alpacaNewsResp
 	if err := p.limiter.Wait(ctx); err != nil {
 		return out, fmt.Errorf("%w: Alpaca news: %v", ErrUnavailable, err)
@@ -178,7 +183,7 @@ func (p *alpacaNewsProvider) search(ctx context.Context, symbol string) (alpacaN
 	// An item with no body is a wire-service stub; the headline is all this
 	// pipeline reads, but a contentless one is usually a duplicate of a real
 	// story that also arrives.
-	q.Set("exclude_contentless", "true")
+	q.Set("exclude_contentless", fmt.Sprint(excludeContentless))
 	q.Set("include_content", "true")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/v1beta1/news?"+q.Encode(), nil)
