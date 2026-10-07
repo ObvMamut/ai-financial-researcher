@@ -242,7 +242,13 @@ says so explicitly through `TickerData.Warnings`, which `pack.go` folds into `da
   nothing — that one really is a quiet name — except for a foreign listing mapped in
   `adr_map.csv`, where Yahoo's empty local feed sends the one ADR query (HDFCBANK.NS,
   PHIA.AS and BBVA.MC all had empty local feeds and issuer news under the ADR on
-  2026-10-07). Alpaca keeps headline-only items for an ADR line (`exclude_contentless`
+  2026-10-07). A foreign listing with no ADR mapping and an empty local feed gets one
+  company-name search instead (the universe name, normalised; 0 of 89 such names had
+  any headline under the local symbol on 2026-10-07, 40 are covered by name). On that
+  path a headline counts as about the company only when it is tagged with the listing
+  *and* names the company, because Yahoo's tags on a name search are loose and a root can
+  collide with a US ticker (AIR.PA vs AAR). A company whose name is its root (CSL Ltd.)
+  cannot be separated this way. Alpaca keeps headline-only items for an ADR line (`exclude_contentless`
   stays on for US listings), because those issuers' stories arrive headline-only. Coverage
   stays false either way. Both feeds
   share the accounting (`internal/marketdata/newsfilter.go`) and each names its own

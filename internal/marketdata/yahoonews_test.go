@@ -327,3 +327,78 @@ func TestYahooNewsMappedFallbackIsBoundedAndKeepsLocalIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestYahooNewsSearchesAnUnmappedForeignListingByCompanyName(t *testing.T) {
+	// On 2026-10-07 Yahoo's search returned nothing for the local symbol of
+	// all 89 unmapped foreign listings (0700.HK, SIE.DE, 7203.T, …), while a
+	// search for the company name returned fresh items tagged with that same
+	// local symbol. Without the name query those names had no news domain.
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		asked = append(asked, q)
+		if q == "Tencent" {
+			fmt.Fprintf(w, `{"news":[%s]}`, newsItem("Tencent Holdings lifts buyback", "Reuters", 3, "0700.HK"))
+			return
+		}
+		fmt.Fprint(w, `{"news":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+	ctx := WithCompanyNames(context.Background(), func(string) []string { return []string{"Tencent Holdings Ltd."} })
+
+	td, err := NewYahooNewsProvider().Fetch(ctx, "news", "0700.HK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[0] != "0700.HK" || asked[1] != "Tencent" {
+		t.Fatalf("queries = %q, want the local symbol then the normalised company name", asked)
+	}
+	if len(td.Facts) != 1 || !strings.Contains(td.Facts[0].Value, `company-name search "Tencent"; local listing 0700.HK`) {
+		t.Fatalf("facts = %+v, want one headline with its provenance", td.Facts)
+	}
+
+	// A US listing with a quiet feed is a quiet name: no name query.
+	asked = nil
+	if _, err := NewYahooNewsProvider().Fetch(ctx, "news", "AAPL"); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 {
+		t.Errorf("a quiet US listing sent %d queries, want 1: %q", len(asked), asked)
+	}
+}
+
+func TestYahooNewsNameSearchCountsOnlyHeadlinesThatNameTheCompany(t *testing.T) {
+	// Yahoo tagged "Kroger and Costco help shoppers cut a major expense" to
+	// BMW.DE on 2026-10-07, and AIR.PA's root "AIR" is also AAR Corp's US
+	// ticker. Neither may make a name-searched feed count as coverage; a
+	// headline naming Airbus does. (A company whose name is its root, like
+	// CSL Ltd., cannot be told apart this way and is a known limit.)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("q") == "AIR.PA" {
+			fmt.Fprint(w, `{"news":[]}`)
+			return
+		}
+		fmt.Fprintf(w, `{"news":[%s,%s,%s]}`,
+			newsItem("Kroger and Costco help shoppers cut a major expense", "TheStreet", 3, "AIR.PA"),
+			newsItem("AAR (AIR) wins a Navy maintenance contract", "MT Newswires", 4, "AIR", "AIR.PA"),
+			newsItem("Airbus lifts A321XLR deliveries", "Reuters", 5, "AIR.PA"))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+	ctx := WithCompanyNames(context.Background(), func(string) []string { return []string{"Airbus SE"} })
+
+	td, err := NewYahooNewsProvider().Fetch(ctx, "news", "AIR.PA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tagged []string
+	for _, f := range td.Facts {
+		if strings.Contains(f.Label, "tagged to this ticker") {
+			tagged = append(tagged, f.Value)
+		}
+	}
+	if len(tagged) != 1 || !strings.HasPrefix(tagged[0], "Airbus lifts") {
+		t.Errorf("headlines counted as about Airbus: %q, want only the Airbus one", tagged)
+	}
+}

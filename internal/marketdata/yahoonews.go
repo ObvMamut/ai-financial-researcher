@@ -34,8 +34,10 @@ const yahooNewsCount = 20
 // own — on 2026-09-01 the counter read 24 of 25 and the run lost every headline
 // for two names.
 //
-// Yahoo's search endpoint takes the local symbol (BMW.DE, 8035.T) and needs no
-// key, so it covers both holes at once. What it does not carry is a per-article
+// Yahoo's search endpoint needs no key. It was added for the local symbol
+// (BMW.DE, 8035.T), but by 2026-10-07 it returned nothing for any foreign local
+// symbol, so a foreign listing is now reached through its ADR line where one is
+// mapped and through a company-name search where none is (byCompanyName). What it does not carry is a per-article
 // sentiment score; the news persona treats that as enrichment AlphaVantage may
 // add, not as evidence it requires.
 type yahooNewsProvider struct {
@@ -98,7 +100,7 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 		return TickerData{}, err
 	}
 
-	td, unresolved := p.newsData(ctx, resp, ticker, ticker)
+	td, unresolved := p.newsData(ctx, resp, ticker, "", false)
 	// An empty local feed counts as unresolved too: Yahoo indexed no news
 	// under HDFCBANK.NS, PHIA.AS or BBVA.MC on 2026-10-07 while their ADR lines
 	// carried the issuer stories, and treating that as a quiet name left all
@@ -108,6 +110,9 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 	}
 	adr := adrMap[strings.ToUpper(ticker)]
 	if adr == "" || strings.EqualFold(adr, ticker) {
+		if len(resp.News) == 0 && isForeignListing(ticker) {
+			return p.byCompanyName(ctx, ticker, td)
+		}
 		return td, nil
 	}
 	// One mapped major-exchange query only, after an unresolved local feed.
@@ -117,7 +122,7 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 	if err != nil {
 		return td, err
 	}
-	next, _ := p.newsData(ctx, fallback, ticker, adr)
+	next, _ := p.newsData(ctx, fallback, ticker, " (issuer news via mapped ADR "+adr+"; local listing "+ticker+")", false)
 	// The first attempt's own diagnostics (e.g. "unresolved_symbol") describe a
 	// gap that no longer exists once the ADR-mapped fallback found facts; carry
 	// them forward only when the fallback is itself empty, exactly as Warnings
@@ -130,7 +135,45 @@ func (p *yahooNewsProvider) Fetch(ctx context.Context, domain string, ticker str
 	return next, nil
 }
 
-func (p *yahooNewsProvider) newsData(ctx context.Context, resp yahooSearchResp, ticker, query string) (TickerData, bool) {
+// byCompanyName is the last query for a foreign listing with no US line whose
+// local feed came back empty. On 2026-10-07 Yahoo's search returned nothing
+// for the local symbol of all 89 unmapped foreign listings in the universe
+// (0700.HK, SIE.DE, 7203.T, …), while a search for the company name returned
+// fresh items tagged with that same local symbol. Yahoo's tags on a name
+// search are loose ("Kroger and Costco help shoppers…" tagged BMW.DE), and a
+// root can collide with a US ticker (CSL.AX's "CSL" is Carlisle), so here an
+// item counts as about the company only when it is tagged with the listing
+// *and* its headline names the company. One request, only after an empty
+// local feed.
+func (p *yahooNewsProvider) byCompanyName(ctx context.Context, ticker string, local TickerData) (TickerData, error) {
+	names := companyNamesFor(ctx, ticker)
+	if len(names) == 0 {
+		return local, nil
+	}
+	query, alias := normalizeCompanyName(names[0])
+	if alias != "" {
+		query = alias
+	}
+	if query == "" {
+		return local, nil
+	}
+	resp, err := p.searchQuery(ctx, query)
+	if err != nil {
+		return local, err
+	}
+	next, _ := p.newsData(ctx, resp, ticker, fmt.Sprintf(" (issuer news via company-name search %q; local listing %s)", query, ticker), true)
+	if len(next.Facts) == 0 {
+		next.Diagnostics = append(local.Diagnostics, next.Diagnostics...)
+		next.Warnings = append(local.Warnings, next.Warnings...)
+	}
+	return next, nil
+}
+
+// newsData turns one search response into facts for ticker. note is appended
+// to every headline to say how the feed was reached when it was not the
+// listing's own symbol. byName additionally requires the headline to name the
+// company for the item to count as about it (see byCompanyName).
+func (p *yahooNewsProvider) newsData(ctx context.Context, resp yahooSearchResp, ticker, note string, byName bool) (TickerData, bool) {
 	cutoff := time.Now().Add(-newsMaxAge)
 	var arts []newsArticle
 	// Every filter below is correct on its own, and every one of them ends in
@@ -164,7 +207,7 @@ func (p *yahooNewsProvider) newsData(ctx context.Context, resp yahooSearchResp, 
 			Publisher: strings.TrimSpace(n.Publisher),
 			Link:      n.Link,
 			Published: published,
-			Related:   isSubjectRelevant(ctx, n.RelatedTickers, title, "", ticker),
+			Related:   isSubjectRelevant(ctx, n.RelatedTickers, title, "", ticker) && (!byName || headlineNamesCompany(ctx, title, ticker)),
 		})
 	}
 	if len(arts) == 0 {
@@ -193,10 +236,6 @@ func (p *yahooNewsProvider) newsData(ctx context.Context, resp yahooSearchResp, 
 	sort.SliceStable(arts, func(i, j int) bool { return arts[i].Published.After(arts[j].Published) })
 
 	td := TickerData{Ticker: ticker}
-	note := ""
-	if query != ticker {
-		note = " (issuer news via mapped ADR " + query + "; local listing " + ticker + ")"
-	}
 	facts, warn := headlineFacts(arts, note)
 	if warn != "" {
 		td.Warnings = append(td.Warnings, warn)
@@ -208,12 +247,17 @@ func (p *yahooNewsProvider) newsData(ctx context.Context, resp yahooSearchResp, 
 }
 
 func (p *yahooNewsProvider) search(ctx context.Context, ticker string) (yahooSearchResp, error) {
+	return p.searchQuery(ctx, yahooSymbol(ticker))
+}
+
+// searchQuery runs the search endpoint on a raw query string.
+func (p *yahooNewsProvider) searchQuery(ctx context.Context, query string) (yahooSearchResp, error) {
 	var out yahooSearchResp
 	if err := p.limiter.Wait(ctx); err != nil {
 		return out, fmt.Errorf("%w: Yahoo news: %v", ErrUnavailable, err)
 	}
 	q := url.Values{}
-	q.Set("q", yahooSymbol(ticker))
+	q.Set("q", query)
 	q.Set("newsCount", fmt.Sprint(yahooNewsCount))
 	q.Set("quotesCount", "0")
 	q.Set("enableFuzzyQuery", "false")
@@ -228,7 +272,7 @@ func (p *yahooNewsProvider) search(ctx context.Context, ticker string) (yahooSea
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return out, fmt.Errorf("%w: Yahoo news HTTP %d for %s", ErrUnavailable, resp.StatusCode, ticker)
+		return out, fmt.Errorf("%w: Yahoo news HTTP %d for %s", ErrUnavailable, resp.StatusCode, query)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return out, fmt.Errorf("%w: Yahoo news: %v", ErrUnavailable, err)
@@ -237,4 +281,15 @@ func (p *yahooNewsProvider) search(ctx context.Context, ticker string) (yahooSea
 		return out, fmt.Errorf("%w: Yahoo news: %s", ErrUnavailable, out.Finance.Error.Description)
 	}
 	return out, nil
+}
+
+// headlineNamesCompany reports whether a headline names the company itself,
+// by its universe name or an alias, ignoring ticker roots.
+func headlineNamesCompany(ctx context.Context, headline, ticker string) bool {
+	for _, name := range companyNamesFor(ctx, ticker) {
+		if mentionsCompanyName(headline, name) {
+			return true
+		}
+	}
+	return false
 }
