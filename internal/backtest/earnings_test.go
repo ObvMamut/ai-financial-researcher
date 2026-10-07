@@ -247,3 +247,43 @@ func TestRunWiresFilings(t *testing.T) {
 		t.Errorf("without a source: drift %d dates, earn_window %d dates, want 0", all[SigDrift].NDates, all[SigEarnWindow].NDates)
 	}
 }
+
+// Rebalance dates after the OOS-H1-63 registration's last in-sample date are
+// held out of every ordinary replay, or each later `cfr backtest` would
+// quietly spend the out-of-sample weeks the registration reserved.
+func TestRunHoldsOutTheOutOfSampleWeeks(t *testing.T) {
+	uni, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	holdout := day("2022-06-24")
+	cfg := Config{Years: 1, Indices: []string{"nq100"}, Now: day("2022-09-30"), HoldoutAfter: holdout}
+	res, err := Run(context.Background(), fakeLoader{}, uni, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.End > "2022-06-24" {
+		t.Errorf("ordinary replay ends %s, past the holdout", res.End)
+	}
+	if res.HoldoutNote == "" || !strings.Contains(res.Text(), res.HoldoutNote) {
+		t.Errorf("holdout note %q missing from the result or its text", res.HoldoutNote)
+	}
+
+	// The one evaluation refuses until 52 rebalance dates have a matured
+	// 63-session window.
+	cfg.EvaluateOOS = true
+	if _, err := Run(context.Background(), fakeLoader{}, uni, cfg); err == nil || !strings.Contains(err.Error(), "of 52") {
+		t.Errorf("an immature evaluation = %v, want a refusal counting matured dates of 52", err)
+	}
+
+	// With enough matured weeks it runs, on the held-out weeks only.
+	cfg.HoldoutAfter = day("2020-12-25")
+	cfg.Years = 2
+	res, err = Run(context.Background(), fakeLoader{}, uni, cfg)
+	if err != nil {
+		t.Fatalf("a mature evaluation refused: %v", err)
+	}
+	if res.Start <= "2020-12-25" {
+		t.Errorf("the evaluation starts %s, inside the in-sample period", res.Start)
+	}
+}

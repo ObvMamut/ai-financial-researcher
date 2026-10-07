@@ -35,6 +35,7 @@ func runBacktest(settings *config.Settings, args []string) int {
 	indices := fs.String("indices", "", "comma-separated index keys (default: all four)")
 	cacheAge := fs.Duration("cache-age", 7*24*time.Hour, "serve a cached long price series younger than this without a request")
 	asJSON := fs.Bool("json", false, "print the report as JSON on stdout instead of the text summary")
+	evaluateOOS := fs.Bool("evaluate-oos", false, "the one registered OOS-H1-63 run: held-out weeks only, refused until 52 have matured (docs/workflow/backtest.md)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -66,8 +67,9 @@ func runBacktest(settings *config.Settings, args []string) int {
 	}
 	res, err := backtest.Run(ctx, marketdata.NewYahooClient(cache), uni, backtest.Config{
 		Years: *years, Indices: idx, CacheMaxAge: *cacheAge, Now: now,
-		Log:     func(s string) { fmt.Fprintln(os.Stderr, s) },
-		Filings: filings,
+		Log:         func(s string) { fmt.Fprintln(os.Stderr, s) },
+		Filings:     filings,
+		EvaluateOOS: *evaluateOOS,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

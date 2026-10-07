@@ -374,9 +374,12 @@ before any of those weeks exist. It is one test, run once.
   this is about four independent quarters. A pass would be strong evidence. A
   fail is weak evidence against, and is recorded as "not confirmed" rather than
   "refuted".
-- **Tooling.** `cfr backtest` has no start-date flag today. Adding one (a
-  rebalance-date floor) is part of the evaluation work, not of this
-  registration, and must not change any statistic's definition.
+- **Tooling, enforced in code** (`OOSHoldoutAfter`, `internal/backtest/run.go`).
+  Every ordinary `cfr backtest` stops at 2026-09-25 and says so in a HOLDOUT
+  line, so no later replay can read the reserved weeks first. The one
+  evaluation is `cfr backtest --evaluate-oos`: held-out dates only, and it
+  refuses, computing nothing, until 52 of them have a matured 63-session
+  window. No statistic's definition changes.
 - **Decision fixed now.** Pass → a follow-up plan proposes a 63-session live
   time exit and scoreboard horizon behind a config switch, with the current 15
   kept as the control. Fail → the register records it, and H1 is closed on this

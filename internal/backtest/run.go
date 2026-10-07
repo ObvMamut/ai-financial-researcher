@@ -34,7 +34,22 @@ type Config struct {
 	// earn_window signals. nil — no SEC contact address — leaves both NaN and
 	// says so in the report; everything else is unchanged.
 	Filings marketdata.FilingHistorySource
+	// HoldoutAfter is the last in-sample rebalance date: later dates are held
+	// out of every ordinary replay. Zero means OOSHoldoutAfter.
+	HoldoutAfter time.Time
+	// EvaluateOOS is the registered out-of-sample run: only the held-out dates,
+	// and only once OOSMatureDates of them have a matured 63-session window.
+	EvaluateOOS bool
 }
+
+// OOSHoldoutAfter is the last rebalance date the 2026-10-01 horizon run used.
+// OOS-H1-63 (docs/workflow/backtest.md, registered 2026-10-07) is evaluated
+// on later dates only, once, so no ordinary replay may read them first.
+var OOSHoldoutAfter = time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+
+// OOSMatureDates is how many held-out rebalance dates need a matured
+// 63-session window before OOS-H1-63 may be computed.
+const OOSMatureDates = 52
 
 // DefaultYears is Config.Years' default, and the threshold LongHistorySurvivorship
 // is measured against: past it, the per-year report (E1) is showing more history
@@ -86,6 +101,8 @@ type Result struct {
 	// FilingsNote says why the earnings signals are NaN throughout (no SEC
 	// contact address); FilingsUnavailable names the US tickers whose filing
 	// history could not be resolved, whose earnings signals are NaN.
+	// HoldoutNote says the replay stopped at the OOS holdout date.
+	HoldoutNote        string   `json:"holdout_note,omitempty"`
 	FilingsNote        string   `json:"filings_note,omitempty"`
 	FilingsUnavailable []string `json:"filings_unavailable,omitempty"`
 	Survivorship       string   `json:"survivorship"`
@@ -216,8 +233,22 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 	}
 	logf("prices: %d symbols, %d unavailable", len(data.Series)+len(data.Bench), len(unavailable))
 
+	holdout := cfg.HoldoutAfter
+	if holdout.IsZero() {
+		holdout = OOSHoldoutAfter
+	}
 	end := lastFriday(cfg.Now)
-	dates := WeeklyDates(end.AddDate(-cfg.Years, 0, 0), end)
+	start := end.AddDate(-cfg.Years, 0, 0)
+	var holdoutNote string
+	switch {
+	case cfg.EvaluateOOS:
+		start = holdout.AddDate(0, 0, 1)
+	case end.After(holdout):
+		end = holdout
+		start = end.AddDate(-cfg.Years, 0, 0)
+		holdoutNote = fmt.Sprintf("HOLDOUT: rebalance dates after %s are reserved for OOS-H1-63 and are not replayed; the one evaluation runs with --evaluate-oos once %d of them have matured", holdout.Format("2006-01-02"), OOSMatureDates)
+	}
+	dates := WeeklyDates(start, end)
 
 	var filingsNote string
 	var filingsUnavailable []string
@@ -235,10 +266,17 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 		return nil, fmt.Errorf("the panel is empty: no member had %d bars at any rebalance date", minHistory)
 	}
 	logf("panel: %d rows", len(recs))
+	if cfg.EvaluateOOS {
+		if n := maturedDates(recs, len(Horizons)-1); n < OOSMatureDates {
+			return nil, fmt.Errorf("OOS-H1-63 is not mature: %d of %d held-out rebalance dates after %s have a matured %d-session window, so nothing is computed",
+				n, OOSMatureDates, holdout.Format("2006-01-02"), Horizons[len(Horizons)-1])
+		}
+	}
 	res := Analyze(recs, data.Series, cfg.Years)
 	res.GeneratedAt = cfg.Now.UTC().Format(time.RFC3339)
 	res.Range, res.Unavailable = rng, unavailable
 	res.FilingsNote, res.FilingsUnavailable = filingsNote, filingsUnavailable
+	res.HoldoutNote = holdoutNote
 	checkShortfall(res, cfg.Years, end)
 	return res, nil
 }
@@ -395,6 +433,9 @@ func (r *Result) Text() string {
 		r.Dates, r.Start, r.End, r.Mid, r.Rows)
 	if r.Shortfall {
 		fmt.Fprintf(&sb, "WARNING: %s\n", r.ShortfallNote)
+	}
+	if r.HoldoutNote != "" {
+		sb.WriteString(r.HoldoutNote + "\n")
 	}
 	idx := make([]string, 0, len(r.NamesPerIndex))
 	for k := range r.NamesPerIndex {
@@ -558,4 +599,16 @@ func writeTestLine(sb *strings.Builder, t TestResult) {
 	fmt.Fprintf(sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
 		t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
 		t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
+}
+
+// maturedDates counts the distinct rebalance dates on which at least one record
+// has a forward return at horizon index k.
+func maturedDates(recs []Record, k int) int {
+	seen := map[string]bool{}
+	for _, r := range recs {
+		if !math.IsNaN(r.BX[k]) {
+			seen[r.Date] = true
+		}
+	}
+	return len(seen)
 }
