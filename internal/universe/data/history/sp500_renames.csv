@@ -1,0 +1,42 @@
+# S&P 500 ticker changes that Wikipedia's changes table does not record as a row.
+# date is the first session under the new ticker. Sources: the old symbol's last
+# bar on Alpaca (default asof), cross-checked against the day hanshof's snapshots
+# switch tickers. "~" in the note marks a date known only to the month: both
+# tickers resolve to the same company through Alpaca's asof, so only the label
+# changes, never a return.
+date,old,new,note
+2015-06-15,ACT,AGN,Actavis took the Allergan name and ticker after acquiring Allergan Inc. (Wikipedia 2015-03-23 note)
+2015-07-02,MWV,WRK,MeadWestvaco + RockTenn -> WestRock (hanshof switch)
+2018-10-31,PX,LIN,Praxair -> Linde plc (LIN first bar)
+2019-01-02,KORS,CPRI,Michael Kors -> Capri (KORS last bar 2018-12-31)
+2019-07-01,HRS,LHX,Harris -> L3Harris
+2019-08-08,TMK,GL,Torchmark -> Globe Life
+2019-11-05,SYMC,NLOK,Symantec -> NortonLifeLock (NLOK first bar)
+2019-11-05,HCP,PEAK,HCP -> Healthpeak (PEAK first bar)
+2019-12-05,CBS,VIAC,CBS -> ViacomCBS (VIAC first bar)
+2019-12-09,BBT,TFC,BB&T -> Truist
+2019-12-10,JEC,J,Jacobs
+2020-03-02,IR,TT,Ingersoll-Rand plc -> Trane; the new IR (Gardner Denver) is a Wikipedia row the same day
+2020-04-03,UTX,RTX,United Technologies -> Raytheon Technologies
+2020-09-18,CTL,LUMN,CenturyLink -> Lumen (CTL last bar 2020-09-17)
+2020-11-17,MYL,VTRS,Mylan -> Viatris (MYL last bar 2020-11-16)
+2021-08-03,LB,BBWI,L Brands -> Bath & Body Works (BBWI first bar)
+2021-10-04,COG,CTRA,Cabot Oil & Gas -> Coterra (COG last bar 2021-10-01)
+2022-02-17,VIAC,PARA,ViacomCBS -> Paramount (VIAC last bar 2022-02-16)
+2022-05-10,BLL,BALL,Ball
+2022-06-09,FB,META,Facebook -> Meta
+2022-06-28,ANTM,ELV,Anthem -> Elevance
+2022-11-08,NLOK,GEN,NortonLifeLock -> Gen Digital (NLOK last bar 2022-11-07)
+2023-05-16,PKI,RVTY,PerkinElmer -> Revvity (PKI last bar 2023-05-15)
+2023-06-08,FISV,FI,Fiserv
+2023-07-10,RE,EG,Everest Re -> Everest Group (RE last bar 2023-07-07)
+2023-08-30,ABC,COR,AmerisourceBergen -> Cencora (ABC last bar 2023-08-29)
+2024-03-04,PEAK,DOC,Healthpeak (hanshof switch)
+2024-03-25,FLT,CPAY,Fleetcor -> Corpay (FLT last bar 2024-03-22)
+2024-07-08,WRK,SW,WestRock -> Smurfit WestRock (WRK last bar 2024-07-05)
+2025-08-07,PARA,PSKY,Paramount -> Paramount Skydance (PSKY first bar)
+2025-11-03,FI,FISV,Fiserv back to FISV (~month)
+2026-01-14,MMC,MRSH,Marsh McLennan (MMC last bar 2026-01-13)
+2026-03-24,SATS,ECHO,EchoStar (~ between its 2026-03-23 addition and today)
+2026-05-21,BK,BNY,BNY Mellon (BK last bar 2026-05-20)
+2026-08-18,EQR,VMRK,Equity Residential -> Vivmark (EQR last bar 2026-08-17)
