@@ -41,11 +41,13 @@ func main() {
 			os.Exit(runPostMortem(settings, os.Args[2:]))
 		case "backtest":
 			os.Exit(runBacktest(settings, os.Args[2:]))
+		case "canary":
+			os.Exit(runCanary(settings, os.Args[2:]))
 		case "-h", "--help", "help":
-			fmt.Println("usage: cfr [run|research-pair|scoreboard|postmortem|backtest|acceptance-manifest] [flags]\n\n  cfr acceptance-manifest  print local preflight JSON without model calls\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr research-pair  collect and run a frozen evaluation pair (see cfr research-pair -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)\n  cfr postmortem  what the closed trades show, by cell (see cfr postmortem -h)\n  cfr backtest    point-in-time replay of the pre-screen, no models (see cfr backtest -h)")
+			fmt.Println("usage: cfr [run|research-pair|scoreboard|postmortem|backtest|canary|acceptance-manifest] [flags]\n\n  cfr acceptance-manifest  print local preflight JSON without model calls\n  cfr             launch the TUI\n  cfr run         headless research run (see cfr run -h)\n  cfr research-pair  collect and run a frozen evaluation pair (see cfr research-pair -h)\n  cfr scoreboard  replay past ideas through their price history (see cfr scoreboard -h)\n  cfr postmortem  what the closed trades show, by cell (see cfr postmortem -h)\n  cfr backtest    point-in-time replay of the pre-screen, no models (see cfr backtest -h)\n  cfr canary      probe every data source the pipeline reads, no models (see cfr canary -h)")
 			os.Exit(0)
 		default:
-			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard, cfr postmortem, cfr backtest)\n", os.Args[1])
+			fmt.Fprintf(os.Stderr, "unknown command %q (try: cfr, cfr run, cfr scoreboard, cfr postmortem, cfr backtest, cfr canary)\n", os.Args[1])
 			os.Exit(2)
 		}
 	}

@@ -221,6 +221,13 @@ Beyond the outcome and per-domain statuses:
 
 #### Shape-change warnings in `data_errors`
 
+`cfr canary` checks the same sources before a run rather than inside one: Yahoo chart
+(one listing per region), Yahoo options, Yahoo news by company name, Alpaca bars and
+news, and SEC submissions, each through the provider code a run uses, with no model call
+(`internal/marketdata/canary.go`). Exit 1 means a source answered in a shape the pipeline
+does not expect. AlphaVantage is not probed, because its 25-a-day key is needed for the
+run's earnings calendar.
+
 Three sources can fail into output that is byte-identical to a quiet market, so each one
 says so explicitly through `TickerData.Warnings`, which `pack.go` folds into `data_errors`:
 

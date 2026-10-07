@@ -415,6 +415,7 @@ go run ./cmd/cfr scoreboard --control              # shipped vs composite, short
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons
 go run ./cmd/cfr backtest                          # point-in-time pre-screen replay (keyless Yahoo; also keyless SEC when contact_email is set; no models)
 go run ./cmd/cfr acceptance-manifest               # resolved configuration and hashes; no model or data requests
+go run ./cmd/cfr canary                            # probe every data source through the real providers; exit 1 on a silent failure
 ```
 
 Configuration: `cfr.toml.example` documents every key. Precedence: defaults →
