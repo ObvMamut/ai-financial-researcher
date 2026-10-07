@@ -96,7 +96,7 @@ func (m resultsModel) Update(msg tea.Msg) (resultsModel, tea.Cmd) {
 // v5 (2026-10-01) found the screen's top-5 book at 21 and 63 sessions and 12-1
 // momentum alone at 21 and 63 failing too (H1, H2).
 // The reader should know that nothing tested on this horizon picks well.
-const screenNoEdgeLine = "  No signal tested has shown an edge net of cost: not the pre-screen\n  that ranked these ideas, held 15, 21 or 63 sessions, not 12-1\n  momentum alone, not the model stages, not post-earnings drift."
+const screenNoEdgeLine = "  No signal tested has shown an edge net of cost: not the pre-screen\n  that ranked these ideas, held 15, 21 or 63 sessions, not 12-1\n  momentum alone, not the model stages, not post-earnings drift. A\n  survivorship-free US replay (2017-2026) confirms it for the screen."
 
 func (m resultsModel) View() string {
 	if m.detail != nil {

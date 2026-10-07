@@ -441,6 +441,16 @@ an out-of-sample registration like OOS-H1-63.
   reported as a finding, not explained away. Survivorship can only be inferred from
   the gap; it is not assumed.
 
+**Run 2026-10-07: all three fail.**
+- PIT-IC10: t −0.30.
+- PIT-H1-63: +2.30% per hold, t 1.30, against the same window's sample at +3.56%,
+  t 2.24.
+- PIT-E1: positive in 3 of 10 years.
+- The "all fail" decision is applied.
+- Survivorship inflated the US H1-63 estimate by 1.26 points per hold.
+
+See `docs/research/2026-10-07-pit-lab.md`.
+
 ## Results
 
 ### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
@@ -647,6 +657,20 @@ momentum alone. The owner has the keep/cut/stop memo. No setting or default chan
 
 The register now holds **15 decision tests**: C1, C3, C4, E1, E2-1, E2-3, E2-off, E3, D1, D2, D3,
 H1-21, H1-63, H2-21 and H2-63. None has passed, E1 fired, and no Holm-adjusted p is below 0.05.
+
+### Run of 2026-10-07: point-in-time US, PIT-IC10 / PIT-H1-63 / PIT-E1 (`docs/research/2026-10-07-evidence/`)
+
+There were two runs over 2017-09-29..2026-09-25, US indices only. The point-in-time
+run used 691 S&P and 188 Nasdaq-100 names across their membership intervals, 282,993
+rows. The sample run used 98 and 56 names, 70,803 rows.
+
+| | point-in-time | sample | gap |
+|---|---|---|---|
+| β-adjusted IC10 | −0.0033 (t −0.30) | +0.0008 (t 0.07) | +0.0042 |
+| H1-63, net per hold | +2.30% (t 1.30) | +3.56% (t 2.24) | +1.26 pts |
+| E1 years positive (net β-adjusted top-5) | 3 of 10 | 4 of 10 | +1 |
+
+All three registered tests fail. The full write-up is `docs/research/2026-10-07-pit-lab.md`.
 
 ## E3: which side carries the result (registered 2026-09-25, before this ran)
 

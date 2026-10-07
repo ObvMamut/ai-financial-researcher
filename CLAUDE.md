@@ -176,7 +176,12 @@ internal/
                 book (H1, t 1.08 / 2.31) and 12-1 momentum alone (H2, t 0.68
                 / 0.91) all fail too; holm.go gives every test a p and a Holm
                 p over the 15 run, none below 0.05. The TUI results view
-                says so. Live runs are measurement only, at a cadence the
+                says so. pit.go (`--universe pit`, 2026-10-07) replays the
+                US indices over the companies actually in them on each
+                date (internal/universe/data/history, priced through
+                Alpaca's asof): PIT-IC10, PIT-H1-63 and PIT-E1 all fail
+                (H1-63 t 1.30 against the same window's sample at 2.24), so
+                survivorship had inflated the closest miss by about a third. Live runs are measurement only, at a cadence the
                 owner sets; the keep/cut/stop memo is
                 docs/research/2026-10-01-keep-cut-stop.md
 agents/*.md     agent persona prompts (runtime data)
