@@ -137,3 +137,18 @@ func TestNQ100HistoryMatchesKnownIndexEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestHistorySectorsCoverTodayAndRenamedTickers(t *testing.T) {
+	sec, err := HistorySectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ticker, want := range map[string]string{"META": "Communication Services", "FB": "Communication Services", "BRK.B": "Financials"} {
+		if sec[ticker] != want {
+			t.Errorf("%s sector %q, want %q", ticker, sec[ticker], want)
+		}
+	}
+	if _, ok := sec["CHK"]; ok {
+		t.Error("a departed company has a sector; the source cannot place it")
+	}
+}

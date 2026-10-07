@@ -508,7 +508,9 @@ func addIndustryMomentum(recs []Record) {
 	sums := map[key]*acc{}
 	for _, r := range recs {
 		v := r.Sig[SigRet63]
-		if math.IsNaN(v) {
+		// A name with no known sector (a departed point-in-time member) joins
+		// no industry: pooling the unknowns would invent one.
+		if math.IsNaN(v) || r.Sector == "" {
 			continue
 		}
 		k := key{r.Date, r.Region, r.Sector}
@@ -525,6 +527,9 @@ func addIndustryMomentum(recs []Record) {
 		a.n++
 	}
 	for i := range recs {
+		if recs[i].Sector == "" {
+			continue
+		}
 		if a := sums[key{recs[i].Date, recs[i].Region, recs[i].Sector}]; a != nil && a.n > 0 {
 			recs[i].Sig[SigIndMom] = a.sum / float64(a.n)
 		}

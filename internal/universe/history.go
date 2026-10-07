@@ -20,7 +20,7 @@ import (
 // sp500_changes.csv is built and why it does not rest on the hanshof snapshot
 // file alone.
 
-//go:embed data/history/*_changes.csv
+//go:embed data/history/*_changes.csv data/history/history_sectors.csv
 var historyFS embed.FS
 
 // Interval is one continuous membership of one ticker: From is the first day
@@ -142,4 +142,30 @@ func (h *History) MembersOn(d time.Time) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// HistorySectors maps a ticker the histories name to its GICS sector, where
+// one is known: today's members and the earlier tickers of renamed members
+// (data/history/build_sectors.py). A company that has left the index is
+// absent; the lab treats it as sector-unknown.
+func HistorySectors() (map[string]string, error) {
+	f, err := historyFS.Open("data/history/history_sectors.csv")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	r := csv.NewReader(f)
+	r.Comment = '#'
+	rows, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("history sectors: %w", err)
+	}
+	out := make(map[string]string, len(rows))
+	for i, row := range rows {
+		if i == 0 || len(row) < 2 {
+			continue
+		}
+		out[row[0]] = row[1]
+	}
+	return out, nil
 }

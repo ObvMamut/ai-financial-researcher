@@ -64,3 +64,19 @@ Spot-checks match the public record:
 The project's own `nq100.csv` sample contains 11 names that are not current
 members (NET, SNOW, OKTA, TTD and others). It was chosen as a representative
 sample, not as the membership list.
+
+## Sectors
+
+`history_sectors.csv` is built by `build_sectors.py`:
+- Today's S&P 500 members get the GICS sector from Wikipedia's list.
+- Earlier tickers of renamed members inherit it through `sp500_renames.csv`.
+- Departed companies have no source and no row.
+
+Coverage, measured over every weekly member-date from 2016 to 2026:
+- **83.4%** of S&P 500 member-weeks have a known sector.
+- **77.7%** of Nasdaq-100 member-weeks do.
+
+The lab puts unknown-sector names into no industry, so `indmom` is NaN for them.
+A sector-capped book does not cap them. The point-in-time tests registered in
+`docs/workflow/backtest.md` use no sector, which is why this gap does not block
+them.
