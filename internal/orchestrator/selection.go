@@ -262,29 +262,6 @@ func pickBook(eligible []model.TradeIdea, sectorOf map[string]string, vetoed map
 	return book, capped, correlated
 }
 
-// reservesFor lists up to topN eligible names outside the book, in merit order,
-// that could fill a slot the Chief vetoes. A name the first pass skipped for its
-// sector or for correlation cannot ship while its sector-mates or partner stay
-// in the book, so it is not offered.
-func reservesFor(eligible, book []model.TradeIdea, capped map[string]bool, correlated map[string]pairCorrelation, topN int) []model.TradeIdea {
-	inBook := map[string]bool{}
-	for _, i := range book {
-		inBook[normTicker(i.Ticker)] = true
-	}
-	var reserves []model.TradeIdea
-	for _, i := range eligible {
-		if len(reserves) == topN {
-			break
-		}
-		t := normTicker(i.Ticker)
-		if inBook[t] || capped[t] || correlated[t].With != "" {
-			continue
-		}
-		reserves = append(reserves, i)
-	}
-	return reserves
-}
-
 // chiefWriterResult is the Chief's answer under merit_veto: prose for the names
 // Go selected, optional vetoes from the closed list, and its own ranking of the
 // whole shortlist as a shadow.
@@ -318,7 +295,7 @@ func parseChiefWriter(stdout string) (*chiefWriterResult, error) {
 
 // selectionBlock renders Go's decision for the Chief: the book, the reserves
 // that fill it if the Chief vetoes, and everything already ruled out.
-func selectionBlock(rows []model.SelectionRow, book, reserves []model.TradeIdea, topN int, correlated map[string]pairCorrelation) string {
+func selectionBlock(rows []model.SelectionRow, book, reserves []model.TradeIdea, topN int) string {
 	rowBy := map[string]model.SelectionRow{}
 	for _, r := range rows {
 		rowBy[normTicker(r.Ticker)] = r
@@ -357,11 +334,7 @@ func selectionBlock(rows []model.SelectionRow, book, reserves []model.TradeIdea,
 		case excludedRiskGate:
 			why = "risk gate: " + r.RiskGate
 		default:
-			p, ok := correlated[normTicker(r.Ticker)]
-			if r.Excluded != "" || !ok {
-				continue
-			}
-			why = fmt.Sprintf("correlates %.2f with %s already in the book", p.Rho, p.With)
+			continue
 		}
 		out = append(out, fmt.Sprintf("- %s %s · %s\n", r.Ticker, r.Direction, why))
 	}
@@ -415,8 +388,20 @@ func runMeritVeto(ctx context.Context, ch chan<- Event, cfg Config, run *store.R
 			log(ch, fmt.Sprintf("selection: %s has no scout direction", r.Ticker))
 		}
 	}
-	book, cappedFirst, correlatedFirst := pickBook(eligible, sectorOf, nil, topN, risk.MaxPerSector, v.Series, risk.MaxPairCorr)
-	reserves := reservesFor(eligible, book, cappedFirst, correlatedFirst, topN)
+	book, _, _ := pickBook(eligible, sectorOf, nil, topN, risk.MaxPerSector, v.Series, risk.MaxPairCorr)
+	inBook := map[string]bool{}
+	for _, i := range book {
+		inBook[normTicker(i.Ticker)] = true
+	}
+	var reserves []model.TradeIdea
+	for _, i := range eligible {
+		if len(reserves) == topN {
+			break
+		}
+		if !inBook[normTicker(i.Ticker)] {
+			reserves = append(reserves, i)
+		}
+	}
 	listed := map[string]model.TradeIdea{}
 	for _, i := range append(append([]model.TradeIdea(nil), book...), reserves...) {
 		listed[normTicker(i.Ticker)] = i
@@ -435,7 +420,7 @@ func runMeritVeto(ctx context.Context, ch chan<- Event, cfg Config, run *store.R
 		Shortlist:      shortlist,
 		Reports:        reports,
 		QuantBlock:     quantBlock,
-		SelectionBlock: selectionBlock(rows, book, reserves, topN, correlatedFirst),
+		SelectionBlock: selectionBlock(rows, book, reserves, topN),
 		RegimeBlock:    regimeBlock(regime),
 	})
 	switch {
