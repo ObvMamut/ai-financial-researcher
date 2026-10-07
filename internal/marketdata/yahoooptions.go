@@ -44,6 +44,18 @@ const (
 // ratio by more than the signal it is supposed to carry.
 const oiMinContracts = 2_000
 
+// preOpenStates are the session labels under which a chain's open interest and
+// implied volatility have not yet been republished for the day.
+//
+// Every weekday run started before the US open since the IV check existed
+// (2026-09-04 06:11Z, 09-10 06:49Z, eight runs on 09-24 before 13:30Z, 10-07
+// 05:13Z) withheld placeholder IVs, and 10-07 also lost open interest on six
+// names, which the warnings blamed on a renamed field. In-session and weekend
+// runs did not. A pre-open gap is expected and recorded as one diagnostic; the
+// warnings stay for every other state, including a missing label, because
+// 2026-09-04 lost open interest inside the session too.
+var preOpenStates = map[string]bool{"PREPRE": true, "PRE": true}
+
 // yahooOptionsProvider reads the keyless option chain for positioning evidence:
 // the put/call open-interest ratio, and the at-the-money implied volatility to
 // set against the realized volatility the quant stage already computed.
@@ -96,6 +108,9 @@ type yahooOptionsResp struct {
 			ExpirationDates  []int64 `json:"expirationDates"`
 			Quote            struct {
 				RegularMarketPrice float64 `json:"regularMarketPrice"`
+				// MarketState is Yahoo's session label (PREPRE, PRE, REGULAR,
+				// POST, POSTPOST, CLOSED). See preOpenStates.
+				MarketState string `json:"marketState"`
 			} `json:"quote"`
 			Options []struct {
 				ExpirationDate int64            `json:"expirationDate"`
@@ -198,8 +213,9 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 	// written, on every ticker at once, with no error anywhere. This is not an
 	// error return — the open-interest positioning leg below is unaffected and
 	// worth keeping — it is a warning on the run's own data_errors channel.
+	var chainWarnings []string
 	if legs > 0 && volumeLegs == 0 && callOI+putOI > 0 {
-		td.Warnings = append(td.Warnings, fmt.Sprintf(
+		chainWarnings = append(chainWarnings, fmt.Sprintf(
 			"option flow leg is silent: the chain parsed %d strikes carrying %s contracts of open interest across the front %d %s%s, but not one of them reported a positive \"volume\" — open interest and volume arrive in the same object, so this is the volume field being renamed or dropped, not a quiet chain",
 			legs, contracts(callOI+putOI), expiries, plural(expiries, "expiry", "expiries"), note))
 	}
@@ -213,7 +229,7 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 	// legs down at once: the put/call ratio below is skipped for want of a
 	// denominator, and volOI() reads every strike as position-building.
 	if legs > 0 && volumeLegs > 0 && callOI+putOI == 0 {
-		td.Warnings = append(td.Warnings, fmt.Sprintf(
+		chainWarnings = append(chainWarnings, fmt.Sprintf(
 			"option open-interest legs are blind: the chain parsed %d strikes across the front %d %s%s and %d of them reported traded volume, but not one reported any open interest — volume and open interest arrive in the same object, so this is the \"openInterest\" field being renamed or dropped, not a chain of new listings",
 			legs, expiries, plural(expiries, "expiry", "expiries"), note, volumeLegs))
 	}
@@ -257,7 +273,7 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 			// realized volatility the quant stage computed, and a broken quote
 			// makes that comparison say the opposite of the truth. Say what
 			// arrived, so this reads as a data failure rather than a quiet name.
-			td.Warnings = append(td.Warnings, fmt.Sprintf(
+			chainWarnings = append(chainWarnings, fmt.Sprintf(
 				"implied volatility withheld: the %.2f strike quoted %.2f%% annualized against a %.0f%%–%.0f%% plausibility band%s — that is a placeholder or a broken quote, not a volatility, and set against realized vol it would read as an option given away",
 				strike, iv*100, minPlausibleIV*100, maxPlausibleIV*100, note))
 		default:
@@ -270,6 +286,13 @@ func (p *yahooOptionsProvider) Fetch(ctx context.Context, domain string, ticker 
 				URL:    link,
 			})
 		}
+	}
+	if len(chainWarnings) > 0 && preOpenStates[res.Quote.MarketState] {
+		td.Diagnostics = append(td.Diagnostics, sourceDiagnostic(p.Name(), ticker, "sentiment", "off_session", "expected",
+			fmt.Sprintf("chain fetched before the US session (%s)%s: open interest and implied volatility are not yet republished for the day, so %d option %s withheld rather than read",
+				res.Quote.MarketState, note, len(chainWarnings), plural(len(chainWarnings), "leg was", "legs were"))))
+	} else {
+		td.Warnings = append(td.Warnings, chainWarnings...)
 	}
 	return td, nil
 }

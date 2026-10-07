@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
 )
 
 // stubProvider serves a fixed set of tickers for one domain and reports a
@@ -316,5 +318,22 @@ func TestBuildPackMergesEveryProviderForADomain(t *testing.T) {
 		if !pack.Citable[want] {
 			t.Errorf("%s should be citable once its provider contributed, got %v", want, pack.Citable)
 		}
+	}
+}
+
+func TestBuildPackDoesNotCacheAnOffSessionAnswer(t *testing.T) {
+	// The cache is keyed by calendar day, so a chain fetched before the US open
+	// would otherwise be served, still blind, to a rerun inside the session.
+	prov := &stubProvider{name: "Yahoo Options", source: "stub", domains: []string{"sentiment"},
+		data: map[string]TickerData{"FCX": {Ticker: "FCX",
+			Facts:       []Fact{{Label: "Unusual options activity", Value: "x"}},
+			Diagnostics: []model.SourceDiagnostic{sourceDiagnostic("Yahoo Options", "FCX", "sentiment", "off_session", "expected", "pre-open")},
+		}}}
+	cache := NewCache(t.TempDir())
+	NewService(cache, prov).BuildPack(context.Background(), "sentiment", []string{"FCX"})
+
+	var got TickerData
+	if found, _ := cache.Get("stub", "Yahoo Options", "sentiment", "FCX", &got); found {
+		t.Fatalf("an off-session answer was cached for the rest of the day: %+v", got)
 	}
 }

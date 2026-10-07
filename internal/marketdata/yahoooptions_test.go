@@ -269,3 +269,71 @@ func TestOptionsRefusesAPutCallRatioOnAThinBook(t *testing.T) {
 		t.Errorf("759 contracts produced a positioning ratio:\n%+v", td.Facts)
 	}
 }
+
+// optionsJSONInState is optionsJSON with the quote's marketState set, which is
+// how Yahoo says which session the chain belongs to.
+func optionsJSONInState(state string, expiry int64, spot float64, calls, puts string) string {
+	return strings.Replace(optionsJSON(expiry, []int64{expiry}, spot, calls, puts),
+		`"quote":{`, fmt.Sprintf(`"quote":{"marketState":%q,`, state), 1)
+}
+
+func TestOptionsAbstainsQuietlyOnAPreOpenChain(t *testing.T) {
+	// Every weekday run started before the US open since the IV check existed
+	// (2026-09-04 06:11Z, 09-10 06:49Z, eight runs on 09-24 before 13:30Z,
+	// 10-07 05:13Z) withheld placeholder IVs, and 10-07 also lost open interest
+	// on six names. Runs inside the session and on weekends did not. That is
+	// the chain not yet being republished for the day, not a renamed field, and
+	// it is an expected gap rather than a data error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSONInState("PREPRE", 1000, 72.56,
+			legWithVolume(73, 0, 0.0078, 13424),
+			legWithVolume(73, 0, 0.0078, 4835)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "FCX")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(td.Warnings) != 0 {
+		t.Errorf("a pre-open chain was reported as a data failure: %q", td.Warnings)
+	}
+	for _, f := range td.Facts {
+		if strings.HasPrefix(f.Label, "Implied volatility") || strings.Contains(f.Value, "put/call open interest") {
+			t.Errorf("a pre-open placeholder was written as a fact: %s = %s", f.Label, f.Value)
+		}
+	}
+	if len(td.Diagnostics) != 1 || td.Diagnostics[0].Disposition != "expected" || td.Diagnostics[0].Reason != "off_session" {
+		t.Fatalf("want one expected off_session diagnostic, got %+v", td.Diagnostics)
+	}
+	if !strings.Contains(td.Diagnostics[0].Message, "before the US session") {
+		t.Errorf("the diagnostic does not say why: %q", td.Diagnostics[0].Message)
+	}
+}
+
+func TestOptionsStillWarnsOnABlindChainInsideTheSession(t *testing.T) {
+	// 2026-09-04 lost open interest at 14:26Z and 18:55Z, inside the session.
+	// That one really is unexplained, and it keeps its warning.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, optionsJSONInState("REGULAR", 1000, 72.56,
+			legWithVolume(73, 0, 0.0078, 13424),
+			legWithVolume(73, 0, 0.0078, 4835)))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+
+	td, err := NewYahooOptionsProvider().Fetch(context.Background(), "sentiment", "FCX")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	joined := strings.Join(td.Warnings, " | ")
+	if !strings.Contains(joined, "openInterest") || !strings.Contains(joined, "implied volatility withheld") {
+		t.Errorf("an in-session blind chain lost its warnings: %q", joined)
+	}
+	for _, d := range td.Diagnostics {
+		if d.Reason == "off_session" {
+			t.Errorf("an in-session chain was excused as off-session: %+v", d)
+		}
+	}
+}

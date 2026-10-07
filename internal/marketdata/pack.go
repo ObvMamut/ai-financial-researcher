@@ -385,7 +385,7 @@ func (s *Service) BuildPack(ctx context.Context, domain string, tickers []string
 					pack.Diagnostics = append(pack.Diagnostics, sourceDiagnostic(prov.Name(), t, domain, "fetch_failed", "failed", err.Error()))
 					pack.Errors = append(pack.Errors, redact.String(fmt.Sprintf("%s %s/%s: %v", prov.Name(), domain, t, err)))
 				}
-				if err == nil && len(data.Facts) > 0 && s.cache != nil {
+				if err == nil && len(data.Facts) > 0 && s.cache != nil && !offSession(data) {
 					s.cache.Set(prov.Source(), prov.Name(), domain, t, data)
 				}
 			}
@@ -514,4 +514,16 @@ func recordEventDate(p *DataPack, ticker string, facts []Fact) {
 		}
 		return
 	}
+}
+
+// offSession reports an answer fetched before its market's session republished
+// the day's figures. The cache is keyed by calendar day, so caching it would
+// serve the same gap to a rerun inside the session.
+func offSession(td TickerData) bool {
+	for _, d := range td.Diagnostics {
+		if d.Reason == "off_session" {
+			return true
+		}
+	}
+	return false
 }
