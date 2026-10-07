@@ -1892,3 +1892,36 @@ func TestNoAlpacaKeyLeavesThePricePathUnchanged(t *testing.T) {
 		t.Errorf("an unconfigured Alpaca was called %d time(s)", hits.Load())
 	}
 }
+
+// A specialist report that comes back without its tail is asked for once more.
+// On 2026-10-07 14:40Z the news report stopped mid-sentence with
+// finish_reason "stop", failed on its only attempt, and four names lost their
+// only non-price evidence to the evidence floor.
+func TestSpecialistWithNoTailIsAskedOnceMore(t *testing.T) {
+	t.Setenv("CFR_FAKE_MODE", "ok")
+	cfg := testConfig(t, model.ModeIndependent)
+	marker := filepath.Join(t.TempDir(), "news-asked")
+	wrapper := filepath.Join(t.TempDir(), "agy-wrapper")
+	script := "#!/bin/sh\ncase \"$*\" in\n*'# Agent: News Analyst'*)\n  if [ ! -e '" + marker + "' ]; then touch '" + marker + "'; export CFR_FAKE_MODE=no-tail; fi ;;\nesac\nexec '" + cfg.Binaries[model.CLIGemini] + "' \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Binaries[model.CLIGemini] = wrapper
+
+	complete, runErr, logs := drain(t, Run(context.Background(), cfg))
+	if runErr != nil {
+		t.Fatalf("unexpected EventError: %s", runErr.Message)
+	}
+	if !containsLog(logs, "news report has no structured tail — asking once more") {
+		t.Errorf("the run did not re-ask the untailed news report:\n%s", strings.Join(logs, "\n"))
+	}
+	var news *model.DomainStatus
+	for i := range complete.Meta.Domains {
+		if complete.Meta.Domains[i].Domain == "news" {
+			news = &complete.Meta.Domains[i]
+		}
+	}
+	if news == nil || news.Status != model.StatusDone || news.Attempts < 2 {
+		t.Fatalf("news domain = %+v, want done after a second attempt", news)
+	}
+}

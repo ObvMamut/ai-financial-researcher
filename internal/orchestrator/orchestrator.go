@@ -964,6 +964,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// an invention.
 	collectDriftDates(verifiedDates, prescreen, shortlist)
 	specChans := make([]<-chan model.Report, len(specialists))
+	specPrompts := make([]string, len(specialists))
 	grounded := make([]bool, len(specialists))
 	ungrounded := make([][]string, len(specialists))
 	abstained := make([][]string, len(specialists))
@@ -1036,6 +1037,7 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 			continue
 		}
 		agentStatus(ch, sp.role, model.StatusRunning, nil)
+		specPrompts[i] = prompt
 		specChans[i] = p.submit(sp.cli, sp.role, string(model.StageAnalysis), prompt, cfg.Timeouts.Analysis, cfg.Retry)
 	}
 
@@ -1056,12 +1058,38 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 		// engine, strip any [source:] tag whose domain the run's own data does
 		// not vouch for. Do it before the report is written or handed on, so
 		// neither the artifact nor the Chief Analyst ever sees a fake citation.
-		var fabricated []string
-		if !cheapCaps.WebSearch {
+		scrub := func(r *model.Report) []string {
+			if cheapCaps.WebSearch {
+				return nil
+			}
+			var fabricated []string
 			r.Stdout, fabricated = scrubCitations(r.Stdout, citable[i])
 			if len(fabricated) > 0 {
 				log(ch, fmt.Sprintf("warn: %s cited %d fabricated source(s) on a search-less engine (%s) — tags stripped",
 					sp.role, len(fabricated), strings.Join(fabricated, ", ")))
+			}
+			return fabricated
+		}
+		fabricated := scrub(&r)
+
+		// A report that came back without its structured tail is asked for
+		// once more, unchanged. On 2026-10-07 14:40Z the news report stopped
+		// mid-sentence with finish_reason "stop" (not "length", which the
+		// engine already refuses to retry), the domain failed on its only
+		// attempt, and four names lost their only non-price evidence to the
+		// evidence floor. One cheap call is the whole cost.
+		if r.Status != model.StatusFailed && specPrompts[i] != "" {
+			if _, ok := parse.LastJSONBlock(r.Stdout); !ok {
+				log(ch, fmt.Sprintf("warn: %s report has no structured tail — asking once more", sp.role))
+				again := <-p.submit(sp.cli, sp.role, string(model.StageAnalysis), specPrompts[i], cfg.Timeouts.Analysis, cfg.Retry)
+				again.Attempts += r.Attempts
+				again.Tokens += r.Tokens
+				again.Usage = append(append([]model.TokenUsage(nil), r.Usage...), again.Usage...)
+				again.Duration += r.Duration
+				againFabricated := scrub(&again)
+				if again.Status != model.StatusFailed {
+					r, fabricated = again, againFabricated
+				}
 			}
 		}
 

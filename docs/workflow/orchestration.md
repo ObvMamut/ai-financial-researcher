@@ -111,7 +111,11 @@ convention in `output-schema.md`:
    `domains[].off_shortlist_scores`.
 3. A report with no parseable JSON tail fails the domain (`status: failed`,
    `err: "no structured JSON tail…"`). A refusal, a truncated response, or free prose
-   is not a domain report.
+   is not a domain report. Before that, the same prompt is sent **once more**: on
+   2026-10-07 the news report stopped mid-sentence with `finish_reason: "stop"`
+   (a `"length"` cut is refused by the API engine itself and never retried), and
+   losing the domain cost four names their only non-price evidence. `attempts`,
+   `tokens` and `usage` cover both calls; only a second untailed answer fails it.
 
 The rewrite is in place — same prose, same fences, only the tail's `scores` and
 `missing` arrays change — so the artifact on disk is exactly what the Chief Analyst
