@@ -342,6 +342,46 @@ the smallest is H1-63's 0.159. The "all fail" decision is applied. See [Run of
   is recorded as failed evidence and handed to the owner. Neither is followed
   by a second run.
 
+## Pre-registered out-of-sample test (registered 2026-10-07)
+
+H1-63 was the closest miss on the register (t 2.31, Holm p 0.159), positive in
+both halves and every region, and the figure survivorship flatters most. The
+owner memo (`docs/research/2026-10-01-keep-cut-stop.md`) says it can only be
+confirmed or killed on weeks the lab has not seen. This registers that test
+before any of those weeks exist. It is one test, run once.
+
+| Test | Hypothesis | Statistic |
+|---|---|---|
+| **OOS-H1-63** | The composite's top-5 book earns at a 63-session hold on data the register never saw. | H1-63's statistic exactly as registered on 2026-10-01: per (date, index) the five largest \|composite\|, held at the composite's sign, the per-date mean of `dir·BX[63] − 0.003`. |
+
+- **Sample.** Weekly rebalance dates strictly after **2026-09-25**, the last
+  date the 2026-10-01 run (`docs/research/2026-10-01-evidence/horizon-10y.json`)
+  used. Nothing on or before that date enters the statistic.
+- **Universe frozen at registration.** The constituents are the
+  `internal/universe/data/*.csv` files as of this commit (last changed in
+  `5cf834e`). A name that later leaves an index stays in. Rows added later are
+  not used. This makes the test survivorship-free by construction, which none
+  of the 15 earlier tests were.
+- **Code frozen.** The composite is the shipping `ScorePrescreen` as of this
+  commit. If it changes before evaluation, the test runs on this commit's
+  version, checked out for the purpose.
+- **Bar.** The H-series bar: Newey-West t (13 lags) above **+2.5**, positive in
+  both halves of the new sample (median-date split) and in every region.
+- **Earliest evaluation.** Once **52 weekly rebalance dates** after 2026-09-25
+  have a matured 63-session window, i.e. no earlier than about 2027-12. It is not
+  computed or peeked at before then. An interim look counts as the run.
+- **Power, stated now.** 52 dates with 63-session holds overlap heavily, so
+  this is about four independent quarters. A pass would be strong evidence. A
+  fail is weak evidence against, and is recorded as "not confirmed" rather than
+  "refuted".
+- **Tooling.** `cfr backtest` has no start-date flag today. Adding one (a
+  rebalance-date floor) is part of the evaluation work, not of this
+  registration, and must not change any statistic's definition.
+- **Decision fixed now.** Pass → a follow-up plan proposes a 63-session live
+  time exit and scoreboard horizon behind a config switch, with the current 15
+  kept as the control. Fail → the register records it, and H1 is closed on this
+  universe.
+
 ## Results
 
 ### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
