@@ -148,3 +148,44 @@ func TestAttributionRefusesTheLegacySummary(t *testing.T) {
 		t.Errorf("Attribute(nil) = %+v, want nil", got)
 	}
 }
+
+func TestAttributionSplitsOnWhetherTheHoldRanThroughEarnings(t *testing.T) {
+	a := attributionOf(
+		closed("FCX", "BUY", OutcomeExpired, 0.4, func(e *Entry) { e.Earnings = earningsHeld }),
+		closed("MU", "BUY", OutcomeExpired, -0.2, func(e *Entry) { e.Earnings = earningsNone }),
+		// A run that recorded no calendar says nothing either way.
+		closed("OLD", "BUY", OutcomeExpired, 0.1, nil),
+	)
+	if got := a.ByEarnings[earningsHeld].N; got != 1 {
+		t.Errorf("held-through bucket n = %d, want 1", got)
+	}
+	if got := a.ByEarnings[earningsNone].N; got != 1 {
+		t.Errorf("no-earnings bucket n = %d, want 1", got)
+	}
+	if len(a.ByEarnings) != 2 {
+		t.Errorf("ByEarnings = %v: an entry with no recorded calendar was bucketed", a.ByEarnings)
+	}
+	if !a.Cells(1)["earnings "+earningsHeld] {
+		t.Error("a post-mortem lesson cannot name the earnings cell")
+	}
+}
+
+func TestEarningsKeyComparesTheEventToTheActualHold(t *testing.T) {
+	events := map[string]string{"FCX": "2026-10-22", "TTE.PA": "2026-10-29"}
+	cases := []struct {
+		ticker, entry, exit, want string
+		known                     bool
+	}{
+		{"FCX", "2026-10-08", "2026-10-28", earningsHeld, true},
+		{"TTE.PA", "2026-10-08", "2026-10-28", earningsNone, true},
+		{"MU", "2026-10-08", "2026-10-28", earningsNone, true},
+		{"FCX", "", "", "", true},                      // never filled: no hold to run through
+		{"FCX", "2026-10-08", "2026-10-28", "", false}, // the run recorded no calendar
+	}
+	for _, c := range cases {
+		e := Entry{Ticker: c.ticker, EntryDate: c.entry, ExitDate: c.exit}
+		if got := earningsKey(e, events, c.known); got != c.want {
+			t.Errorf("%s %s→%s known=%v: %q, want %q", c.ticker, c.entry, c.exit, c.known, got, c.want)
+		}
+	}
+}

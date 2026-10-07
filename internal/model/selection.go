@@ -128,6 +128,9 @@ type SelectionRow struct {
 	ChiefShadowRank int            `json:"chief_shadow_rank,omitempty"`
 	DomainScores    map[string]int `json:"domain_scores,omitempty"`
 	BaseConfidence  int            `json:"base_confidence,omitempty"`
+	// EventInWindow is the verified earnings date inside a merit_veto hold
+	// (see TradeIdea.EventInWindow).
+	EventInWindow string `json:"event_in_window,omitempty"`
 }
 
 // SelectionRecord is data/selection.json: the selection stage's full account

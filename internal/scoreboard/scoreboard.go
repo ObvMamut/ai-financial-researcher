@@ -124,8 +124,12 @@ type Entry struct {
 	BaseConfidence int     `json:"base_confidence,omitempty"`
 	Consensus      float64 `json:"consensus,omitempty"`
 	Sector         string  `json:"sector,omitempty"`
-	ExpectancyR    float64 `json:"expectancy_r,omitempty"`
-	BreakevenWin   float64 `json:"breakeven_win_rate,omitempty"`
+	// Earnings says whether the filled position held through the run's verified
+	// scheduled earnings date (earningsHeld / earningsNone), and is empty when
+	// the producing run recorded no calendar or the idea never filled.
+	Earnings     string  `json:"earnings,omitempty"`
+	ExpectancyR  float64 `json:"expectancy_r,omitempty"`
+	BreakevenWin float64 `json:"breakeven_win_rate,omitempty"`
 	// PersonaSet identifies the exact prompt set the producing run used, so an
 	// A/B between two persona directories can be settled on closed trades
 	// instead of on how the reports read. Empty for runs that recorded none.

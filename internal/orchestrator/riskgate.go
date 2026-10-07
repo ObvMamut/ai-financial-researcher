@@ -834,22 +834,13 @@ func checkEventWindow(idea *model.TradeIdea, events map[string]time.Time) []risk
 }
 
 func checkEventWindowAt(idea *model.TradeIdea, events map[string]time.Time, asOf time.Time) []riskFinding {
-	date, ok := events[strings.ToUpper(strings.TrimSpace(idea.Ticker))]
+	date, ok := eventInWindow(idea.Ticker, idea.TimeframeDays, events, asOf)
 	if !ok {
 		return nil
 	}
 	h := idea.TimeframeDays
 	if h <= 0 {
 		h = 10
-	}
-	if asOf.IsZero() {
-		asOf = time.Now()
-	}
-	now := asOf.UTC().Truncate(24 * time.Hour)
-	// Trading days to calendar days: five sessions a week, rounded up so the
-	// window is never understated.
-	if date.Before(now) || date.After(now.AddDate(0, 0, (h*7+4)/5)) {
-		return nil
 	}
 	text := strings.ToLower(idea.PositionNote + " " + idea.Why)
 	for _, word := range eventAcknowledgement {
@@ -861,6 +852,39 @@ func checkEventWindowAt(idea *model.TradeIdea, events map[string]time.Time, asOf
 	return []riskFinding{{Ticker: idea.Ticker, Message: fmt.Sprintf(
 		"earnings on %s falls inside the %d-day window and neither position_note nor why acknowledges it — confidence reduced by 10",
 		date.Format("2006-01-02"), h)}}
+}
+
+// eventInWindow returns a ticker's verified scheduled event when it falls
+// between asOf and the end of an h-session hold (10 when h is unset).
+func eventInWindow(ticker string, h int, events map[string]time.Time, asOf time.Time) (time.Time, bool) {
+	date, ok := events[normTicker(ticker)]
+	if !ok {
+		return time.Time{}, false
+	}
+	if h <= 0 {
+		h = 10
+	}
+	if asOf.IsZero() {
+		asOf = time.Now()
+	}
+	now := asOf.UTC().Truncate(24 * time.Hour)
+	// Trading days to calendar days: five sessions a week, rounded up so the
+	// window is never understated.
+	if date.Before(now) || date.After(now.AddDate(0, 0, (h*7+4)/5)) {
+		return time.Time{}, false
+	}
+	return date, true
+}
+
+// stampEventWindows records on each idea the verified earnings date its hold
+// runs through, so what the idea says and what the scoreboard replays agree.
+func stampEventWindows(ideas []model.TradeIdea, v verified) {
+	for i := range ideas {
+		ideas[i].EventInWindow = ""
+		if d, ok := eventInWindow(ideas[i].Ticker, ideas[i].TimeframeDays, v.Events, v.AsOf); ok {
+			ideas[i].EventInWindow = d.Format("2006-01-02")
+		}
+	}
 }
 
 // collectVerifiedDates adds every date one data pack carries to the run's set of

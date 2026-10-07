@@ -85,6 +85,9 @@ func buildSelectionRows(cfg Config, shortlist []model.Candidate, ps *Prescreen, 
 		if m, ok := quantFor(v, t); ok && m.LastClose > 0 {
 			r.Close = math.Round(m.LastClose*100) / 100
 		}
+		if d, ok := eventInWindow(t, meritVetoHoldDays, v.Events, v.AsOf); ok {
+			r.EventInWindow = d.Format("2006-01-02")
+		}
 		if b, ok := baseBy[t]; ok {
 			r.DomainScores = b.Domains
 			if r.Direction != "" {
@@ -302,13 +305,18 @@ func selectionBlock(rows []model.SelectionRow, book, reserves []model.TradeIdea,
 	}
 	line := func(sb *strings.Builder, idea model.TradeIdea) {
 		r := rowBy[normTicker(idea.Ticker)]
-		fmt.Fprintf(sb, "- #%d %s %s · merit %+.2f · setup %s · base %d\n",
-			r.MeritRank, r.Ticker, r.Direction, r.Merit, orUnknown(r.Setup), r.BaseConfidence)
+		event := "no verified earnings inside the hold"
+		if r.EventInWindow != "" {
+			event = "earnings " + r.EventInWindow + " inside the hold (verified; the position holds through it)"
+		}
+		fmt.Fprintf(sb, "- #%d %s %s · merit %+.2f · setup %s · base %d · %s\n",
+			r.MeritRank, r.Ticker, r.Direction, r.Merit, orUnknown(r.Setup), r.BaseConfidence, event)
 	}
 	var sb strings.Builder
 	sb.WriteString("### Go's selection (final: membership, direction and order are not yours to change)\n\n")
 	fmt.Fprintf(&sb, "topN = %d. Merit is the pre-screen composite aligned with the scout's direction, scaled by coverage, plus scout agreement; `#n` is the merit rank on the whole shortlist. ", topN)
-	fmt.Fprintf(&sb, "Every name enters market-on-open at the next session's open behind a catastrophe stop, with a %d-session time exit and no target.\n\n", meritVetoHoldDays)
+	fmt.Fprintf(&sb, "Every name enters market-on-open at the next session's open behind a catastrophe stop, with a %d-session time exit and no target. ", meritVetoHoldDays)
+	sb.WriteString("The exit is mechanical: nothing exits early on an event, so an earnings date marked inside the hold is a date the position holds through. A date a report calls \"inside the window\" that is not marked here falls after the time exit.\n\n")
 	sb.WriteString("**Book** (ships in this order):\n")
 	for _, i := range book {
 		line(&sb, i)

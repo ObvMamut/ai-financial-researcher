@@ -1562,6 +1562,9 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	// which engine's output shipped. The full trail stays on RunMeta below.
 	ideas.ChiefEngine = string(chiefE.CLI)
 	ideas.ChiefAccepted = chiefAcceptedEngine
+	if ideas != nil {
+		stampEventWindows(ideas.Ideas, verifiedCtx)
+	}
 	if selRows != nil {
 		ideas.Selection = cfg.Selection
 		if selRec == nil {

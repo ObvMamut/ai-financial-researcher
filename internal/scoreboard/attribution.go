@@ -32,6 +32,11 @@ type Attribution struct {
 	ByConsensus map[string]Bucket `json:"by_consensus,omitempty"`
 	// BySector is the record by what the run screened the name as.
 	BySector map[string]Bucket `json:"by_sector,omitempty"`
+	// ByEarnings splits the record on whether the hold ran through a verified
+	// earnings date. The exit is never moved for one, and the lab's earnings-
+	// window test (D3, t 1.84) left open whether the return sits in the event;
+	// only new weeks can say, and this is where they are counted.
+	ByEarnings map[string]Bucket `json:"by_earnings,omitempty"`
 
 	// Fills is the entry-limit record, and it is measured over *every* replayed
 	// idea rather than only the closed ones — because an idea that never filled
@@ -86,7 +91,7 @@ func Attribute(s *Summary) *Attribution {
 	}
 	a := &Attribution{NClosed: s.Closed, Fills: FillRecord{Skipped: s.Skipped}}
 
-	setup, coverage, consensus, sector := accs{}, accs{}, accs{}, accs{}
+	setup, coverage, consensus, sector, earnings := accs{}, accs{}, accs{}, accs{}, accs{}
 	offsets := map[string]*fillAcc{}
 
 	// The fill census counts every idea; the outcome cells count independent
@@ -127,10 +132,14 @@ func Attribute(s *Summary) *Attribution {
 		coverage.add(coverageBucket(e), e)
 		consensus.add(consensusBucket(e), e)
 		sector.add(e.Sector, e)
+		if e.Earnings != "" {
+			earnings.add(e.Earnings, e)
+		}
 	}
 
 	a.BySetup, a.ByCoverage = setup.buckets(), coverage.buckets()
 	a.ByConsensus, a.BySector = consensus.buckets(), sector.buckets()
+	a.ByEarnings = earnings.buckets()
 	if len(offsets) > 0 {
 		a.Fills.ByOffset = make(map[string]FillBucket, len(offsets))
 		for k, f := range offsets {
@@ -289,6 +298,7 @@ func (a *Attribution) Lines(minN int) []string {
 	add(familyCoverage, a.ByCoverage)
 	add(familyAgreement, a.ByConsensus)
 	add(familySector, a.BySector)
+	add(familyEarnings, a.ByEarnings)
 
 	f := a.Fills
 	out = append(out, fmt.Sprintf("fills: %d of %d replayable ideas filled, %d never traded their limit, %d still inside the window, %d had no usable history, %d had no levels to replay",
@@ -330,6 +340,7 @@ const (
 	familyCoverage  = "coverage"
 	familyAgreement = "agreement"
 	familySector    = "sector"
+	familyEarnings  = "earnings"
 	familyEntry     = "entry"
 )
 
@@ -356,6 +367,7 @@ func (a *Attribution) cellList() []attributionCell {
 	}{
 		{familySetup, a.BySetup}, {familyCoverage, a.ByCoverage},
 		{familyAgreement, a.ByConsensus}, {familySector, a.BySector},
+		{familyEarnings, a.ByEarnings},
 	} {
 		for k, b := range f.m {
 			add(f.family, k, b.N)
@@ -382,4 +394,25 @@ func (a *Attribution) Cells(minN int) map[string]bool {
 		}
 	}
 	return out
+}
+
+// The two ByEarnings keys.
+const (
+	earningsHeld = "held through"
+	earningsNone = "none while held"
+)
+
+// earningsKey compares the run's verified earnings date for the ticker with the
+// position's actual hold, entry to exit inclusive. It is empty when there is no
+// hold or when the run recorded no calendar (known is false), because neither
+// says anything about the event.
+func earningsKey(e Entry, events map[string]string, known bool) string {
+	if !known || e.EntryDate == "" || e.ExitDate == "" {
+		return ""
+	}
+	d, ok := events[strings.ToUpper(e.Ticker)]
+	if ok && d >= e.EntryDate && d <= e.ExitDate {
+		return earningsHeld
+	}
+	return earningsNone
 }

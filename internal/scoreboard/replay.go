@@ -2,10 +2,14 @@ package scoreboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mamut/claude-financial-researcher/internal/marketdata"
 	"github.com/mamut/claude-financial-researcher/internal/model"
@@ -86,6 +90,8 @@ func Replay(ctx context.Context, runsDir string, yc marketdata.PriceSource, fill
 			}
 		}
 
+		events, eventsKnown := runEventDates(r.Dir)
+
 		counted := false
 		for _, idea := range ideas.Ideas {
 			if idea.PriceAtGeneration <= 0 && idea.Entry <= 0 {
@@ -96,6 +102,7 @@ func Replay(ctx context.Context, runsDir string, yc marketdata.PriceSource, fill
 			e := replayIdea(ctx, r, ideas.GeneratedAt, idea, series, fillWindow)
 			e.PersonaSet = persona
 			e.Sector = sectors[strings.ToUpper(idea.Ticker)]
+			e.Earnings = earningsKey(e, events, eventsKnown)
 			sum.Entries = append(sum.Entries, e)
 		}
 		if counted {
@@ -457,3 +464,25 @@ func dateOf(ts string) string {
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+// runEventDates reads the verified earnings dates a run's news pack carried,
+// keyed by upper-case ticker as YYYY-MM-DD. known is false when the run saved
+// no calendar, which is every run before 2026-08-31 and any whose calendar
+// request failed.
+func runEventDates(runDir string) (map[string]string, bool) {
+	raw, err := os.ReadFile(filepath.Join(runDir, "data", "news.json"))
+	if err != nil {
+		return nil, false
+	}
+	var pack struct {
+		EventDates map[string]time.Time `json:"event_dates"`
+	}
+	if json.Unmarshal(raw, &pack) != nil || len(pack.EventDates) == 0 {
+		return nil, false
+	}
+	out := make(map[string]string, len(pack.EventDates))
+	for t, d := range pack.EventDates {
+		out[strings.ToUpper(t)] = d.UTC().Format("2006-01-02")
+	}
+	return out, true
+}

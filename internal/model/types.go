@@ -212,6 +212,11 @@ type TradeIdea struct {
 	RiskReward    float64 `json:"risk_reward,omitempty"`    // |target−entry| / |entry−stop|
 	TimeframeDays int     `json:"timeframe_days,omitempty"` // expected holding period
 	PositionNote  string  `json:"position_note,omitempty"`  // sizing/hedging guidance
+	// EventInWindow is the verified scheduled earnings date (YYYY-MM-DD) when it
+	// falls before the idea's time exit. The exit is not moved for it: the
+	// position holds through the event, and the scoreboard measures whether
+	// that helps. Set in Go from the earnings calendar, never by a model.
+	EventInWindow string `json:"event_in_window,omitempty"`
 
 	// PriceAtGeneration is the verified last close when the idea was produced
 	// (from the quant pack); the scoreboard measures P&L against it.

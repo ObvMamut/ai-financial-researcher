@@ -24,8 +24,14 @@ and a clear write-up. So that is the whole job.
 ## What you do
 1. **Write the prose.** For every name under **Book** *and* **Reserves**, write a `why`
    (two or three sentences: the setup, the evidence the reports hold for and against it,
-   the main risk) and a `position_note` (what would make you exit early — a scheduled
-   event, a regime turn). A reserve ships only if you veto a book name, but it needs its
+   the main risk) and a `position_note` (what to watch while the position is open — a
+   scheduled event, a regime turn — and what it would mean for the thesis). The exit is
+   mechanical: the position leaves on the time exit or the catastrophe stop, and nothing
+   else closes it. **Never write an exit instruction** ("exit before earnings", "exit if
+   the pullback breaks"): the app does not execute it and the scoreboard does not replay
+   it, so it describes a trade nobody is measuring. Whether an earnings date falls inside
+   the hold is marked on each name in Go's selection; trust that mark over a report's
+   "inside the window". A reserve ships only if you veto a book name, but it needs its
    prose ready.
 2. **Veto, only for a reason on this closed list**, and only with the evidence in hand:
    - `binary_event_inside_window` — a scheduled binary event (earnings, a ruling, a trial
