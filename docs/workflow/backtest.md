@@ -385,6 +385,62 @@ before any of those weeks exist. It is one test, run once.
   kept as the control. Fail → the register records it, and H1 is closed on this
   universe.
 
+## Pre-registered point-in-time tests (registered 2026-10-07, before any point-in-time statistic)
+
+Every number on this register so far came from today's constituents. The
+companies that left the indices, mostly losers, are missing from every past
+cross-section, so each positive figure is an upper bound. `cfr backtest
+--universe pit` replaces the US sample with the companies actually in the S&P
+500 and Nasdaq-100 on each rebalance date:
+- membership comes from `internal/universe/data/history`;
+- prices come through Alpaca's `asof`, as of each membership's last day.
+
+A prices-only pre-check, which computed no signal or return, found these member-weeks
+priced, and these with a full year of history:
+
+| index | priced | full year of history | unavailable |
+|---|---|---|---|
+| S&P 500 | 99.8% | 99.3% | one interval: `DOW@2019-04-02` |
+| Nasdaq-100 | 100% | 99.7% | none |
+
+These are **re-estimates of hypotheses already seen, on a corrected universe**, not
+new hypotheses, and are written up as that. **A pass ships nothing.** It only earns
+an out-of-sample registration like OOS-H1-63.
+
+**Runs (one each, both the same window).**
+- **Point-in-time:** `cfr backtest --universe pit --indices sp500,nq100 --years 9 --json`.
+- **Comparison:** `cfr backtest --universe sample --indices sp500,nq100 --years 9 --json`.
+- **Window:** rebalance Fridays 2017-09-29 to 2026-09-25. Nine years, because Alpaca's
+  history starts in 2016 and a name needs a year of bars. The OOS holdout ends it.
+- A run that crashes before printing any statistic may be repeated. Any other failure
+  is recorded as failed evidence, not re-run.
+
+| Test | Statistic (the report's own fields) | Bar |
+|---|---|---|
+| **PIT-IC10** | The composite's beta-adjusted IC10 (C4's statistic): per-date rank IC, averaged across the two indices per date | Newey-West t > +2.5 and positive in both halves. Only US indices run, so "every region" is just US. This bar is **weaker** than C4's three-region bar, and that is stated wherever the result is quoted |
+| **PIT-H1-63** | H1-63's statistic exactly: per (date, index) the five largest \|composite\|, the per-date mean of `dir·BX[63] − 0.003` | Newey-West t (13 lags) > +2.5 and positive in both halves |
+| **PIT-E1** | E1's figure: beta-adjusted top-5 15-session excess **net of 30bp**, one figure per calendar year | Positive in a majority of the calendar years, partial years included. The code gates E1 on `--years 10` and labels a 9-year run a comparison, so this rule is applied by hand from the per-year table, as written here |
+
+**PIT-gap** is a diagnostic, not a test:
+- For each of the three statistics: the comparison run's figure minus the point-in-time
+  run's, same window.
+- This is the measured size of survivorship in the register's US numbers.
+
+**Decisions fixed now.**
+- **All three fail:**
+  - The docs, CLAUDE.md and the TUI no-edge line add that the survivorship-free US
+    replay confirms it.
+  - Every US figure on the register is restated as "upper bound, survivorship inflated
+    it by PIT-gap".
+- **Any passes:**
+  - The write-up says so, with its Holm p, recomputed over the existing 15 tests plus
+    these 3, so m = 18.
+  - A separate OOS registration on weeks after 2026-09-25 follows.
+  - Nothing live changes.
+- **Gap direction.** If a point-in-time figure is *higher* than the sample's, that is
+  reported as a finding, not explained away. Survivorship can only be inferred from
+  the gap; it is not assumed.
+
 ## Results
 
 ### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
