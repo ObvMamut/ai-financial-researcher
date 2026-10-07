@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // alpacaBar renders one bar in the wire shape Alpaca uses: single-letter keys,
@@ -256,4 +258,64 @@ func TestAlpacaBarWireShapeIsStable(t *testing.T) {
 	if b.Close != 10 || b.Volume != 5 || !strings.HasPrefix(b.Time, "2026-09-01") {
 		t.Errorf("wire bar did not decode: %+v", b)
 	}
+}
+
+// The lab prices a membership interval with Alpaca's asof set inside it, which
+// resolves a symbol to the company that held it then: FB as of 2020 is Meta's
+// whole history, FI as of 2018 is Frank's International, not Fiserv.
+func TestAlpacaHistoryAsOfSendsTheWindowAndAsof(t *testing.T) {
+	var got []url.Values
+	alpacaServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Query())
+		fmt.Fprint(w, alpacaPage(map[string]string{
+			"FB": alpacaBar("2016-01-04", 102.22, 1e7) + "," + alpacaBar("2022-06-08", 190.0, 1e7),
+		}, ""))
+	})
+	a := NewAlpacaPrices("k", "s", NewCache(t.TempDir()))
+	start, end, asof := asofDate("2016-01-01"), asofDate("2022-06-30"), asofDate("2022-06-08")
+	out, err := a.HistoryAsOf(context.Background(), []string{"FB"}, start, end, asof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := out["FB"]; s == nil || len(s.Bars) != 2 || s.Bars[1].Close != 190.0 {
+		t.Fatalf("series = %+v", out["FB"])
+	}
+	q := got[0]
+	if q.Get("asof") != "2022-06-08" || q.Get("start") != "2016-01-01" || !strings.HasPrefix(q.Get("end"), "2022-06-30") || q.Get("feed") != "sip" {
+		t.Errorf("request = %v", q)
+	}
+
+	// A window that closed in the past never changes, so it is served from
+	// the permanent cache without a second request.
+	if _, err := a.HistoryAsOf(context.Background(), []string{"FB"}, start, end, asof); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a finished window was fetched %d times, want once", len(got))
+	}
+}
+
+func TestAlpacaHistoryAsOfReportsNamesItCouldNotResolve(t *testing.T) {
+	alpacaServer(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, alpacaPage(map[string]string{"AAPL": alpacaBar("2016-01-04", 26.3, 1e8)}, ""))
+	})
+	a := NewAlpacaPrices("k", "s", nil)
+	out, err := a.HistoryAsOf(context.Background(), []string{"AAPL", "MWV"}, asofDate("2016-01-01"), asofDate("2016-02-01"), asofDate("2016-01-29"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["AAPL"] == nil {
+		t.Error("AAPL missing")
+	}
+	if _, ok := out["MWV"]; ok {
+		t.Error("a symbol with no bars was returned as an empty series")
+	}
+}
+
+func asofDate(s string) time.Time {
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		panic(err)
+	}
+	return d
 }

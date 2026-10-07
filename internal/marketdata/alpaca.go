@@ -135,7 +135,7 @@ func (a *AlpacaPrices) history(ctx context.Context, symbol string, ttl time.Dura
 			return &cached, nil
 		}
 	}
-	out, err := a.fetchBars(ctx, []string{symbol})
+	out, err := a.fetchBars(ctx, []string{symbol}, liveWindow())
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func (a *AlpacaPrices) Prefetch(ctx context.Context, symbols []string) int {
 		if end > len(symbols) {
 			end = len(symbols)
 		}
-		out, err := a.fetchBars(ctx, symbols[start:end])
+		out, err := a.fetchBars(ctx, symbols[start:end], liveWindow())
 		if err != nil {
 			continue
 		}
@@ -202,11 +202,11 @@ func (a *AlpacaPrices) store(symbol string, s *quant.Series) {
 // truncated series, and a truncated series is a *wrong* momentum number rather
 // than an obviously missing one — so bars are accumulated across every page and
 // only turned into a Series once the token is empty.
-func (a *AlpacaPrices) fetchBars(ctx context.Context, symbols []string) (map[string]*quant.Series, error) {
+func (a *AlpacaPrices) fetchBars(ctx context.Context, symbols []string, w barsWindow) (map[string]*quant.Series, error) {
 	acc := map[string][]alpacaWireBar{}
 	token := ""
 	for {
-		parsed, err := a.getPage(ctx, symbols, token)
+		parsed, err := a.getPage(ctx, symbols, token, w)
 		if err != nil {
 			return nil, err
 		}
@@ -243,24 +243,40 @@ func (a *AlpacaPrices) fetchBars(ctx context.Context, symbols []string) (map[str
 	return out, nil
 }
 
-func (a *AlpacaPrices) getPage(ctx context.Context, symbols []string, token string) (alpacaBarsResp, error) {
+// barsWindow is the span one bars request covers, and the asof date that
+// resolves its symbols (zero: Alpaca's default, today).
+type barsWindow struct {
+	start, end time.Time
+	asof       time.Time
+}
+
+// liveWindow is the live pipeline's window: two years, closing far enough back
+// for the free tier to serve SIP.
+func liveWindow() barsWindow {
+	now := time.Now().UTC()
+	return barsWindow{start: now.AddDate(0, 0, -alpacaLookbackDays), end: now.Add(-alpacaSIPDelay)}
+}
+
+func (a *AlpacaPrices) getPage(ctx context.Context, symbols []string, token string, w barsWindow) (alpacaBarsResp, error) {
 	var out alpacaBarsResp
 	if err := a.wait(ctx); err != nil {
 		return out, err
 	}
 
-	now := time.Now().UTC()
 	q := url.Values{}
 	// Alpaca uses the dotted form for US class shares (BRK.B), where Yahoo
 	// wants BRK-B and 404s the dot. So the symbol goes over the wire as the
 	// universe files spell it — deliberately *not* through yahooSymbol.
 	q.Set("symbols", strings.Join(symbols, ","))
 	q.Set("timeframe", "1Day")
-	q.Set("start", now.AddDate(0, 0, -alpacaLookbackDays).Format("2006-01-02"))
+	q.Set("start", w.start.Format("2006-01-02"))
 	// The end bound is what makes the SIP feed legal on the free tier, which
 	// requires the window to close at least 15 minutes ago. Without it the
 	// request is refused and — see below — refusal is the good outcome.
-	q.Set("end", now.Add(-alpacaSIPDelay).Format(time.RFC3339))
+	q.Set("end", w.end.Format(time.RFC3339))
+	if !w.asof.IsZero() {
+		q.Set("asof", w.asof.Format("2006-01-02"))
+	}
 	// Split- and dividend-adjusted, so returns are total returns and a split
 	// does not read as a 50% gap to the volatility estimators. Note this is not
 	// quite yahoo.go's convention: that one rescales volume by the same factor
@@ -317,6 +333,60 @@ func (a *AlpacaPrices) getPage(ctx context.Context, symbols []string, token stri
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return out, fmt.Errorf("alpaca bars: decode: %w", err)
+	}
+	return out, nil
+}
+
+// alpacaAsOfCacheFn names HistoryAsOf's permanent cache entries.
+const alpacaAsOfCacheFn = "bars1Dasof"
+
+// HistoryAsOf returns daily bars over [start, end] for each symbol as Alpaca
+// resolves it on asof: the company that traded under that symbol then, with
+// its whole history across later renames. FB as of 2020 is Meta through
+// today; FI as of 2018 is Frank's International, not the Fiserv that took the
+// ticker in 2023. This is how the lab prices a point-in-time membership
+// interval, with asof inside it.
+//
+// end is clamped to the SIP delay. A window that closed more than a week ago
+// cannot change again, so it is cached permanently; anything later is fetched
+// every time. A symbol with no bars is absent from the result.
+func (a *AlpacaPrices) HistoryAsOf(ctx context.Context, symbols []string, start, end, asof time.Time) (map[string]*quant.Series, error) {
+	if latest := time.Now().UTC().Add(-alpacaSIPDelay); end.After(latest) {
+		end = latest
+	}
+	settled := a.cache != nil && end.Before(time.Now().AddDate(0, 0, -7))
+	key := func(sym string) string {
+		return strings.Join([]string{sym, start.Format("2006-01-02"), end.Format("2006-01-02"), asof.Format("2006-01-02")}, "|")
+	}
+	out := map[string]*quant.Series{}
+	var need []string
+	for _, sym := range symbols {
+		var s quant.Series
+		if settled {
+			if found, _ := a.cache.GetPermanent(a.baseURL, "alpaca", alpacaAsOfCacheFn, key(sym), &s); found && len(s.Bars) > 0 {
+				out[sym] = &s
+				continue
+			}
+		}
+		need = append(need, sym)
+	}
+	w := barsWindow{start: start, end: end, asof: asof}
+	for i := 0; i < len(need); i += alpacaMaxSymbols {
+		chunk := need[i:min(i+alpacaMaxSymbols, len(need))]
+		got, err := a.fetchBars(ctx, chunk, w)
+		if err != nil {
+			return out, err
+		}
+		for _, sym := range chunk {
+			s, ok := got[sym]
+			if !ok || len(s.Bars) == 0 {
+				continue
+			}
+			out[sym] = s
+			if settled {
+				_ = a.cache.SetPermanent(a.baseURL, "alpaca", alpacaAsOfCacheFn, key(sym), s)
+			}
+		}
 	}
 	return out, nil
 }
