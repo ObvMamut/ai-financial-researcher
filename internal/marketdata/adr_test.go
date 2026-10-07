@@ -36,7 +36,7 @@ func TestUSLineResolvesKnownADRs(t *testing.T) {
 func TestUSLineLeavesUnmappedNamesAlone(t *testing.T) {
 	// Samsung and SK Hynix have no US listing at all; inventing one would
 	// attach another company's news to them.
-	for _, local := range []string{"005930.KS", "000660.KS", "2317.TW", "PTT.BK"} {
+	for _, local := range []string{"005930.KS", "005380.KS", "2317.TW", "PTT.BK"} {
 		if line, ok := USLine(local); ok {
 			t.Errorf("USLine(%s) = %s, want no mapping — it has no major-exchange US line", local, line)
 		}
@@ -141,7 +141,7 @@ func TestAlphaVantageStillSkipsUnmappedForeignNames(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("CFR_AV_BASE", srv.URL)
 
-	_, err := NewAlphaVantageProvider("key", "").Fetch(context.Background(), "news", "000660.KS")
+	_, err := NewAlphaVantageProvider("key", "").Fetch(context.Background(), "news", "005380.KS")
 	if err == nil {
 		t.Fatal("expected a skip for a name with no US line")
 	}
@@ -156,8 +156,8 @@ func TestUSLineWidensReachableCoverage(t *testing.T) {
 	if !Reachable("2330.TW") {
 		t.Error("2330.TW is reachable through TSM")
 	}
-	if Reachable("000660.KS") {
-		t.Error("000660.KS has no US line and is not reachable")
+	if Reachable("005380.KS") {
+		t.Error("005380.KS has no US line and is not reachable")
 	}
 	if !Reachable("AAPL") {
 		t.Error("a US listing is always reachable")
@@ -176,6 +176,15 @@ func TestUSLineCoversChunghwaTelecom(t *testing.T) {
 	}
 	if got != "CHT" {
 		t.Errorf("USLine(2412.TW) = %s, want CHT", got)
+	}
+}
+
+// SK hynix listed ADRs on NASDAQ as SKHY in July 2026: 63 sessions on Alpaca
+// by 2026-10-07 at ~13.8M shares a day, and Yahoo tags its news to SKHY rather
+// than to 000660.KS, so without the row the name had no news domain at all.
+func TestUSLineCoversSKHynix(t *testing.T) {
+	if got, ok := USLine("000660.KS"); !ok || got != "SKHY" {
+		t.Errorf("USLine(000660.KS) = %q, %v; want SKHY", got, ok)
 	}
 }
 

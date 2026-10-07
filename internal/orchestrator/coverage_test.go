@@ -157,7 +157,7 @@ func TestCoverageGapsDegradeTheRun(t *testing.T) {
 		{Domain: "quant", Grounded: true},
 		{Domain: "news", Grounded: true, Ungrounded: []string{"GE", "AIR.PA"}},
 		{Domain: "fundamentals", Grounded: false, Ungrounded: []string{"NVDA", "GE", "AIR.PA"}},
-		{Domain: "sentiment", Grounded: true, Ungrounded: []string{"AIR.PA", "000660.KS"}},
+		{Domain: "sentiment", Grounded: true, Ungrounded: []string{"AIR.PA", "005380.KS"}},
 		{Domain: "macro", Grounded: false, Ungrounded: []string{"NVDA", "GE", "AIR.PA"}},
 	}
 	got := coverageGaps(statuses)
@@ -204,7 +204,7 @@ func contains(xs []string, want string) bool {
 // rate limiting.
 func TestCoverageGapsMeasureTheAchievableSubset(t *testing.T) {
 	allAchievable := []model.DomainStatus{
-		{Domain: "sentiment", Ungrounded: []string{"AIR.PA", "005930.KS", "000660.KS"}},
+		{Domain: "sentiment", Ungrounded: []string{"AIR.PA", "005930.KS", "005380.KS"}},
 		{Domain: "macro"},
 	}
 	if got := coverageGaps(allAchievable); len(got) != 0 {
@@ -362,7 +362,7 @@ func TestExpectedCoverageCountsTheDomainsThatCanReachAName(t *testing.T) {
 func TestThinlyCoveredNames(t *testing.T) {
 	shortlist := []model.Candidate{
 		{Ticker: "NVDA"}, {Ticker: "AIR.PA"}, {Ticker: "GE"},
-		{Ticker: "2330.TW"}, {Ticker: "hdfcbank.ns"}, {Ticker: "000660.KS"},
+		{Ticker: "2330.TW"}, {Ticker: "hdfcbank.ns"}, {Ticker: "005380.KS"},
 	}
 	w := model.DefaultDomainWeights()
 
@@ -372,7 +372,7 @@ func TestThinlyCoveredNames(t *testing.T) {
 	// exactly what metadata.json recorded on 2026-09-03: "thinly_covered": null,
 	// with three of five shipped ideas scored by one domain or two.
 	got := thinlyCoveredNames(shortlist, w, thinCoverage)
-	if want := []string{"000660.KS", "AIR.PA"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"005380.KS", "AIR.PA"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("thinlyCoveredNames = %v at the %.2f floor, want %v", got, thinCoverage, want)
 	}
 	// A listing with a US line is not thin: 2330.TW trades as TSM.

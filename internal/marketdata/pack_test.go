@@ -246,20 +246,20 @@ func TestPerTickerPackStillListsGaps(t *testing.T) {
 // a genuine fetch failure and must read as one.
 func TestGapBlockMarksNonUSListingsAsStructural(t *testing.T) {
 	svc := NewService(nil, newsProvider())
-	pack := svc.BuildPack(context.Background(), "news", []string{"AAPL", "GE", "AIR.PA", "000660.KS"})
+	pack := svc.BuildPack(context.Background(), "news", []string{"AAPL", "GE", "AIR.PA", "005380.KS"})
 
 	md := pack.Markdown()
 	if !strings.Contains(md, "GE") {
 		t.Errorf("a US name with no data is still a plain gap:\n%s", md)
 	}
-	if !strings.Contains(md, "000660.KS, AIR.PA (non-US listings with no US line") {
+	if !strings.Contains(md, "005380.KS, AIR.PA (non-US listings with no US line") {
 		t.Errorf("non-US gaps should be annotated as structural:\n%s", md)
 	}
 	if !strings.Contains(md, "not a fetch failure") {
 		t.Errorf("the annotation should say the gap is expected:\n%s", md)
 	}
 	// The annotation must not swallow the US name into the same clause.
-	if strings.Contains(md, "GE, 000660.KS") {
+	if strings.Contains(md, "GE, 005380.KS") {
 		t.Errorf("US and non-US gaps must be listed separately:\n%s", md)
 	}
 }

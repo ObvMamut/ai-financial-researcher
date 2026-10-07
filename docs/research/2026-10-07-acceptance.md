@@ -61,3 +61,40 @@ Carlisle (CSL) is the case seen.
 
 The evidence floor is unchanged throughout. More foreign names can now pass it only
 because they really do have non-price evidence.
+
+## News audit, end of day (after `v7` Workstream C)
+
+These changes:
+- **SK hynix:** SKHY, its NASDAQ ADR listed 2026-07-10, is added to `adr_map.csv`.
+  Yahoo tags its stories to SKHY, never to 000660.KS.
+- **New aliases:** LVMH and SoftBank, because headlines name them that way.
+- **Name search:** it now queries by alias when the company has one.
+
+Live coverage across all 114 foreign listings (BRK.B is a US listing and is excluded):
+
+| | morning | after ADR/name fixes | end of day |
+|---|---|---|---|
+| mapped to a US line | 25 / 26 | 26 / 26 | **27 / 27** |
+| unmapped | 0 / 89 | 40 / 89 | **41 / 87** |
+| all foreign | 25 / 115 | 66 / 115 | **68 / 114** |
+
+By suffix at end of day:
+
+| Suffix | Covered | Suffix | Covered |
+|---|---|---|---|
+| .AS | 5/5 | .AX | 6/10 |
+| .BK | 0/2 | .DE | 12/16 |
+| .HE | 2/4 | .HK | 5/11 |
+| .KS | 2/7 | .MC | 4/5 |
+| .MI | 6/6 | .NS | 4/10 |
+| .PA | 7/11 | .SI | 2/5 |
+| .T | 11/15 | .TW | 2/7 |
+
+**What remains dark:** most of Korea, Taiwan, India and Thailand. For those names,
+Yahoo returns **no fresh items under any query**, the English common name included
+(Hyundai, Naver, LG Chem, Celltrion, Reliance, TCS, Hindustan Unilever, AIA, China
+Mobile). No query change fixes that; only a different source would.
+
+**Day-to-day variation.** Coverage on a given day moves by a few names (MQG.AX,
+OR.PA, RI.PA came and went), because it depends on whether a tagged, naming
+headline appeared in the last 21 days.

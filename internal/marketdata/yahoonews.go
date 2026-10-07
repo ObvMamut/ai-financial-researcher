@@ -150,9 +150,14 @@ func (p *yahooNewsProvider) byCompanyName(ctx context.Context, ticker string, lo
 	if len(names) == 0 {
 		return local, nil
 	}
+	// An alias is how a headline names the company (LVMH, SoftBank), so it is
+	// the better query; otherwise the legal name, cleaned of its corporate form.
 	query, alias := normalizeCompanyName(names[0])
 	if alias != "" {
 		query = alias
+	}
+	if len(names) > 1 {
+		query = names[1]
 	}
 	if query == "" {
 		return local, nil

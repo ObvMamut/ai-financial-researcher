@@ -402,3 +402,34 @@ func TestYahooNewsNameSearchCountsOnlyHeadlinesThatNameTheCompany(t *testing.T) 
 		t.Errorf("headlines counted as about Airbus: %q, want only the Airbus one", tagged)
 	}
 }
+
+func TestYahooNewsNameSearchAsksByAliasWhenThereIsOne(t *testing.T) {
+	// Headlines name LVMH and SoftBank by those words, not by their legal names;
+	// on 2026-10-07 both were dark under the legal name while their tagged
+	// stories said "LVMH" and "SoftBank".
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		asked = append(asked, q)
+		if q == "LVMH" {
+			fmt.Fprintf(w, `{"news":[%s]}`, newsItem("LVMH sales slow in Asia", "Reuters", 3, "MC.PA"))
+			return
+		}
+		fmt.Fprint(w, `{"news":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+	ctx := WithCompanyNames(context.Background(), func(string) []string {
+		return []string{"LVMH Moët Hennessy Louis Vuitton SE", "LVMH"}
+	})
+	td, err := NewYahooNewsProvider().Fetch(ctx, "news", "MC.PA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[1] != "LVMH" {
+		t.Fatalf("queries = %q, want the local symbol then the alias", asked)
+	}
+	if len(td.Facts) != 1 {
+		t.Errorf("facts = %+v, want the LVMH headline", td.Facts)
+	}
+}
