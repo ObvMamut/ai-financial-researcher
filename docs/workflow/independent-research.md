@@ -387,6 +387,12 @@ over the front two expiries, plus ATM implied volatility to compare against the 
 realized vol). Both are merged into one pack — `BuildPack` no longer stops at the first
 provider that answers. The options endpoint is intermittently crumb-gated; a 401 degrades
 sentiment to insider filings alone and is recorded, never guessed around.
+A chain fetched while Yahoo's `marketState` is `PRE` or `PREPRE` (before the US open) has
+not had its open interest and implied volatility republished for the day: every weekday
+pre-open run since 2026-09-04 withheld placeholder IVs, and in-session and weekend runs did
+not. Those legs abstain with one `expected` `off_session` source diagnostic rather than
+data errors, and the answer is not cached for the day. In any other state a blind chain
+still warns.
 
 Fundamentals gets the price context and **computed multiples**. EDGAR now also extracts
 shares outstanding (a `dei` cover-page fact, not a GAAP one), diluted EPS (quoted in

@@ -359,7 +359,8 @@ Field rules:
 - `risk_reward`: |target−entry| / |entry−stop| — Go recomputes it and corrects claims off
   by more than 20%.
 - `timeframe_days`: expected holding period in trading days (5–20).
-- `position_note`: sizing/hedging guidance (may be empty).
+- `position_note`: what to watch while the position is open (may be empty). Under
+  `merit_veto` the exit is mechanical, so the writer persona forbids exit instructions in it.
 - `why`: 1–2 sentences, concrete.
 - `ideas`: length 5 for independent research, 1 for single stock — fewer allowed if the
   bar isn't met (explain in `notes`).
@@ -368,6 +369,13 @@ Written by Go, never by the model (a value the Chief supplies for any of these i
 overwritten):
 - `price_at_generation`: the verified last close from the quant pack, the scoreboard's P&L
   baseline.
+- `event_in_window`: the verified earnings date (`YYYY-MM-DD`, from the news pack's
+  `event_dates`) when it falls before the idea's time exit; absent otherwise. The exit is not
+  moved for it. `data/selection.json` rows carry the same field over the 15-session
+  `merit_veto` hold.
+- `repeat_of`: the earlier run whose call on the same ticker and direction the scoreboard's
+  dedupe (one bet per ticker/direction per 7 days) counts this idea as a repeat of; absent
+  for a fresh call. Not set on frozen research-pair runs.
 - `base_confidence`: the computed weighted domain score this idea's confidence was anchored
   to, **for the direction the idea proposes** (0 when the domains read the other way). See
   `scoring.md`.
@@ -517,6 +525,8 @@ type TradeIdea struct {
     RiskReward    float64 `json:"risk_reward,omitempty"`
     TimeframeDays int     `json:"timeframe_days,omitempty"`
     PositionNote  string  `json:"position_note,omitempty"`
+    EventInWindow string  `json:"event_in_window,omitempty"` // Go: verified earnings date inside the hold
+    RepeatOf      string  `json:"repeat_of,omitempty"`       // Go: run this call repeats (dedupe)
 
     PriceAtGeneration float64        `json:"price_at_generation,omitempty"`
     BaseConfidence    int            `json:"base_confidence,omitempty"`

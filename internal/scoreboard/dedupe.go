@@ -4,6 +4,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
+	"github.com/mamut/claude-financial-researcher/internal/store"
 )
 
 // Independence: how many *bets* does this history actually contain?
@@ -67,12 +70,28 @@ func Dedupe(entries []Entry, windowDays int) ([]Entry, int) {
 // the attribution's fill census counts all of them while its outcome cells
 // count only these — index into it rather than matching values back to slots.
 func DedupeMask(entries []Entry, windowDays int) (kept []bool, dropped int) {
+	kept, anchor := dedupeWalk(entries, windowDays)
+	for _, a := range anchor {
+		if a >= 0 {
+			dropped++
+		}
+	}
+	return kept, dropped
+}
+
+// dedupeWalk applies the dedupe rule and also says, for every dropped entry,
+// which kept entry it is a repeat of (anchor[i]; -1 for a kept entry).
+func dedupeWalk(entries []Entry, windowDays int) (kept []bool, anchor []int) {
 	kept = make([]bool, len(entries))
+	anchor = make([]int, len(entries))
+	for i := range anchor {
+		anchor[i] = -1
+	}
 	if windowDays <= 0 {
 		for i := range kept {
 			kept[i] = true
 		}
-		return kept, 0
+		return kept, anchor
 	}
 	window := time.Duration(windowDays) * 24 * time.Hour
 
@@ -96,21 +115,57 @@ func DedupeMask(entries []Entry, windowDays int) (kept []bool, dropped int) {
 		return at[ia].Before(at[ib])
 	})
 
-	last := map[key]time.Time{}
+	last := map[key]int{}
 	for _, i := range idx {
 		if !ok[i] {
 			kept[i] = true
 			continue
 		}
 		k := key{strings.ToUpper(strings.TrimSpace(entries[i].Ticker)), entries[i].Direction, entries[i].ResearchMode}
-		if prev, seen := last[k]; seen && at[i].Sub(prev) < window {
-			dropped++
+		if prev, seen := last[k]; seen && at[i].Sub(at[prev]) < window {
+			anchor[i] = prev
 			continue
 		}
-		last[k] = at[i]
+		last[k] = i
 		kept[i] = true
 	}
-	return kept, dropped
+	return kept, anchor
+}
+
+// RepeatOf names, for each new idea, the earlier run whose call on the same
+// ticker and direction the scoreboard will count it as a repeat of — the
+// dedupe rule above, applied to the stored runs plus these ideas. A repeat
+// adds no observation to the record, so the output should say it is one.
+// Keys are upper-case tickers; ideas that are fresh calls are absent.
+func RepeatOf(runsDir, generatedAt string, ideas []model.TradeIdea) map[string]string {
+	runs, err := store.ListRuns(runsDir)
+	if err != nil {
+		return nil
+	}
+	var entries []Entry
+	for _, r := range runs {
+		stored, err := store.LoadIdeas(r.Dir)
+		if err != nil || stored == nil {
+			continue
+		}
+		for _, i := range stored.Ideas {
+			entries = append(entries, Entry{RunName: r.Name, GeneratedAt: stored.GeneratedAt,
+				Ticker: i.Ticker, Direction: string(i.Direction), ResearchMode: i.ResearchMode})
+		}
+	}
+	first := len(entries)
+	for _, i := range ideas {
+		entries = append(entries, Entry{GeneratedAt: generatedAt,
+			Ticker: i.Ticker, Direction: string(i.Direction), ResearchMode: i.ResearchMode})
+	}
+	_, anchor := dedupeWalk(entries, DefaultDedupeWindowDays)
+	out := map[string]string{}
+	for i := first; i < len(entries); i++ {
+		if a := anchor[i]; a >= 0 && a < first {
+			out[strings.ToUpper(strings.TrimSpace(entries[i].Ticker))] = entries[a].RunName
+		}
+	}
+	return out
 }
 
 // parseGeneratedAt reads an entry's generation timestamp, accepting the

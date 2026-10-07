@@ -104,3 +104,22 @@ func TestDetailNavigationWraps(t *testing.T) {
 		t.Errorf("prev should wrap to 1, got %d", d.idx)
 	}
 }
+
+func TestDetailViewSaysWhenAnIdeaRepeatsAnOpenCallOrHoldsThroughEarnings(t *testing.T) {
+	dir := t.TempDir()
+	ideas := []model.TradeIdea{{
+		Rank: 1, Ticker: "FCX", Name: "Freeport", Index: "sp500",
+		Direction: model.DirectionBuy, Confidence: 24, Entry: 72.56, Stop: 53.39, TimeframeDays: 15,
+		RepeatOf: "2026-10-06T18-07-24", EventInWindow: "2026-10-22",
+	}}
+	d := newDetailModel(dir, ideas, 0, 100, 40)
+	view := d.View()
+	for _, want := range []string{
+		"repeat of the call shipped in run 2026-10-06T18-07-24",
+		"holds through earnings on 2026-10-22",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("detail view missing %q:\n%s", want, view)
+		}
+	}
+}

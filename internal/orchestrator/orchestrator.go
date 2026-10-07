@@ -1564,6 +1564,12 @@ func run(ctx context.Context, cfg Config, ch chan<- Event) error {
 	ideas.ChiefAccepted = chiefAcceptedEngine
 	if ideas != nil {
 		stampEventWindows(ideas.Ideas, verifiedCtx)
+		if cfg.Frozen == nil {
+			repeats := scoreboard.RepeatOf(cfg.RunsDir, ideas.GeneratedAt, ideas.Ideas)
+			for i := range ideas.Ideas {
+				ideas.Ideas[i].RepeatOf = repeats[normTicker(ideas.Ideas[i].Ticker)]
+			}
+		}
 	}
 	if selRows != nil {
 		ideas.Selection = cfg.Selection

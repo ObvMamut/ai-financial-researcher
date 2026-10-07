@@ -317,7 +317,7 @@ nothing. A domain that keeps backing losers is the one to reweight in
 ## Attribution: which *kind* of call worked
 
 The slices above answer "did it work". Attribution (`internal/scoreboard/attribution.go`)
-answers "which kind of it". Over the same closed trades it accumulates four further cells,
+answers "which kind of it". Over the same closed trades it accumulates five further cells,
 each carrying its own `n`:
 
 | Cell | Key | Why it exists |
@@ -326,6 +326,7 @@ each carrying its own `n`:
 | `by_coverage` | how many domains scored the name | does thin evidence lose? The weights are not recorded per idea, so this counts domains rather than weight — coarser, but recoverable from what the idea stored. |
 | `by_consensus` | the recorded `consensus` band | the other half of the same question: does thin-but-unanimous beat well-covered-but-split? |
 | `by_sector` | the shortlist's sector for the name | joined from the producing run's `metadata.json`, which is the only place sector lives. |
+| `by_earnings` | `held through`, `none while held` | whether the run's verified earnings date for the name (its saved `data/news.json` `event_dates`) fell between the fill and the exit, inclusive. Entries from a run that saved no calendar, or that never filled, are left out. The exit is never moved for an event; the lab's earnings-window test (D3, t 1.84) left open whether the return sits in the event, and only new weeks can say. |
 
 And a **fill record**, which measures the thing every other slice takes for granted:
 

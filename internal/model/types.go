@@ -217,6 +217,10 @@ type TradeIdea struct {
 	// position holds through the event, and the scoreboard measures whether
 	// that helps. Set in Go from the earnings calendar, never by a model.
 	EventInWindow string `json:"event_in_window,omitempty"`
+	// RepeatOf names the earlier run whose call on the same ticker and
+	// direction the scoreboard counts this one as a repeat of: it adds no
+	// observation to the record. Set in Go (scoreboard.RepeatOf).
+	RepeatOf string `json:"repeat_of,omitempty"`
 
 	// PriceAtGeneration is the verified last close when the idea was produced
 	// (from the quant pack); the scoreboard measures P&L against it.

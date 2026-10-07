@@ -156,7 +156,7 @@ internal/
                 the pre-screen composite alone and against the funnel's shortlist,
                 to answer whether the model stages beat their own arithmetic;
                 attribution.go counts the record by setup/coverage/consensus/sector/
-                fill and postmortem.go enforces the lessons an agent draws from it
+                earnings-in-hold/fill and postmortem.go enforces the lessons an agent draws from it
                 against those counts
   backtest/     the lab (`cfr backtest`): point-in-time weekly replay of the
                 pre-screen over every constituent with the shipping quant/scoring
@@ -339,7 +339,7 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    buckets read the same scale, and all three must move together.
 3.75. **Post-mortem (cheap engine, one call):** once ≥10 past ideas have closed,
    `internal/scoreboard/attribution.go` counts the record by setup shape, coverage,
-   consensus, sector and fill rate, and one cheap-engine call turns those cells into prose
+   consensus, sector, earnings inside the hold and fill rate, and one cheap-engine call turns those cells into prose
    lessons. Every lesson must name a cell that exists with ≥5 closed trades or it is
    deleted, exactly as a specialist's ungrounded score is. Weight suggestions are advisory
    and never applied. Never blocks a run; surfaced by `cfr postmortem`.
@@ -352,7 +352,9 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    sector to `max_per_sector`, skips a name correlating above `max_pair_corr` with a
    same-direction pick already in the book (`excluded: "correlated"`), and ships the top 5 **in the scout's direction** as
    `market_on_open` ideas (reference close, catastrophe stop, no target, 15-session time
-   exit; confidence = the base score, informational). The Chief is called once with
+   exit; confidence = the base score, informational). Go stamps each idea with
+   `event_in_window` (a verified earnings date the hold runs through; the exit is not moved)
+   and `repeat_of` (the run whose call the scoreboard's dedupe counts it against). The Chief is called once with
    `agents/chief-writer.md`: it writes `why`/`position_note` for the book and five
    reserves, may veto from the same closed enum (the slot refills from the reserves in
    merit order), may not add, flip or reorder names, and returns `shadow_rank` — its own

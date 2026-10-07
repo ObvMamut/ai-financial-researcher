@@ -142,6 +142,14 @@ func (d *detailModel) View() string {
 			sb.WriteString(mutedStyle.Render("  Position: " + idea.PositionNote))
 			sb.WriteString("\n")
 		}
+		if idea.EventInWindow != "" {
+			sb.WriteString(mutedStyle.Render("  Exit is on time: the position holds through earnings on " + idea.EventInWindow))
+			sb.WriteString("\n")
+		}
+		if idea.RepeatOf != "" {
+			sb.WriteString(mutedStyle.Render("  A repeat of the call shipped in run " + idea.RepeatOf + " — the scoreboard counts it once"))
+			sb.WriteString("\n")
+		}
 		sb.WriteString("\n")
 	} else {
 		sb.WriteString(mutedStyle.Render("  No trade levels recorded for this idea (older run).\n\n"))

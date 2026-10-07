@@ -1,6 +1,10 @@
 package scoreboard
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/mamut/claude-financial-researcher/internal/model"
+)
 
 func idea(run, ts, ticker, dir string) Entry {
 	return Entry{RunName: run, GeneratedAt: ts, Ticker: ticker, Direction: dir}
@@ -144,5 +148,34 @@ func TestSummaryCountsBetsInCellsAndTicketsInTheOutcomeTally(t *testing.T) {
 	// Counted as tickets the record is 1W/3L = 25%; as bets it is 1W/1L = 50%.
 	if s.WinRate != 0.5 {
 		t.Errorf("WinRate = %.2f, want 0.50 — one winning bet and one losing bet", s.WinRate)
+	}
+}
+
+func TestRepeatOfNamesTheRunTheScoreboardCountsAgainst(t *testing.T) {
+	// 2026-10-07 05:13Z re-shipped MU, CRM and TTE.PA BUY from 10-06 18:07Z.
+	// The scoreboard counts each once, so the output should say so.
+	runs := t.TempDir()
+	writeRun(t, runs, "2026-09-20T10-00-00", model.IdeasResult{GeneratedAt: "2026-09-20T10:00:00Z",
+		Ideas: []model.TradeIdea{{Ticker: "CRM", Direction: model.DirectionBuy}}})
+	writeRun(t, runs, "2026-10-06T18-07-24", model.IdeasResult{GeneratedAt: "2026-10-06T18:13:00Z",
+		Ideas: []model.TradeIdea{
+			{Ticker: "MU", Direction: model.DirectionBuy},
+			{Ticker: "CRM", Direction: model.DirectionBuy},
+			{Ticker: "STLAM.MI", Direction: model.DirectionSell},
+		}})
+	got := RepeatOf(runs, "2026-10-07T05:16:02Z", []model.TradeIdea{
+		{Ticker: "MU", Direction: model.DirectionBuy},
+		{Ticker: "CRM", Direction: model.DirectionBuy},
+		{Ticker: "STLAM.MI", Direction: model.DirectionBuy}, // flipped: a new call
+		{Ticker: "FCX", Direction: model.DirectionBuy},
+	})
+	want := map[string]string{"MU": "2026-10-06T18-07-24", "CRM": "2026-10-06T18-07-24"}
+	if len(got) != len(want) {
+		t.Fatalf("RepeatOf = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s repeat_of %q, want %q", k, got[k], v)
+		}
 	}
 }
