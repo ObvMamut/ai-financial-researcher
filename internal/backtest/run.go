@@ -276,6 +276,15 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 			data.Bench[m.Bench] = fetch(m.Bench)
 		}
 	}
+	// Every registered statistic is beta-adjusted against these series. A
+	// benchmark that failed to load turns each into NaN while a report still
+	// prints, and a printed report spends a registration; stop instead (the
+	// one-run rule lets a crash before any statistic be repeated).
+	for b, s := range data.Bench {
+		if s == nil || len(s.Bars) == 0 {
+			return nil, fmt.Errorf("benchmark %s is unavailable, so nothing is computed: %s", b, strings.Join(unavailable, "; "))
+		}
+	}
 	for i, m := range members {
 		if m.Interval != nil {
 			continue // priced through the asof source below

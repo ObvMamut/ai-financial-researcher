@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"math"
 	"math/rand/v2"
@@ -198,6 +199,36 @@ func (fakeLoader) HistoryRange(_ context.Context, symbol, _ string, _ time.Durat
 	h.Write([]byte(symbol))
 	rng := rand.New(rand.NewPCG(h.Sum64(), 1))
 	return synthSeries(symbol, day("2020-01-01"), 720, 0.0003*rng.NormFloat64(), 0.01+0.02*rng.Float64(), rng), nil
+}
+
+// failingBench is fakeLoader except that one symbol, a benchmark, fails the
+// way Yahoo did on 2026-10-07 (HTTP 429 from every endpoint).
+type failingBench struct{ symbol string }
+
+func (f failingBench) HistoryRange(ctx context.Context, symbol, rng string, age time.Duration) (*quant.Series, error) {
+	if symbol == f.symbol {
+		return nil, errors.New("yahoo: HTTP 429")
+	}
+	return fakeLoader{}.HistoryRange(ctx, symbol, rng, age)
+}
+
+// Every registered statistic is beta-adjusted against a benchmark, so a run
+// whose benchmark failed to load must stop before computing anything rather
+// than print NaN figures that would spend the registration.
+func TestRunStopsWhenABenchmarkIsUnavailable(t *testing.T) {
+	uni, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bench := universe.BenchmarkSymbol("nq100")
+	res, err := Run(context.Background(), failingBench{symbol: bench}, uni,
+		Config{Years: 1, Indices: []string{"nq100"}, Now: day("2022-09-30")})
+	if err == nil || !strings.Contains(err.Error(), bench) {
+		t.Fatalf("Run error = %v (report returned: %t); want an error naming %s and no report", err, res != nil, bench)
+	}
+	if res != nil {
+		t.Error("a report was produced without its benchmark")
+	}
 }
 
 // Run wires the filing source into the panel: with it the earnings signals

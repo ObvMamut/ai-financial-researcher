@@ -31,6 +31,15 @@ arms, because a model cannot be replayed without look-ahead.
   Reads go through the shared data cache and are cache-first: a series younger
   than `--cache-age` (default 7 days) is not re-requested. The lab makes no
   model call and reads no credential.
+- **A missing benchmark is fatal.** A constituent that fails to load is listed
+  as unavailable and the run goes on without it. A benchmark that fails to
+  load (an error or an empty series) stops the run before any price is
+  fetched for a member or any statistic is computed, with an error naming it
+  (`backtest.Run`). Every registered statistic is beta-adjusted against the
+  benchmarks, so a run without one would print NaN figures and still spend a
+  registration. Stopping makes it a crash before any statistic, which the
+  one-run rule lets be repeated. This host got HTTP 429 from every Yahoo
+  endpoint on 2026-10-07, which is how a benchmark goes missing.
 - **Earnings-release dates (US only).** When `providers.contact_email` is set,
   each sp500/nq100 member's 8-K Item 2.02 filing dates are read from SEC's
   keyless per-issuer submissions JSON (`marketdata.NewFilingHistorySource`),
