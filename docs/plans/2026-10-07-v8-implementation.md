@@ -890,19 +890,19 @@ const screenNoEdgeLine = "  No signal tested has shown an edge net of cost: not 
 
 | Step | State |
 |---|---|
-| 0 setup | |
-| 1 registration | |
-| 2 memo | |
-| 3 / 3R canary guard, outside-session runs | |
-| 4 post-mortem version | |
-| 5 DOW | |
-| 6 OOS universe frozen | |
-| 7 nq100 replaced | |
-| 8 share-class siblings | |
-| 9 N1–N3 signals | |
-| 10 anomaly tests, register family | |
-| 11 missing benchmark fatal | |
-| 12 the one run | |
-| 13 write-up | |
-| 14 Cut, or 15–16 Phase 3 | |
-| 17 review, merge, memory | |
+| 0 setup | done: 427ccf2 |
+| 1 registration | done: 4032e95 (2026-10-08, before any N code) |
+| 2 memo | done: b5968df |
+| 3 / 3R canary guard, outside-session runs | guard b5bc959 (a backstop: alpaca.go already errors on empty); pre-open run 09:53Z abstains as designed, 9/9; post-close run pending |
+| 4 post-mortem version | done: f46ba55 (v3) |
+| 5 DOW | done: b4a417f — not a rename; Alpaca drops a reused ticker from a large batch reaching the old holder's years; retry from interval start |
+| 6 OOS universe frozen | done: 333fbdd |
+| 7 nq100 replaced | done: 513ddde (overlap 33 of 56) |
+| 8 share-class siblings | done: 334b41d |
+| 9 N1–N3 signals | done: 3f2ba7f |
+| 10 anomaly tests, register family | done: eaea574; gate tightened in 93a3c4b |
+| 11 missing benchmark fatal | done: 19449dc |
+| 12 the one run | done: 2026-10-08 10:11Z from 513ddde, 0 unavailable — N1 t 1.66, N2 t 2.13, N3 t 0.45; all fail |
+| 13 write-up | done: d169876 |
+| 14 Cut, or 15–16 Phase 3 | Cut done: 68cb0af; Phase 3 not triggered |
+| 17 review, merge, memory | review: no blocking defect, fixes 93a3c4b; merged to main, not pushed |
