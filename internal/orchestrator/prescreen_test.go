@@ -911,7 +911,7 @@ func TestMeritScoreChargesForCoverageItCannotReach(t *testing.T) {
 
 // The merit sort pays an agreement bonus per extra nomination because "two
 // scouts reaching the same name from different index tables is independent
-// evidence". 35 of the 56 names in nq100 are also in sp500, so for those the two
+// evidence". 33 of the 56 names in nq100 are also in sp500, so for those the two
 // scouts are choosing one ticker out of two overlapping pools built from one
 // price history — and on 2026-09-05 all four dual-nominated names (MU, PANW,
 // QCOM, SNPS) were in that overlap. Each collected a bonus for it, and the
@@ -925,8 +925,8 @@ func TestOverlappingIndicesDoNotCountAsScoutAgreement(t *testing.T) {
 	if !uni.Contains("sp500", "MU") || !uni.Contains("nq100", "MU") {
 		t.Skip("fixture assumes MU sits in both US index samples")
 	}
-	if uni.Contains("sp500", "OKTA") {
-		t.Skip("fixture assumes OKTA is nq100-only")
+	if uni.Contains("sp500", "ADSK") {
+		t.Skip("fixture assumes ADSK is nq100-only")
 	}
 
 	shortlist := []model.Candidate{
@@ -934,7 +934,7 @@ func TestOverlappingIndicesDoNotCountAsScoutAgreement(t *testing.T) {
 			NominatedBy: []string{"sp500", "nq100"}},
 		// A name only one of the two indices holds: whatever the second scout
 		// read, it was not that index's row, so the agreement stands.
-		{Ticker: "OKTA", Index: "nq100", Bias: model.BiasBullish, Nominations: 2,
+		{Ticker: "ADSK", Index: "nq100", Bias: model.BiasBullish, Nominations: 2,
 			NominatedBy: []string{"nq100", "eu50"}},
 		{Ticker: "CRM", Index: "sp500", Bias: model.BiasBullish, Nominations: 1,
 			NominatedBy: []string{"sp500"}},
@@ -945,7 +945,7 @@ func TestOverlappingIndicesDoNotCountAsScoutAgreement(t *testing.T) {
 		t.Errorf("MU kept %d nominations, want 1 — both indices hold it", got)
 	}
 	if got := shortlist[1].Nominations; got != 2 {
-		t.Errorf("OKTA was collapsed to %d, want 2 — eu50 does not hold it", got)
+		t.Errorf("ADSK was collapsed to %d, want 2 — eu50 does not hold it", got)
 	}
 	if got := shortlist[2].Nominations; got != 1 {
 		t.Errorf("a single nomination became %d", got)

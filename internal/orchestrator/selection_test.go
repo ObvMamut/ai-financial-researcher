@@ -210,7 +210,7 @@ func TestMeritVetoChiefFailureShipsTheSelectionWithoutProse(t *testing.T) {
 // test). This one drives all three reasons through one run and reads the
 // persisted file back, the way the shortlist actually behaves: three
 // Information Technology names (NVDA, MSFT and AMD, cap 2) so the third is
-// sector-capped, a lowest-merit otherwise-eligible name (TSLA) left below the
+// sector-capped, a lowest-merit otherwise-eligible name (NKE) left below the
 // cut, and a quant veto (6758.T, which only quant — always priced — can see)
 // so a genuine veto is recorded too.
 func TestMeritVetoRecordsSectorCapBelowCutAndVetoed(t *testing.T) {
@@ -218,7 +218,7 @@ func TestMeritVetoRecordsSectorCapBelowCutAndVetoed(t *testing.T) {
 	cfg := meritVetoConfig(t)
 	// MSFT is a fourth sp500 nomination on top of the usual three; without
 	// one more shortlist slot the merge's own trim, not merit_veto, would be
-	// what dropped the weakest name (TSLA) before selection ever saw it.
+	// what dropped the weakest name (NKE) before selection ever saw it.
 	cfg.MaxShortlist = 13
 
 	complete, runErr, _ := drain(t, Run(context.Background(), cfg))
@@ -231,7 +231,7 @@ func TestMeritVetoRecordsSectorCapBelowCutAndVetoed(t *testing.T) {
 	dir := runDir(t, cfg.RunsDir)
 	rec := readSelection(t, dir)
 
-	wantShipped := map[string]bool{"XOM": true, "NVDA": true, "MSFT": true, "JPM": true, "NKE": true}
+	wantShipped := map[string]bool{"XOM": true, "NVDA": true, "MSFT": true, "JPM": true, "TSLA": true}
 	if len(complete.Ideas.Ideas) != len(wantShipped) {
 		t.Fatalf("shipped %d ideas, want %d: %+v", len(complete.Ideas.Ideas), len(wantShipped), complete.Ideas.Ideas)
 	}
@@ -244,8 +244,8 @@ func TestMeritVetoRecordsSectorCapBelowCutAndVetoed(t *testing.T) {
 	if amd, ok := rowFor(rec, "AMD"); !ok || amd.Excluded != excludedSectorCap || amd.Selected {
 		t.Errorf("AMD (the third Information Technology name, after NVDA and MSFT) = %+v, want excluded=%q", amd, excludedSectorCap)
 	}
-	if tsla, ok := rowFor(rec, "TSLA"); !ok || tsla.Excluded != excludedBelowCut || tsla.Selected {
-		t.Errorf("TSLA (lowest merit, otherwise eligible) = %+v, want excluded=%q", tsla, excludedBelowCut)
+	if nke, ok := rowFor(rec, "NKE"); !ok || nke.Excluded != excludedBelowCut || nke.Selected {
+		t.Errorf("NKE (lowest merit, otherwise eligible) = %+v, want excluded=%q", nke, excludedBelowCut)
 	}
 	vetoed, ok := rowFor(rec, "6758.T")
 	if !ok || vetoed.Excluded != excludedVetoed || vetoed.Selected || !vetoed.Vetoed ||

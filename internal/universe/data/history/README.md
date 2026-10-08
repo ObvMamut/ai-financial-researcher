@@ -61,9 +61,12 @@ Spot-checks match the public record:
   removed ALGN, EBAY, ENPH, JD, LCID and ZM.
 - FB became META on 2022-06-09.
 
-The project's own `nq100.csv` sample contains 11 names that are not current
-members (NET, SNOW, OKTA, TTD and others). It was chosen as a representative
-sample, not as the membership list.
+The project's own `nq100.csv` sample is a representative subset, not the
+membership list, but it holds only current members: on 2026-10-07 its 11
+non-members (BIIB, CHTR, ILMN, JD, NET, OKTA, ON, SNOW, TEAM, TTD, ZS) were
+replaced from this file, each by a current member missing from the sample,
+same sector first, then longest current membership, not in `sp500.csv`, ties
+alphabetical. `TestNQ100SampleHoldsOnlyCurrentMembers` keeps it that way.
 
 ## Sectors
 

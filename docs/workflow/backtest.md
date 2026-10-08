@@ -131,7 +131,7 @@ arms, because a model cannot be replayed without look-ahead.
   Newey-West t clears **2.5** in the registered direction, the mean has that
   sign in **both halves** (same median-date split), and the target is the
   beta-adjusted excess.
-  - **The US scope is sp500 ∪ nq100, one row per ticker per date.** 35 of
+  - **The US scope is sp500 ∪ nq100, one row per ticker per date.** 33 of
     nq100's 56 names are also in sp500. The per-region rows of the signal tables
     average the two indices' per-date ICs, which reads a cross-listed name twice
     on one date. A scoped statistic instead pools the region into one

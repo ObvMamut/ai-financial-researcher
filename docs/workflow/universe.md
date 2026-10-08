@@ -10,6 +10,9 @@ The tradeable universe is four indices. Constituent lists live as CSVs in
 | `eu50`   | EuroStoxx 50     | ~50          | Eurozone blue chips                    |
 | `asia100`| Asia 100 (broad) | ~100         | Curated pan-Asia large caps            |
 
+The `nq100` sample (56 names) holds only current Nasdaq-100 members per
+`data/history/nq100_changes.csv` (enforced by `TestNQ100SampleHoldsOnlyCurrentMembers`).
+
 ## CSV format
 
 `internal/universe/data/<key>.csv`:

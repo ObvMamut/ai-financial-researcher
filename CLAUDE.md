@@ -269,7 +269,7 @@ the thesis workflow for acquisition cutoffs and maturity limits.
    exists because the risk gate refuses more than `max_per_sector` ideas in one sector and
    nothing upstream knew that; the shortlist carries one spare per sector so the gate has
    something to choose between rather than only something to truncate. The agreement bonus
-   is paid only for *independent* nominations: 35 of nq100's 56 names are also in sp500, so
+   is paid only for *independent* nominations: 33 of nq100's 56 names are also in sp500, so
    two scouts naming one of those are two readings of one price history, not cross-index
    agreement. `shortlist_reserve` slots are held for non-`continuation` archetypes in a
    pass that runs first, filled only by candidates clearing `shortlist_reserve_min_merit`

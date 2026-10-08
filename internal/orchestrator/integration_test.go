@@ -145,6 +145,15 @@ func syntheticChart(symbol string) []byte {
 	if symbol == "NVDA" {
 		drift, vol = 0.0025, 0.010
 	}
+	// TestMeritVetoRecordsSectorCapBelowCutAndVetoed needs AMD to rank between
+	// MSFT and JPM, so that it is the third Information Technology name the
+	// sector cap meets before the book fills. On its random walk it did, by
+	// 0.05 of merit, until the 2026-10-07 nq100 replacement reshuffled the
+	// cross-section AMD is standardised in and dropped it below the cut. A mild
+	// deliberate uptrend puts it mid-board, about 0.15 clear on either side.
+	if symbol == "AMD" {
+		drift = 0.0005
+	}
 
 	// Walk back to the start date over weekdays, then forward again.
 	day := time.Now().UTC().Truncate(24 * time.Hour)

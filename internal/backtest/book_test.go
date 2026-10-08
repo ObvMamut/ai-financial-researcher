@@ -126,7 +126,7 @@ func TestBuildWeeklyBookNominationCapBinds(t *testing.T) {
 	}
 }
 
-// 35 of nq100's 56 names also sit in sp500, each standardised within its own
+// 33 of nq100's 56 names also sit in sp500, each standardised within its own
 // index and so generally carrying two different composite readings. Pooling
 // per-index survivors without a dedupe would let one ticker take two book
 // slots (and two sector-cap slots); the fix keeps the single higher-|score|

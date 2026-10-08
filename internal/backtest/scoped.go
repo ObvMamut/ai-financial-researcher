@@ -10,7 +10,7 @@ package backtest
 // halves, against the beta-adjusted target.
 //
 // Scoping is not a filter over the per-index cells crossSections builds. The
-// US region is sp500 ∪ nq100, and 35 of nq100's 56 names are also in sp500:
+// US region is sp500 ∪ nq100, and 33 of nq100's 56 names are also in sp500:
 // averaging the two indices' per-date ICs, as the "US" slice of the signal
 // tables does, reads a cross-listed name twice on one date. A scoped
 // cross-section is instead one pooled cell per date with one row per ticker

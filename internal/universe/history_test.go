@@ -152,3 +152,23 @@ func TestHistorySectorsCoverTodayAndRenamedTickers(t *testing.T) {
 		t.Error("a departed company has a sector; the source cannot place it")
 	}
 }
+
+// Every row of the nq100 sample is a Nasdaq-100 member on the history's last
+// date — the sample may be partial, never wrong.
+func TestNQ100SampleHoldsOnlyCurrentMembers(t *testing.T) {
+	h, err := LoadHistory("nq100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := h.Last
+	members := h.MembersOn(last)
+	for _, c := range u.Constituents("nq100") {
+		if !slices.Contains(members, strings.ToUpper(c.Ticker)) {
+			t.Errorf("%s is in nq100.csv but not a Nasdaq-100 member on %s", c.Ticker, last.Format("2006-01-02"))
+		}
+	}
+}

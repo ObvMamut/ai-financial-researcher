@@ -299,7 +299,7 @@ carries no drift signal rather than a wrong one. The whole leg is additive: no
   BAYN.DE, BMW.DE and DSFIR.AS, which are not. Scaling rather than subtracting a penalty is
   what keeps it dimensionally honest: a 2.75 the run can evidence over 35% of the weight is
   not a 2.75 to be docked, it is a 2.75 that is 35% evidenced. The sign is untouched.
-- **The agreement bonus is paid only for *independent* nominations.** 35 of nq100's 56
+- **The agreement bonus is paid only for *independent* nominations.** 33 of nq100's 56
   names are also in sp500, so two scouts naming one of those are choosing one ticker out of
   two overlapping pools built from one price history — one reading reported twice, not
   cross-index agreement. On 2026-09-05 all four dual-nominated names (MU, PANW, QCOM, SNPS)

@@ -77,7 +77,7 @@ type BookPick struct {
 // |composite|, and sorts the result by |composite| descending (ties broken on
 // the ticker string, for a deterministic order independent of map iteration).
 //
-// 35 of nq100's 56 names also sit in sp500, each standardised — and so scored
+// 33 of nq100's 56 names also sit in sp500, each standardised — and so scored
 // — within its own index's cross-section (docs/workflow/independent-research.md's
 // "Composite, z-scored within each index"), so a cross-listed name generally
 // carries two different composite values, one per index. Pooling per-index

@@ -1892,8 +1892,8 @@ func cheapModelName(cfg Config) string {
 // The merit sort pays meritAgreementBonus per extra nomination, and the reason
 // it gives is that "two scouts reaching the same name from different index
 // tables is independent evidence". That holds only where the tables are drawn
-// from different pools. 35 of the 56 names in nq100 are also in sp500 — MU,
-// PANW, QCOM, SNPS, NVDA, META and thirty more — so for those names the two
+// from different pools. 33 of the 56 names in nq100 are also in sp500 — MU,
+// PANW, QCOM, SNPS, NVDA, META and twenty-seven more — so for those names the two
 // scouts are choosing the same ticker out of two overlapping candidate pools
 // built from one price history. The composite differs between the two rows only
 // because it is standardised within each index; the underlying evidence is one

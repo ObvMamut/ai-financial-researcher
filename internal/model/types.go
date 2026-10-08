@@ -113,7 +113,7 @@ type Candidate struct {
 	Nominations int `json:"nominations,omitempty"`
 	// NominatedBy names the indices that put this ticker forward in that
 	// direction, in collection order. Nominations is a count and cannot answer
-	// whether the scouts were looking at different evidence: 35 of the 56 names
+	// whether the scouts were looking at different evidence: 33 of the 56 names
 	// in nq100 are also in sp500, so two scouts "agreeing" on MU may be two
 	// readings of one row. The orchestrator collapses those before the merit
 	// sort pays for them; this is what it collapses on.

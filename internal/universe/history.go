@@ -42,6 +42,7 @@ func (iv Interval) Contains(d time.Time) bool {
 type History struct {
 	Index     string
 	Baseline  time.Time
+	Last      time.Time // the newest change row's date
 	Intervals []Interval
 }
 
@@ -84,7 +85,7 @@ func parseHistory(index string, rd io.Reader) (*History, error) {
 		if i > 0 && !d.After(prev) {
 			return nil, fmt.Errorf("%s history row %d: %s is not after %s", index, i+2, row[0], prev.Format("2006-01-02"))
 		}
-		prev = d
+		prev, h.Last = d, d
 		field := func(k int) []string {
 			if k < len(row) {
 				return strings.Fields(row[k])

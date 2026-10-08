@@ -526,7 +526,7 @@ func overnightIntraday(bars []quant.Bar, n int) (float64, float64) {
 
 // addIndustryMomentum sets indmom: the mean 63-session return of the record's
 // sector within its region on its date, each ticker counted once — sp500 and
-// nq100 share 35 names, and counting those twice would weight the US sectors
+// nq100 share 33 names, and counting those twice would weight the US sectors
 // toward whatever nq100 over-represents.
 func addIndustryMomentum(recs []Record) {
 	type key struct{ date, region, sector string }
