@@ -182,9 +182,15 @@ internal/
                 date (internal/universe/data/history, priced through
                 Alpaca's asof): PIT-IC10, PIT-H1-63 and PIT-E1 all fail
                 (H1-63 t 1.30 against the same window's sample at 2.24), so
-                survivorship had inflated the closest miss by about a third. Live runs are measurement only, at a cadence the
-                owner sets; the keep/cut/stop memo is
-                docs/research/2026-10-01-keep-cut-stop.md
+                survivorship had inflated the closest miss by about a third.
+                v8 (2026-10-08): three published price-only anomalies the
+                composite lacks — N1 MAX, N2 IVOL, N3 FIP — fail on the PIT
+                lab at 21 sessions (t 1.66, 2.13, 0.45); the register holds 21
+                tests, none passed, smallest Holm p 0.333. Live runs are
+                suspended by owner decision (2026-10-08: the keep/cut/stop
+                memo's option 2, after N1–N3 failed); `cfr canary`,
+                `cfr backtest` and `cfr scoreboard` stay supported. The memo
+                is docs/research/2026-10-01-keep-cut-stop.md
 agents/*.md     agent persona prompts (runtime data)
 agents.v1/      frozen pre-overhaul personas: the control arm of the persona A/B
                 (CFR_AGENTS_DIR=agents.v1); never edited
@@ -415,7 +421,7 @@ Single-stock mode: shortlist = `[ticker]`, skip step 1, `topN = 1`.
 go build ./...        # build
 go test ./...         # unit tests
 go run ./cmd/cfr      # launch the TUI
-go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3 degraded)
+go run ./cmd/cfr run --indices sp500,eu50 --json   # headless run (exit 0 ok / 3 degraded); suspended by owner decision, 2026-10-08
 go run ./cmd/cfr scoreboard                        # past-idea performance (path replay)
 go run ./cmd/cfr scoreboard --control              # shipped vs composite, shortlist, Chief shadow, vetoed
 go run ./cmd/cfr postmortem                        # attribution cells + the stored lessons

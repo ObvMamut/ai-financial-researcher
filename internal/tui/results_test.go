@@ -94,7 +94,7 @@ func TestJSONTextAndTUIAgreeOnChiefAndResearchCounts(t *testing.T) {
 func TestResultsSayTheScreenHasNoEdge(t *testing.T) {
 	idea := model.TradeIdea{Rank: 1, Ticker: "AAA", Direction: model.DirectionBuy, Confidence: 50}
 	legacy := newResultsModel(&model.IdeasResult{Mode: "independent", Ideas: []model.TradeIdea{idea}}, "runs/x").View()
-	for _, want := range []string{"No signal tested has shown an edge", "held 15, 21 or 63 sessions", "survivorship-free US replay"} {
+	for _, want := range []string{"No signal tested has shown an edge", "held 15, 21 or 63 sessions", "survivorship-free US replay", "MAX, IVOL or FIP"} {
 		if !strings.Contains(legacy, want) {
 			t.Errorf("legacy independent results lack %q:\n%s", want, legacy)
 		}

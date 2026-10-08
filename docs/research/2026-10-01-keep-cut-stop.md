@@ -82,3 +82,18 @@ Option 1, narrowed, as recommended. If N1–N3 all fail, option 2 follows with n
 Separately, nq100.csv's 11 non-members are replaced by current members.
 
 No setting or default changed with this memo.
+
+## Outcome (2026-10-08)
+
+N1–N3 all fail on the point-in-time US lab at 21 sessions:
+- N1 MAX: t 1.66.
+- N2 IVOL: t 2.13.
+- N3 FIP: t 0.45.
+
+The smallest Holm p over the 21-test register is 0.333 (`2026-10-08-lab-anomalies.md`).
+
+**Option 2 is in force from 2026-10-08.**
+- Live runs are suspended by owner decision.
+- `cfr canary`, `cfr backtest` and `cfr scoreboard` remain supported.
+- OOS-H1-63 is the only open question. Its single evaluation is `cfr backtest --evaluate-oos`,
+  once 52 held-out weeks have matured (about 2027-12).

@@ -95,8 +95,10 @@ func (m resultsModel) Update(msg tea.Msg) (resultsModel, tea.Cmd) {
 // drift, the one documented effect on this clock, failed D1 and D2 in the lab.
 // v5 (2026-10-01) found the screen's top-5 book at 21 and 63 sessions and 12-1
 // momentum alone at 21 and 63 failing too (H1, H2).
+// v8 (2026-10-08): MAX, IVOL and FIP, three published anomalies the composite
+// lacks, fail on the point-in-time US lab at 21 sessions (N1-N3).
 // The reader should know that nothing tested on this horizon picks well.
-const screenNoEdgeLine = "  No signal tested has shown an edge net of cost: not the pre-screen\n  that ranked these ideas, held 15, 21 or 63 sessions, not 12-1\n  momentum alone, not the model stages, not post-earnings drift. A\n  survivorship-free US replay (2017-2026) confirms it for the screen."
+const screenNoEdgeLine = "  No signal tested has shown an edge net of cost: not the pre-screen\n  that ranked these ideas, held 15, 21 or 63 sessions, not 12-1\n  momentum alone, not the model stages, not post-earnings drift. A\n  survivorship-free US replay (2017-2026) confirms it for the screen\n  and finds none in MAX, IVOL or FIP either."
 
 func (m resultsModel) View() string {
 	if m.detail != nil {
