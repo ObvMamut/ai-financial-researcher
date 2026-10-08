@@ -48,7 +48,11 @@ func runBacktest(settings *config.Settings, args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	uni, err := universe.Load()
+	load := universe.Load
+	if *evaluateOOS {
+		load = func() (*universe.Universe, error) { return universe.LoadFrozen(backtest.OOSUniverse) }
+	}
+	uni, err := load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1

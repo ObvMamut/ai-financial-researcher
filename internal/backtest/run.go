@@ -61,6 +61,11 @@ var OOSHoldoutAfter = time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
 // 63-session window before OOS-H1-63 may be computed.
 const OOSMatureDates = 52
 
+// OOSUniverse names the universe OOS-H1-63 registered: the four index files
+// as they stood at registration, embedded byte for byte by
+// universe.LoadFrozen. The live samples change after it and are refused.
+const OOSUniverse = "oos-h1-63"
+
 // DefaultYears is Config.Years' default, and the threshold LongHistorySurvivorship
 // is measured against: past it, the per-year report (E1) is showing more history
 // than the halves above it do.
@@ -206,6 +211,10 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 	pit := cfg.Universe == UniversePIT
 	if pit && cfg.AsOf == nil {
 		return nil, fmt.Errorf("the point-in-time universe needs an asof price source (Alpaca keys)")
+	}
+
+	if cfg.EvaluateOOS && uni.Frozen() != OOSUniverse {
+		return nil, fmt.Errorf("OOS-H1-63 is evaluated on the universe frozen at its registration (universe.LoadFrozen(%q)), not the live samples", OOSUniverse)
 	}
 
 	holdout := cfg.HoldoutAfter

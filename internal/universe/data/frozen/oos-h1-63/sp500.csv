@@ -1,0 +1,100 @@
+# source: S&P 500 representative constituents as of 2026-06-01
+ticker,name,exchange,country,sector
+AAPL,Apple Inc.,NASDAQ,US,Information Technology
+MSFT,Microsoft Corporation,NASDAQ,US,Information Technology
+NVDA,NVIDIA Corporation,NASDAQ,US,Information Technology
+AMZN,Amazon.com Inc.,NASDAQ,US,Consumer Discretionary
+GOOGL,Alphabet Inc. Class A,NASDAQ,US,Communication Services
+GOOG,Alphabet Inc. Class C,NASDAQ,US,Communication Services
+META,Meta Platforms Inc.,NASDAQ,US,Communication Services
+TSLA,Tesla Inc.,NASDAQ,US,Consumer Discretionary
+BRK.B,Berkshire Hathaway Inc. Class B,NYSE,US,Financials
+JPM,JPMorgan Chase & Co.,NYSE,US,Financials
+JNJ,Johnson & Johnson,NYSE,US,Health Care
+UNH,UnitedHealth Group Inc.,NYSE,US,Health Care
+XOM,Exxon Mobil Corporation,NYSE,US,Energy
+V,Visa Inc.,NYSE,US,Financials
+MA,Mastercard Incorporated,NYSE,US,Financials
+PG,Procter & Gamble Co.,NYSE,US,Consumer Staples
+HD,The Home Depot Inc.,NYSE,US,Consumer Discretionary
+CVX,Chevron Corporation,NYSE,US,Energy
+MRK,Merck & Co. Inc.,NYSE,US,Health Care
+LLY,Eli Lilly and Company,NYSE,US,Health Care
+ABBV,AbbVie Inc.,NYSE,US,Health Care
+PFE,Pfizer Inc.,NYSE,US,Health Care
+BAC,Bank of America Corporation,NYSE,US,Financials
+KO,The Coca-Cola Company,NYSE,US,Consumer Staples
+AVGO,Broadcom Inc.,NASDAQ,US,Information Technology
+TMO,Thermo Fisher Scientific Inc.,NYSE,US,Health Care
+COST,Costco Wholesale Corporation,NASDAQ,US,Consumer Staples
+WMT,Walmart Inc.,NYSE,US,Consumer Staples
+DIS,The Walt Disney Company,NYSE,US,Communication Services
+CSCO,Cisco Systems Inc.,NASDAQ,US,Information Technology
+NFLX,Netflix Inc.,NASDAQ,US,Communication Services
+ADBE,Adobe Inc.,NASDAQ,US,Information Technology
+CRM,Salesforce Inc.,NYSE,US,Information Technology
+PYPL,PayPal Holdings Inc.,NASDAQ,US,Financials
+INTC,Intel Corporation,NASDAQ,US,Information Technology
+AMD,Advanced Micro Devices Inc.,NASDAQ,US,Information Technology
+QCOM,Qualcomm Incorporated,NASDAQ,US,Information Technology
+TXN,Texas Instruments Incorporated,NASDAQ,US,Information Technology
+LOW,Lowe's Companies Inc.,NYSE,US,Consumer Discretionary
+CAT,Caterpillar Inc.,NYSE,US,Industrials
+DE,Deere & Company,NYSE,US,Industrials
+GE,GE Aerospace,NYSE,US,Industrials
+HON,Honeywell International Inc.,NASDAQ,US,Industrials
+BA,The Boeing Company,NYSE,US,Industrials
+RTX,RTX Corporation,NYSE,US,Industrials
+LMT,Lockheed Martin Corporation,NYSE,US,Industrials
+GS,The Goldman Sachs Group Inc.,NYSE,US,Financials
+MS,Morgan Stanley,NYSE,US,Financials
+WFC,Wells Fargo & Company,NYSE,US,Financials
+C,Citigroup Inc.,NYSE,US,Financials
+BLK,BlackRock Inc.,NYSE,US,Financials
+SPGI,S&P Global Inc.,NYSE,US,Financials
+AMT,American Tower Corporation,NYSE,US,Real Estate
+PLD,Prologis Inc.,NYSE,US,Real Estate
+NEE,NextEra Energy Inc.,NYSE,US,Utilities
+DUK,Duke Energy Corporation,NYSE,US,Utilities
+SO,Southern Company,NYSE,US,Utilities
+SHW,The Sherwin-Williams Company,NYSE,US,Materials
+LIN,Linde plc,NYSE,US,Materials
+APD,Air Products and Chemicals Inc.,NYSE,US,Materials
+NUE,Nucor Corporation,NYSE,US,Materials
+FCX,Freeport-McMoRan Inc.,NYSE,US,Materials
+MO,Altria Group Inc.,NYSE,US,Consumer Staples
+PM,Philip Morris International Inc.,NYSE,US,Consumer Staples
+PEP,PepsiCo Inc.,NASDAQ,US,Consumer Staples
+MDLZ,Mondelez International Inc.,NASDAQ,US,Consumer Staples
+CL,Colgate-Palmolive Company,NYSE,US,Consumer Staples
+EL,Estee Lauder Companies Inc.,NYSE,US,Consumer Staples
+NKE,NIKE Inc.,NYSE,US,Consumer Discretionary
+MCD,McDonald's Corporation,NYSE,US,Consumer Discretionary
+SBUX,Starbucks Corporation,NASDAQ,US,Consumer Discretionary
+TJX,TJX Companies Inc.,NYSE,US,Consumer Discretionary
+F,Ford Motor Company,NYSE,US,Consumer Discretionary
+GM,General Motors Company,NYSE,US,Consumer Discretionary
+CMG,Chipotle Mexican Grill Inc.,NYSE,US,Consumer Discretionary
+AMGN,Amgen Inc.,NASDAQ,US,Health Care
+GILD,Gilead Sciences Inc.,NASDAQ,US,Health Care
+BIIB,Biogen Inc.,NASDAQ,US,Health Care
+REGN,Regeneron Pharmaceuticals Inc.,NASDAQ,US,Health Care
+ISRG,Intuitive Surgical Inc.,NASDAQ,US,Health Care
+BSX,Boston Scientific Corporation,NYSE,US,Health Care
+MDT,Medtronic plc,NYSE,US,Health Care
+T,AT&T Inc.,NYSE,US,Communication Services
+VZ,Verizon Communications Inc.,NYSE,US,Communication Services
+CHTR,Charter Communications Inc.,NASDAQ,US,Communication Services
+TMUS,T-Mobile US Inc.,NASDAQ,US,Communication Services
+NOW,ServiceNow Inc.,NYSE,US,Information Technology
+PANW,Palo Alto Networks Inc.,NASDAQ,US,Information Technology
+SNPS,Synopsys Inc.,NASDAQ,US,Information Technology
+CDNS,Cadence Design Systems Inc.,NASDAQ,US,Information Technology
+ORCL,Oracle Corporation,NYSE,US,Information Technology
+IBM,International Business Machines,NYSE,US,Information Technology
+ACN,Accenture plc,NYSE,US,Information Technology
+INTU,Intuit Inc.,NASDAQ,US,Information Technology
+AMAT,Applied Materials Inc.,NASDAQ,US,Information Technology
+LRCX,Lam Research Corporation,NASDAQ,US,Information Technology
+KLAC,KLA Corporation,NASDAQ,US,Information Technology
+MU,Micron Technology Inc.,NASDAQ,US,Information Technology

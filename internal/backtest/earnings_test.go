@@ -302,19 +302,47 @@ func TestRunHoldsOutTheOutOfSampleWeeks(t *testing.T) {
 
 	// The one evaluation refuses until 52 rebalance dates have a matured
 	// 63-session window.
+	frozen, err := universe.LoadFrozen(OOSUniverse)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg.EvaluateOOS = true
-	if _, err := Run(context.Background(), fakeLoader{}, uni, cfg); err == nil || !strings.Contains(err.Error(), "of 52") {
+	if _, err := Run(context.Background(), fakeLoader{}, frozen, cfg); err == nil || !strings.Contains(err.Error(), "of 52") {
 		t.Errorf("an immature evaluation = %v, want a refusal counting matured dates of 52", err)
 	}
 
 	// With enough matured weeks it runs, on the held-out weeks only.
 	cfg.HoldoutAfter = day("2020-12-25")
 	cfg.Years = 2
-	res, err = Run(context.Background(), fakeLoader{}, uni, cfg)
+	res, err = Run(context.Background(), fakeLoader{}, frozen, cfg)
 	if err != nil {
 		t.Fatalf("a mature evaluation refused: %v", err)
 	}
 	if res.Start <= "2020-12-25" {
 		t.Errorf("the evaluation starts %s, inside the in-sample period", res.Start)
+	}
+}
+
+// OOS-H1-63 registered the universe as it stood at registration. The live
+// samples change after it (v8 replaces nq100's non-members), so the one
+// evaluation refuses them and reads only the embedded frozen copy.
+func TestEvaluateOOSRefusesTheLiveSamples(t *testing.T) {
+	cfg := Config{Years: 1, Indices: []string{"nq100"}, Now: day("2022-09-30"), HoldoutAfter: day("2022-06-24"), EvaluateOOS: true}
+
+	live, err := universe.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), fakeLoader{}, live, cfg); err == nil || !strings.Contains(err.Error(), OOSUniverse) {
+		t.Errorf("an evaluation on the live samples = %v, want a refusal naming %q", err, OOSUniverse)
+	}
+
+	frozen, err := universe.LoadFrozen(OOSUniverse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Past the universe check, to the maturity refusal.
+	if _, err := Run(context.Background(), fakeLoader{}, frozen, cfg); err == nil || !strings.Contains(err.Error(), "of 52") {
+		t.Errorf("an immature evaluation on the frozen universe = %v, want the maturity refusal", err)
 	}
 }

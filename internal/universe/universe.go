@@ -16,6 +16,13 @@ import (
 //go:embed data/*.csv
 var dataFS embed.FS
 
+// frozenFS holds byte-identical copies of the index files as a registered
+// out-of-sample test fixed them, one directory per registration. The live
+// samples keep changing; a registration's universe must not.
+//
+//go:embed data/frozen/oos-h1-63/*.csv
+var frozenFS embed.FS
+
 // indexKeys is the ordered set of supported index identifiers.
 var indexKeys = []string{"sp500", "nq100", "eu50", "asia100"}
 
@@ -23,22 +30,43 @@ var indexKeys = []string{"sp500", "nq100", "eu50", "asia100"}
 type Universe struct {
 	byIndex  map[string][]model.Constituent
 	byTicker map[string]model.Constituent // canonical ticker → first match
+	frozen   string                       // registration name; "" for the live samples
 }
 
 // Load reads all four CSV files from the embedded FS and returns a Universe.
 func Load() (*Universe, error) {
+	return load(dataFS, "data", "")
+}
+
+// LoadFrozen reads the four index files frozen for one registration (for
+// example "oos-h1-63") instead of the live samples. An unknown name is an
+// error, never an empty universe.
+func LoadFrozen(name string) (*Universe, error) {
+	dir := "data/frozen/" + name
+	if st, err := fs.Stat(frozenFS, dir); name == "" || strings.Contains(name, "/") || err != nil || !st.IsDir() {
+		return nil, fmt.Errorf("universe: no frozen universe %q", name)
+	}
+	return load(frozenFS, dir, name)
+}
+
+// Frozen names the registration this universe was frozen for, or "" when it
+// holds the live samples.
+func (u *Universe) Frozen() string { return u.frozen }
+
+func load(fsys fs.FS, dir, frozen string) (*Universe, error) {
 	u := &Universe{
 		byIndex:  make(map[string][]model.Constituent),
 		byTicker: make(map[string]model.Constituent),
+		frozen:   frozen,
 	}
 	for _, key := range indexKeys {
-		path := fmt.Sprintf("data/%s.csv", key)
-		f, err := dataFS.Open(path)
+		path := fmt.Sprintf("%s/%s.csv", dir, key)
+		f, err := fsys.Open(path)
 		if err != nil {
 			return nil, fmt.Errorf("universe: open %s: %w", path, err)
 		}
-		rows, err := parseCSV(f.(fs.File), key)
-		f.(fs.File).Close()
+		rows, err := parseCSV(f, key)
+		f.Close()
 		if err != nil {
 			return nil, fmt.Errorf("universe: parse %s: %w", path, err)
 		}

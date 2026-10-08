@@ -1,6 +1,7 @@
 package universe
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -563,5 +564,44 @@ func TestCapMeritSpreadsTheShortlistAcrossSectors(t *testing.T) {
 	scores["XXX"], scores["YYY"] = 1, 0
 	if got := len(CapMerit(unsectored, MeritCaps{Max: 5, PerSector: 3, Score: score})); got != 5 {
 		t.Errorf("unsectored names were capped together, got %d of 5", got)
+	}
+}
+
+func TestOOSUniverseIsFrozenByteForByte(t *testing.T) {
+	// SHA-256 of internal/universe/data/<key>.csv at the OOS-H1-63 registration
+	// (identical from 3b38520 through 06cab72).
+	want := map[string]string{
+		"sp500":   "98402233cac4e488f57e98226a24a2e89005e753ca741835a0b0c3cb5c6ef2cb",
+		"nq100":   "804a5678ccb114935af510c0214f977db8e7d5c32f288e43fb38201d47cde95c",
+		"eu50":    "ff4888cda2dc3d77c452c2a915b569ee5ba5132c11de4239799669fa70f93b1e",
+		"asia100": "91e4c827b9ff468064f8fec1a1544a1f2bebfab098cd20a8b6bfe7cb30de9261",
+	}
+	for key, sum := range want {
+		b, err := frozenFS.ReadFile("data/frozen/oos-h1-63/" + key + ".csv")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(b)); got != sum {
+			t.Errorf("frozen %s.csv sha256 %s, want %s: OOS-H1-63's registered universe must not change", key, got, sum)
+		}
+	}
+	u, err := LoadFrozen("oos-h1-63")
+	if err != nil || u.Frozen() != "oos-h1-63" || len(u.Constituents("nq100")) != 56 {
+		t.Fatalf("LoadFrozen = %v, %v", u, err)
+	}
+}
+
+// The live samples are not a frozen universe, and a frozen name that was
+// never registered is refused rather than read as an empty universe.
+func TestFrozenNameIsExplicit(t *testing.T) {
+	u, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Frozen() != "" {
+		t.Errorf("Load().Frozen() = %q, want empty", u.Frozen())
+	}
+	if _, err := LoadFrozen("no-such-registration"); err == nil {
+		t.Error("LoadFrozen of an unknown name succeeded")
 	}
 }

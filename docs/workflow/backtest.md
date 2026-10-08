@@ -370,7 +370,13 @@ before any of those weeks exist. It is one test, run once.
   `internal/universe/data/*.csv` files as of this commit (last changed in
   `5cf834e`). A name that later leaves an index stays in. Rows added later are
   not used. This makes the test survivorship-free by construction, which none
-  of the 15 earlier tests were.
+  of the 15 earlier tests were. Enforced in code since the commit "Freeze
+  OOS-H1-63's registered universe in code before the samples change":
+  `--evaluate-oos` reads byte-identical embedded copies of the four index files
+  (`internal/universe/data/frozen/oos-h1-63/`, SHA-256 pinned in
+  `TestOOSUniverseIsFrozenByteForByte`), so later edits to the live samples,
+  such as v8's nq100 replacement, cannot reach it. This changes no statistic
+  and no sample.
 - **Code frozen.** The composite is the shipping `ScorePrescreen` as of this
   commit. If it changes before evaluation, the test runs on this commit's
   version, checked out for the purpose.

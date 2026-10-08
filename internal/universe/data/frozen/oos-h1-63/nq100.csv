@@ -1,0 +1,58 @@
+# source: Nasdaq 100 representative constituents as of 2026-06-01
+ticker,name,exchange,country,sector
+AAPL,Apple Inc.,NASDAQ,US,Information Technology
+MSFT,Microsoft Corporation,NASDAQ,US,Information Technology
+NVDA,NVIDIA Corporation,NASDAQ,US,Information Technology
+AMZN,Amazon.com Inc.,NASDAQ,US,Consumer Discretionary
+GOOGL,Alphabet Inc. Class A,NASDAQ,US,Communication Services
+GOOG,Alphabet Inc. Class C,NASDAQ,US,Communication Services
+META,Meta Platforms Inc.,NASDAQ,US,Communication Services
+TSLA,Tesla Inc.,NASDAQ,US,Consumer Discretionary
+AVGO,Broadcom Inc.,NASDAQ,US,Information Technology
+COST,Costco Wholesale Corporation,NASDAQ,US,Consumer Staples
+NFLX,Netflix Inc.,NASDAQ,US,Communication Services
+ADBE,Adobe Inc.,NASDAQ,US,Information Technology
+CSCO,Cisco Systems Inc.,NASDAQ,US,Information Technology
+AMD,Advanced Micro Devices Inc.,NASDAQ,US,Information Technology
+INTC,Intel Corporation,NASDAQ,US,Information Technology
+QCOM,Qualcomm Incorporated,NASDAQ,US,Information Technology
+INTU,Intuit Inc.,NASDAQ,US,Information Technology
+AMAT,Applied Materials Inc.,NASDAQ,US,Information Technology
+MU,Micron Technology Inc.,NASDAQ,US,Information Technology
+LRCX,Lam Research Corporation,NASDAQ,US,Information Technology
+KLAC,KLA Corporation,NASDAQ,US,Information Technology
+SNPS,Synopsys Inc.,NASDAQ,US,Information Technology
+CDNS,Cadence Design Systems Inc.,NASDAQ,US,Information Technology
+PANW,Palo Alto Networks Inc.,NASDAQ,US,Information Technology
+CRWD,CrowdStrike Holdings Inc.,NASDAQ,US,Information Technology
+MRVL,Marvell Technology Inc.,NASDAQ,US,Information Technology
+ON,ON Semiconductor Corporation,NASDAQ,US,Information Technology
+ASML,ASML Holding NV ADR,NASDAQ,NL,Information Technology
+ABNB,Airbnb Inc.,NASDAQ,US,Consumer Discretionary
+BKNG,Booking Holdings Inc.,NASDAQ,US,Consumer Discretionary
+PDD,PDD Holdings Inc. ADR,NASDAQ,CN,Consumer Discretionary
+JD,JD.com Inc. ADR,NASDAQ,CN,Consumer Discretionary
+SBUX,Starbucks Corporation,NASDAQ,US,Consumer Discretionary
+MELI,MercadoLibre Inc.,NASDAQ,AR,Consumer Discretionary
+AMGN,Amgen Inc.,NASDAQ,US,Health Care
+GILD,Gilead Sciences Inc.,NASDAQ,US,Health Care
+BIIB,Biogen Inc.,NASDAQ,US,Health Care
+REGN,Regeneron Pharmaceuticals Inc.,NASDAQ,US,Health Care
+ISRG,Intuitive Surgical Inc.,NASDAQ,US,Health Care
+VRTX,Vertex Pharmaceuticals Inc.,NASDAQ,US,Health Care
+IDXX,IDEXX Laboratories Inc.,NASDAQ,US,Health Care
+DXCM,DexCom Inc.,NASDAQ,US,Health Care
+ILMN,Illumina Inc.,NASDAQ,US,Health Care
+TMUS,T-Mobile US Inc.,NASDAQ,US,Communication Services
+CHTR,Charter Communications Inc.,NASDAQ,US,Communication Services
+PEP,PepsiCo Inc.,NASDAQ,US,Consumer Staples
+MDLZ,Mondelez International Inc.,NASDAQ,US,Consumer Staples
+HON,Honeywell International Inc.,NASDAQ,US,Industrials
+TEAM,Atlassian Corporation,NASDAQ,AU,Information Technology
+ZS,Zscaler Inc.,NASDAQ,US,Information Technology
+OKTA,Okta Inc.,NASDAQ,US,Information Technology
+DDOG,Datadog Inc.,NASDAQ,US,Information Technology
+NET,Cloudflare Inc.,NASDAQ,US,Information Technology
+SNOW,Snowflake Inc.,NYSE,US,Information Technology
+PLTR,Palantir Technologies Inc.,NASDAQ,US,Information Technology
+TTD,The Trade Desk Inc.,NASDAQ,US,Communication Services

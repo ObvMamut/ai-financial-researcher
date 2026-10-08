@@ -1,0 +1,69 @@
+# source: Asia 100 curated pan-Asia large caps as of 2026-06-01
+ticker,name,exchange,country,sector
+7203.T,Toyota Motor Corporation,TSE,JP,Consumer Discretionary
+6758.T,Sony Group Corporation,TSE,JP,Consumer Discretionary
+6861.T,KEYENCE Corporation,TSE,JP,Information Technology
+9984.T,SoftBank Group Corp.,TSE,JP,Communication Services
+6367.T,Daikin Industries Ltd.,TSE,JP,Industrials
+9432.T,Nippon Telegraph and Telephone,TSE,JP,Communication Services
+8306.T,Mitsubishi UFJ Financial Group,TSE,JP,Financials
+7974.T,Nintendo Co. Ltd.,TSE,JP,Communication Services
+6501.T,Hitachi Ltd.,TSE,JP,Industrials
+4519.T,Chugai Pharmaceutical Co. Ltd.,TSE,JP,Health Care
+6954.T,Fanuc Corporation,TSE,JP,Industrials
+8035.T,Tokyo Electron Ltd.,TSE,JP,Information Technology
+6902.T,Denso Corporation,TSE,JP,Consumer Discretionary
+9983.T,Fast Retailing Co. Ltd. (Uniqlo),TSE,JP,Consumer Discretionary
+4063.T,Shin-Etsu Chemical Co. Ltd.,TSE,JP,Materials
+0700.HK,Tencent Holdings Ltd.,HKEX,CN,Communication Services
+9988.HK,Alibaba Group Holding Ltd.,HKEX,CN,Consumer Discretionary
+3690.HK,Meituan,HKEX,CN,Consumer Discretionary
+1810.HK,Xiaomi Corporation,HKEX,CN,Information Technology
+0941.HK,China Mobile Ltd.,HKEX,CN,Communication Services
+2318.HK,Ping An Insurance Group,HKEX,CN,Financials
+3988.HK,Bank of China Ltd.,HKEX,CN,Financials
+0883.HK,CNOOC Ltd.,HKEX,CN,Energy
+2382.HK,Sunny Optical Technology,HKEX,CN,Information Technology
+1299.HK,AIA Group Ltd.,HKEX,HK,Financials
+0005.HK,HSBC Holdings plc,HKEX,HK,Financials
+005930.KS,Samsung Electronics Co. Ltd.,KRX,KR,Information Technology
+000660.KS,SK Hynix Inc.,KRX,KR,Information Technology
+005380.KS,Hyundai Motor Company,KRX,KR,Consumer Discretionary
+068270.KS,Celltrion Inc.,KRX,KR,Health Care
+035420.KS,NAVER Corporation,KRX,KR,Communication Services
+035720.KS,Kakao Corp.,KRX,KR,Communication Services
+051910.KS,LG Chem Ltd.,KRX,KR,Materials
+2330.TW,Taiwan Semiconductor Manufacturing,TWSE,TW,Information Technology
+2317.TW,Hon Hai Precision Industry (Foxconn),TWSE,TW,Information Technology
+2454.TW,MediaTek Inc.,TWSE,TW,Information Technology
+2382.TW,Quanta Computer Inc.,TWSE,TW,Information Technology
+2308.TW,Delta Electronics Inc.,TWSE,TW,Industrials
+2357.TW,ASUSTeK Computer Inc.,TWSE,TW,Information Technology
+2412.TW,Chunghwa Telecom Co. Ltd.,TWSE,TW,Communication Services
+RELIANCE.NS,Reliance Industries Ltd.,NSE,IN,Energy
+TCS.NS,Tata Consultancy Services Ltd.,NSE,IN,Information Technology
+HDFCBANK.NS,HDFC Bank Ltd.,NSE,IN,Financials
+INFY.NS,Infosys Ltd.,NSE,IN,Information Technology
+HINDUNILVR.NS,Hindustan Unilever Ltd.,NSE,IN,Consumer Staples
+ICICIBANK.NS,ICICI Bank Ltd.,NSE,IN,Financials
+WIPRO.NS,Wipro Ltd.,NSE,IN,Information Technology
+BAJFINANCE.NS,Bajaj Finance Ltd.,NSE,IN,Financials
+TATASTEEL.NS,Tata Steel Ltd.,NSE,IN,Materials
+SUNPHARMA.NS,Sun Pharmaceutical Industries,NSE,IN,Health Care
+BHP.AX,BHP Group Ltd.,ASX,AU,Materials
+CBA.AX,Commonwealth Bank of Australia,ASX,AU,Financials
+CSL.AX,CSL Ltd.,ASX,AU,Health Care
+RIO.AX,Rio Tinto Ltd.,ASX,AU,Materials
+ANZ.AX,ANZ Group Holdings Ltd.,ASX,AU,Financials
+WBC.AX,Westpac Banking Corporation,ASX,AU,Financials
+MQG.AX,Macquarie Group Ltd.,ASX,AU,Financials
+WES.AX,Wesfarmers Ltd.,ASX,AU,Consumer Discretionary
+FMG.AX,Fortescue Ltd.,ASX,AU,Materials
+STO.AX,Santos Ltd.,ASX,AU,Energy
+D05.SI,DBS Group Holdings Ltd.,SGX,SG,Financials
+O39.SI,Oversea-Chinese Banking Corporation,SGX,SG,Financials
+U11.SI,United Overseas Bank Ltd.,SGX,SG,Financials
+BN4.SI,Keppel Ltd.,SGX,SG,Industrials
+C6L.SI,Singapore Airlines Ltd.,SGX,SG,Industrials
+PTT.BK,PTT Public Company Ltd.,SET,TH,Energy
+SCB.BK,SCB X Public Company Ltd.,SET,TH,Financials
