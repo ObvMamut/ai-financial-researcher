@@ -90,7 +90,7 @@ N1–N3 all fail on the point-in-time US lab at 21 sessions:
 - N2 IVOL: t 2.13.
 - N3 FIP: t 0.45.
 
-The smallest Holm p over the 21-test register is 0.333 (`2026-10-08-lab-anomalies.md`).
+The smallest Holm p over the 21-test register is 0.223 (H1-63), and the best new test, N2, has 0.333 (`2026-10-08-lab-anomalies.md`).
 
 **Option 2 is in force from 2026-10-08.**
 - Live runs are suspended by owner decision.

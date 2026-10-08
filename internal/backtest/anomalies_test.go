@@ -400,7 +400,8 @@ func TestAnomalyGating(t *testing.T) {
 		run     bool
 	}{
 		{true, []string{"sp500", "nq100"}, true},
-		{true, []string{"nq100"}, true},
+		{true, []string{"nq100"}, false},
+		{true, []string{"nq100", "sp500"}, true},
 		{false, []string{"sp500", "nq100"}, false},
 		{true, []string{"sp500", "eu50"}, false},
 		{true, nil, false},

@@ -186,7 +186,8 @@ internal/
                 v8 (2026-10-08): three published price-only anomalies the
                 composite lacks — N1 MAX, N2 IVOL, N3 FIP — fail on the PIT
                 lab at 21 sessions (t 1.66, 2.13, 0.45); the register holds 21
-                tests, none passed, smallest Holm p 0.333. Live runs are
+                tests, none passed, smallest Holm p 0.223
+                (H1-63; best new test N2 at 0.333). Live runs are
                 suspended by owner decision (2026-10-08: the keep/cut/stop
                 memo's option 2, after N1–N3 failed); `cfr canary`,
                 `cfr backtest` and `cfr scoreboard` stay supported. The memo

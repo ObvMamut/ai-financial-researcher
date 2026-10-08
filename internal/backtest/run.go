@@ -161,8 +161,9 @@ type Result struct {
 	// are comparisons with no p-value (gateAnomalies).
 	Anomalies AnomalyReport `json:"anomalies"`
 	// TestsRun counts every registered test this run performed — C-series,
-	// E2's paired tests, the E1/E3 decisions, D1–D3 and the v5 horizon tests — so it equals the register in
-	// docs/workflow/backtest.md, one look each per run. E1 counts only at
+	// E2's paired tests, the E1/E3 decisions, D1–D3 and the v5 horizon tests — one look each per run.
+	// It is the in-report family only: the register in docs/workflow/backtest.md
+	// also holds the PIT-* rows (applied by hand) and N1–N3 (Anomalies), 21 in all. E1 counts only at
 	// --years 10 or more (e1DecisionMinYears); below that its per-year table
 	// is a comparison look, not a decision, and Status is "comparison" rather
 	// than "run".

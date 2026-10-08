@@ -200,17 +200,19 @@ func registerFamily(tests []TestResult) MultipleTesting {
 // registered one.
 const anomalyComparisonPrefix = "comparison, registered on the point-in-time US universe only: "
 
-// gateAnomalies applies the registration's scope to the N tests: on a
-// point-in-time replay whose every index is US they are run and get the
-// m = 21 register family; anywhere else each computed test is a comparison,
-// with no p-value and no pass.
+// gateAnomalies applies the registration's scope to the N tests: only on a
+// point-in-time replay of exactly the registered indices, sp500 and nq100, are
+// they run and given the m = 21 register family. Anywhere else (one US index
+// alone, a sample replay, a region mix) each computed test is a comparison,
+// with no p-value and no pass. The registered look was taken on 2026-10-08;
+// a later replay of the same scope is a re-run, which the register forbids,
+// and its p-values are not new evidence.
 func gateAnomalies(res *Result, pit bool, indices []string) {
-	registered := pit && len(indices) > 0
+	seen := map[string]bool{}
 	for _, idx := range indices {
-		if Region(idx) != "US" {
-			registered = false
-		}
+		seen[idx] = true
 	}
+	registered := pit && len(seen) == 2 && seen["sp500"] && seen["nq100"]
 	if registered {
 		res.Anomalies.RegisterFamily = registerFamily(res.Anomalies.Tests)
 		return

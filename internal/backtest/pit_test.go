@@ -61,8 +61,10 @@ func TestPointInTimeWithTheSampleAsItsHistoryReproducesTheSampleReplay(t *testin
 				s.ID, s.Mean, s.T, s.NDates, s.Halves, p.Mean, p.T, p.NDates, p.Halves)
 		}
 	}
-	if pit.Anomalies.RegisterFamily.FamilySize != 21 {
-		t.Errorf("point-in-time nq100 run: register family %d, want 21", pit.Anomalies.RegisterFamily.FamilySize)
+	// nq100 alone is not the registered scope (sp500 and nq100), so no
+	// register family is built.
+	if pit.Anomalies.RegisterFamily.FamilySize != 0 {
+		t.Errorf("point-in-time nq100-only run: register family %d, want none", pit.Anomalies.RegisterFamily.FamilySize)
 	}
 	// Normalise what is supposed to differ, then require byte equality.
 	pit.Universe, pit.Survivorship, pit.FilingsNote = sample.Universe, sample.Survivorship, sample.FilingsNote

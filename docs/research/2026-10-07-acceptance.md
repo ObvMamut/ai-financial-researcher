@@ -98,3 +98,17 @@ Mobile). No query change fixes that; only a different source would.
 **Day-to-day variation.** Coverage on a given day moves by a few names (MQG.AX,
 OR.PA, RI.PA came and went), because it depends on whether a tagged, naming
 headline appeared in the last 21 days.
+
+## Canary outside the session (follow-up to c634b0c)
+
+**Pre-open: 2026-10-08 09:53Z.** Yahoo was in `PRE` (US open 13:30Z). Raw output:
+`2026-10-08-evidence/canary-0953Z.txt`. All nine probes passed, exit 0.
+
+The options probe reported the expected abstention: "before the US session: the legs abstain
+as designed (chain fetched before the US session (PRE): open interest and implied volatility
+are not yet republished for the day, so 2 option legs were withheld rather than read)."
+
+**Post-close: pending.** The v8 plan's premise that a run after 20:00 UTC would show the
+abstention was wrong. After the close, Yahoo reports `POST`, and the probe abstains only in
+`PRE`/`PREPRE`, so a post-close run should pass on "N facts". Run `go run ./cmd/cfr canary`
+on a weekday after 20:00 UTC and append the output here.

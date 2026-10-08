@@ -35,7 +35,7 @@ entering the code (3f2ba7f) and this run.
 
 Source: json:8705, 8727, 8749 (`anomalies.tests`) and json:8784-8864 (`register_family`).
 
-**Holm.** The register family has 21 tests, and its smallest Holm p is 0.333 (N2). No p on the
+**Holm.** The register family has 21 tests, and its smallest Holm p is 0.223 (H1-63, p 0.0106 × 21). Among the new tests, the smallest is 0.333 (N2). No p on the
 register is below 0.05/21. To survive Holm at 5%, a test needs t > 2.82; the closest new result,
 N2, has t 2.13.
 
@@ -46,7 +46,7 @@ are positive in both halves, and neither clears the bar.
 
 **Honest prior.** All three are monthly-horizon effects that are documented to have decayed after
 publication. The round confirms it on this universe. MAX and IVOL keep the published sign at
-roughly a third of the bar's strength. FIP shows nothing.
+about two thirds (N1) and 85% (N2) of the bar's t. FIP shows nothing.
 
 ## The recomputed in-report figures (not re-decided)
 

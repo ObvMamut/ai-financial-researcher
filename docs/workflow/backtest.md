@@ -525,7 +525,7 @@ N2 is quoted.
 - N1 MAX: t 1.66.
 - N2 IVOL: t 2.13.
 - N3 FIP: t 0.45.
-- The smallest Holm p in the 21-test register is 0.333.
+- The smallest Holm p in the 21-test register is 0.223 (H1-63). The best of the new tests is N2 at 0.333.
 - The "all fail" decision is applied: live runs are suspended.
 
 See `docs/research/2026-10-08-lab-anomalies.md`.
