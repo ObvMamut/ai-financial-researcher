@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mamut/claude-financial-researcher/internal/model"
 	"github.com/mamut/claude-financial-researcher/internal/quant"
 	"github.com/mamut/claude-financial-researcher/internal/universe"
 )
@@ -113,5 +114,71 @@ func TestPointInTimeScoresAMemberOnlyWhileItIsIn(t *testing.T) {
 	}
 	if before == 0 {
 		t.Error("GONE was never scored, even while it was a member")
+	}
+}
+
+// reusedTickerAsOf models what Alpaca did to DOW on 2026-10-08: in the lab's
+// 100-symbol batch from 2016-06-29 Dow Inc. came back with no bars, while the
+// same batch from its own listing date, 2019-04-02, priced it. STUCK is empty
+// from any start.
+type reusedTickerAsOf struct{ calls []pitCall }
+
+type pitCall struct {
+	symbols     []string
+	start, asof time.Time
+}
+
+func (f *reusedTickerAsOf) HistoryAsOf(ctx context.Context, symbols []string, start, _, asof time.Time) (map[string]*quant.Series, error) {
+	f.calls = append(f.calls, pitCall{symbols: append([]string(nil), symbols...), start: start, asof: asof})
+	out := map[string]*quant.Series{}
+	for _, s := range symbols {
+		if s == "STUCK" || (s == "DOW" && start.Before(day("2019-04-02"))) {
+			continue
+		}
+		out[s], _ = fakeLoader{}.HistoryRange(ctx, s, "", 0)
+	}
+	return out, nil
+}
+
+// A reused ticker whose batch answer is empty is asked once more, alone, from
+// its own interval's start and under the same asof, so the mapping is never
+// switched off. A member its batch priced is not asked again, and one still
+// empty after the retry stays listed as unavailable.
+func TestLoadPITRetriesAnEmptyIntervalFromItsOwnStart(t *testing.T) {
+	now := day("2026-10-07")
+	listed := day("2019-04-02")
+	member := func(ticker string, from time.Time) Member {
+		return Member{
+			Constituent: model.Constituent{Ticker: ticker, Index: "sp500"},
+			Interval:    &universe.Interval{Ticker: ticker, From: from},
+			Key:         ticker + "@" + from.Format("2006-01-02"),
+		}
+	}
+	members := []Member{member("AAPL", day("2015-01-01")), member("DOW", listed), member("STUCK", listed)}
+	loader := &reusedTickerAsOf{}
+	data := Data{Series: map[string]*quant.Series{}, Bench: map[string]*quant.Series{}}
+
+	unavailable, err := loadPIT(context.Background(), loader, members, data, day("2016-06-29"), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := data.Series["DOW@2019-04-02"]; s == nil || len(s.Bars) == 0 {
+		t.Error("DOW@2019-04-02 was not priced by the retry from its interval start")
+	}
+	want := []string{"STUCK@2019-04-02: no Alpaca bars as of 2026-10-07"}
+	if strings.Join(unavailable, "|") != strings.Join(want, "|") {
+		t.Errorf("unavailable = %q, want %q", unavailable, want)
+	}
+	if len(loader.calls) != 3 {
+		t.Fatalf("calls = %d (%+v), want the batch plus one retry each for DOW and STUCK", len(loader.calls), loader.calls)
+	}
+	for _, c := range loader.calls[1:] {
+		if len(c.symbols) != 1 || c.symbols[0] == "AAPL" {
+			t.Errorf("retry asked for %v; only an empty member is asked again, alone", c.symbols)
+		}
+		if !c.start.Equal(listed) || !c.asof.Equal(now) {
+			t.Errorf("retry for %v from %s as of %s, want from %s as of %s", c.symbols,
+				c.start.Format("2006-01-02"), c.asof.Format("2006-01-02"), listed.Format("2006-01-02"), now.Format("2006-01-02"))
+		}
 	}
 }

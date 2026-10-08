@@ -109,6 +109,19 @@ func loadPIT(ctx context.Context, loader AsOfLoader, members []Member, data Data
 		}
 		for _, m := range g {
 			s := got[m.Constituent.Ticker]
+			if (s == nil || len(s.Bars) == 0) && m.Interval.From.After(start) {
+				// A reused ticker can come back empty when the window reaches the
+				// previous holder's years. DOW (Dow Chemical to 2017-08, Dow Inc.
+				// from 2019-04) did, in a 100-symbol batch from 2016-06-29; the
+				// same batch from 2019-04-02 priced it. Ask once more, alone, from
+				// the interval's own start and under the same asof, so the mapping
+				// is never switched off and no earlier holder's bars are spliced in.
+				again, err := loader.HistoryAsOf(ctx, []string{m.Constituent.Ticker}, m.Interval.From, now, a)
+				if err != nil {
+					return unavailable, fmt.Errorf("point-in-time prices for %s as of %s: %w", m.SeriesKey(), a.Format("2006-01-02"), err)
+				}
+				s = again[m.Constituent.Ticker]
+			}
 			if s == nil || len(s.Bars) == 0 {
 				unavailable = append(unavailable, fmt.Sprintf("%s: no Alpaca bars as of %s", m.SeriesKey(), a.Format("2006-01-02")))
 				continue

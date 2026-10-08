@@ -44,8 +44,15 @@ Known defects:
     SIVB to 2023-03-09, FRC to 2023-04-28, TWTR to 2022-10-27, ATVI to 2023-10-13.
   - Across **all 691 names in the S&P 500 at any time since 2016**, Alpaca returned bars
     for **685 (99.1%)**.
-  - The 6 misses are renamed tickers: BLL (→ BALL), HRS (→ LHX), JEC (→ J), WLTW (→ WTW),
-    DOW, FI. A rename map of a few rows fixes them.
+  - Of the 6 misses, five are renamed tickers: BLL (→ BALL), HRS (→ LHX), JEC (→ J), WLTW
+    (→ WTW) and FI. A rename map of a few rows fixes them.
+  - DOW is not a renamed ticker (corrected 2026-10-08). Dow Inc. has traded as `DOW` since
+    2019-04-01 with no corporate actions. Dow Chemical held the symbol until 2017-08-31.
+    Alpaca drops it from a large multi-page batch whose window starts in Dow Chemical's
+    years, and prices it when the window starts at Dow Inc.'s listing. Asked for alone from
+    2016, it returns a splice: Dow Chemical, then zero-volume flat fills, then Dow Inc. The
+    PIT loader now retries an empty interval alone from its own start under the same `asof`.
+    See `2026-10-07-pit-lab.md`.
 - Alpaca's history starts in 2016, so this gives about 9.5 years. The current lab uses 10.
 
 ## What a survivorship-free lab would take
