@@ -55,6 +55,9 @@ const (
 	SigC3                 // pre-registered C3: news-conditioned residual reversal
 	SigDrift              // post-earnings drift: the reaction to the last Item-2.02 release, decayed (US only)
 	SigEarnWindow         // 1 when the cadence-predicted next Item-2.02 release falls inside the next 10 sessions, else 0 (US only)
+	SigMax21              // N1: −max simple daily return, last 21 sessions (registered v8)
+	SigIVol63             // N2: −σ (n−2 dof) of the market-model residuals, last 63 aligned pairs (registered v8)
+	SigFIP                // N3: −mom12_1·ID, frog-in-the-pan over mom12-1's window (registered v8)
 	NumSignals
 )
 
@@ -65,6 +68,7 @@ var SignalNames = [NumSignals]string{
 	"score", "trend", "mom12_1", "ret63", "strz", "stretch21", "rev5", "rev21",
 	"hi52", "lowvol", "indmom", "idio_rev5", "overnight21", "intraday21",
 	"c1_mom_weighted", "c3_news_rev", "drift", "earn_window",
+	"max21", "ivol63", "fip",
 }
 
 // Region groups the four indices the way the adoption bar reads them.
@@ -339,6 +343,9 @@ func observe(m Member, s, bench *quant.Series, p int, params orchestrator.Prescr
 	rec.Sig[SigHi52] = mx.PriceTo52wHigh
 	rec.Sig[SigLowVol] = -stdLogReturns(cut.Bars, 63)
 	rec.Sig[SigOvernight21], rec.Sig[SigIntraday21] = overnightIntraday(cut.Bars, 21)
+	rec.Sig[SigMax21] = -maxDailyReturn(cut.Bars, 21)
+	rec.Sig[SigIVol63] = -residualVol(cut, bcut, 63)
+	rec.Sig[SigFIP] = fipSignal(cut.Bars, mx.Mom12_1)
 
 	// Residual 5-day move: the name's 5-session log return less beta times its
 	// benchmark's over the same dates. Feeds idio_rev5 and C3.

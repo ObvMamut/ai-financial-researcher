@@ -20,9 +20,12 @@ func scopedPanel(rng *rand.Rand, us, eu float64) []Record {
 	start := time.Date(2022, 1, 7, 0, 0, 0, 0, time.UTC)
 	add := func(ds, idx, tk string, strength float64) {
 		r := Record{Date: ds, Index: idx, Ticker: tk, Region: Region(idx)}
-		for s := range r.Sig {
+		// Draw only for the signals before N1, so the stream (and every
+		// expectation pinned on it) is what it was before N1–N3 existed.
+		for s := 0; s < SigMax21; s++ {
 			r.Sig[s] = rng.NormFloat64()
 		}
+		r.Sig[SigMax21], r.Sig[SigIVol63], r.Sig[SigFIP] = math.NaN(), math.NaN(), math.NaN()
 		for h := range Horizons {
 			r.XS[h] = 0.03 * rng.NormFloat64()
 			r.BX[h] = strength*r.Sig[SigDrift] + 0.03*rng.NormFloat64()

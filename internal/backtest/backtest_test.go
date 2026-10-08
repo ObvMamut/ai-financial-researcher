@@ -103,6 +103,15 @@ func TestSignalsIgnoreBarsAfterDate(t *testing.T) {
 	if len(base) != len(members) {
 		t.Fatalf("panel has %d rows at %s, want %d", len(base), ds, len(members))
 	}
+	// N1–N3 must be computed at the probe date, or the identity checks below
+	// would compare NaN with NaN and pass without testing anything.
+	for _, r := range base {
+		for _, s := range []int{SigMax21, SigIVol63, SigFIP} {
+			if v := r.Sig[s]; math.IsNaN(v) || math.IsInf(v, 0) {
+				t.Errorf("%s %s = %v at %s, want finite", r.Ticker, SignalNames[s], v, ds)
+			}
+		}
+	}
 	for name, other := range map[string]Data{"truncated": truncated, "perturbed": perturbed} {
 		got := BuildPanel(members, other, dates)
 		if len(got) != len(base) {
@@ -146,9 +155,12 @@ func plantedSignalRecords(rng *rand.Rand) []Record {
 		for _, idx := range []string{"sp500", "eu50", "asia100"} {
 			for i := 0; i < 40; i++ {
 				r := Record{Date: ds, Index: idx, Ticker: fmt.Sprintf("%s%d", idx, i), Region: Region(idx)}
-				for s := range r.Sig {
+				// Draw only for the signals before N1, so the stream (and every
+				// expectation pinned on it) is what it was before N1–N3 existed.
+				for s := 0; s < SigMax21; s++ {
 					r.Sig[s] = rng.NormFloat64() // noise everywhere...
 				}
+				r.Sig[SigMax21], r.Sig[SigIVol63], r.Sig[SigFIP] = math.NaN(), math.NaN(), math.NaN()
 				planted := rng.NormFloat64()
 				r.Sig[SigMom12_1] = planted // ...except here
 				for h := range Horizons {
@@ -281,9 +293,12 @@ func TestPerYearStats(t *testing.T) {
 			}
 			for i := 0; i < 30; i++ {
 				r := Record{Date: ds, Index: "sp500", Ticker: fmt.Sprintf("T%d", i), Region: "US"}
-				for s := range r.Sig {
+				// Draw only for the signals before N1, so the stream (and every
+				// expectation pinned on it) is what it was before N1–N3 existed.
+				for s := 0; s < SigMax21; s++ {
 					r.Sig[s] = rng.NormFloat64()
 				}
+				r.Sig[SigMax21], r.Sig[SigIVol63], r.Sig[SigFIP] = math.NaN(), math.NaN(), math.NaN()
 				signal := rng.NormFloat64()
 				r.Sig[SigScore] = signal
 				for h := range Horizons {
