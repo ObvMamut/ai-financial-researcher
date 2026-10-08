@@ -433,3 +433,79 @@ func TestYahooNewsNameSearchAsksByAliasWhenThereIsOne(t *testing.T) {
 		t.Errorf("facts = %+v, want the LVMH headline", td.Facts)
 	}
 }
+
+// R6: with the live lookup's shape (universe name, then aliases.csv), 2318.HK
+// is name-searched as "Ping An", and its stories tagged to the A-share line
+// count. Before the alias the query was "Ping An Insurance".
+func TestYahooNewsNameSearchesPingAnByAliasAndCountsTheAShareTag(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		asked = append(asked, q)
+		if q == "Ping An" {
+			fmt.Fprintf(w, `{"news":[%s]}`,
+				newsItem("Ping An's profit beats as investment income recovers", "Reuters", 3, "601318.SS", "82318.HK", "1299.HK", "2628.HK"))
+			return
+		}
+		fmt.Fprint(w, `{"news":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+	ctx := WithCompanyNames(context.Background(), func(string) []string {
+		return []string{"Ping An Insurance Group", "Ping An"}
+	})
+	td, err := NewYahooNewsProvider().Fetch(ctx, "news", "2318.HK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[1] != "Ping An" {
+		t.Fatalf("queries = %q, want the local symbol then the alias", asked)
+	}
+	if !HasDomainEvidence("news", td) {
+		t.Errorf("a Ping An story tagged to its A-share line did not count: %+v %q", td.Facts, td.Warnings)
+	}
+}
+
+// R6: the real query sequence for VOW3.DE is its own symbol (empty, as for
+// every unmapped foreign listing on 2026-10-07), then the company name, whose
+// Volkswagen stories Yahoo tags VOW.DE rather than VOW3.DE.
+func TestYahooNewsCountsAStoryTaggedToAShareClassSibling(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		asked = append(asked, q)
+		if q == "Volkswagen" {
+			fmt.Fprintf(w, `{"news":[%s,%s]}`,
+				newsItem("Volkswagen cuts its outlook as China sales slide", "Reuters", 3, "VOW.DE"),
+				newsItem("Volkswagen and unions agree a plant deal", "Bloomberg", 5, "VOW.DE"))
+			return
+		}
+		fmt.Fprint(w, `{"news":[]}`) // the dotted local symbol, as fakeYahoo answers it
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CFR_YAHOO_BASE", srv.URL)
+	ctx := WithCompanyNames(context.Background(), func(string) []string { return []string{"Volkswagen AG"} })
+
+	td, err := NewYahooNewsProvider().Fetch(ctx, "news", "VOW3.DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[0] != "VOW3.DE" || asked[1] != "Volkswagen" {
+		t.Fatalf("queries = %q, want the local symbol then the company name", asked)
+	}
+	tagged := 0
+	for _, f := range td.Facts {
+		if strings.Contains(f.Label, "tagged to this ticker") {
+			tagged++
+		}
+	}
+	if tagged != 2 {
+		t.Errorf("%d headlines marked related, want 2: %+v", tagged, td.Facts)
+	}
+	if !HasDomainEvidence("news", td) {
+		t.Errorf("stories tagged to the ordinary line did not count as coverage: %+v", td.Facts)
+	}
+	if w := strings.Join(td.Warnings, " | "); strings.Contains(w, "not one of them is about this company") {
+		t.Errorf("a sibling-tagged feed was reported as off-subject: %s", w)
+	}
+}

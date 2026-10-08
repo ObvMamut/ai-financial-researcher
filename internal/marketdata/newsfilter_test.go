@@ -274,3 +274,28 @@ func TestIsSubjectRelevantReadsANameAsAProperNoun(t *testing.T) {
 		}
 	}
 }
+
+// R6 (2026-10-07 probe): Yahoo tagged 19 of 20 Volkswagen stories VOW.DE and
+// none VOW3.DE, the sample's line. A sibling tag satisfies the tag check; the
+// story must still name the company.
+func TestIsSubjectRelevantAcceptsAShareClassSiblingTag(t *testing.T) {
+	ctx := WithCompanyNames(context.Background(), func(ticker string) []string {
+		if ticker == "VOW3.DE" || ticker == "VOW.DE" {
+			return []string{"Volkswagen AG"}
+		}
+		return nil
+	})
+	tags := []string{"VOW.DE", "BMW.DE", "MBG.DE", "PAH3.DE"}
+	if !isSubjectRelevant(ctx, tags, "Volkswagen cuts its outlook as China sales slide", "", "VOW3.DE") {
+		t.Error("a Volkswagen story tagged to the ordinary line was not counted for the preference line")
+	}
+	// The sibling widens only the tag check: a four-tag story that never names
+	// the company still does not count.
+	if isSubjectRelevant(ctx, tags, "German carmakers slip on tariff fears", "", "VOW3.DE") {
+		t.Error("a sector story was counted on a sibling tag alone")
+	}
+	// One-directional: the ordinary line gains nothing from a preference tag.
+	if isSubjectRelevant(ctx, []string{"VOW3.DE", "BMW.DE", "MBG.DE", "PAH3.DE"}, "Volkswagen cuts its outlook", "", "VOW.DE") {
+		t.Error("the sibling table was read in reverse")
+	}
+}

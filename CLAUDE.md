@@ -129,7 +129,8 @@ internal/
                 prices.go routes daily bars per symbol — alpaca.go for US
                 equities (batched, many symbols per request), yahoo.go for
                 foreign listings, index benchmarks and FX; alpacanews.go and
-                yahoonews.go both serve the news domain and share newsfilter.go;
+                yahoonews.go both serve the news domain and share newsfilter.go
+                (data/share_siblings.csv widens only newsfilter's tag check);
                 exchange.go maps a ticker suffix to its currency and market close,
                 fx.go converts turnover/sizing to USD, yahoocrumb.go does the
                 cookie+crumb handshake the option chain now requires;

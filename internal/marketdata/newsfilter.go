@@ -252,6 +252,16 @@ func relatesTo(related []string, ticker string) bool {
 	return false
 }
 
+// relatesToAny is relatesTo over several candidate tags.
+func relatesToAny(related, tickers []string) bool {
+	for _, t := range tickers {
+		if relatesTo(related, t) {
+			return true
+		}
+	}
+	return false
+}
+
 // isSubjectRelevant decides Related for one item: is the company its subject,
 // or only a symbol somewhere in a tag list a market wrap or a peer's premarket
 // note also carries?
@@ -275,11 +285,13 @@ func relatesTo(related []string, ticker string) bool {
 // a short tag list on a completely different company's story (the
 // Namibia/oil fallback TestYahooNewsRefusesAFeedThatTagsNothingToTheTicker
 // guards against) count for whichever ticker happened to be fetched at the
-// time.
+// time. A share-class sibling (Siblings: VOW.DE for VOW3.DE, GOOG for GOOGL)
+// also satisfies the tag check, since a feed may tag the company's other line
+// instead; it widens nothing else, so the story must still be about the company.
 func isSubjectRelevant(ctx context.Context, symbols []string, headline, summary, ticker string) bool {
 	root := tickerRoot(ticker)
 	adr, _ := USLine(ticker)
-	if !relatesTo(symbols, ticker) && !relatesTo(symbols, root) && !relatesTo(symbols, adr) {
+	if !relatesTo(symbols, ticker) && !relatesTo(symbols, root) && !relatesTo(symbols, adr) && !relatesToAny(symbols, Siblings(ticker)) {
 		return false
 	}
 	if namesCompanyInText(ctx, headline, summary, ticker) {
