@@ -1,0 +1,11 @@
+Thu Oct  8 09:53:23 AM UTC 2026
+pass  yahoo-chart AAPL             501 bars, newest 2026-10-07
+pass  yahoo-chart SAP.DE           507 bars, newest 2026-10-08
+pass  yahoo-chart 7203.T           487 bars, newest 2026-10-08
+pass  yahoo-chart 0700.HK          493 bars, newest 2026-10-08
+pass  yahoo-options AAPL           before the US session: the legs abstain as designed (chain fetched before the US session (PRE): open interest and implied volatility are not yet republished for the day, so 2 option legs were withheld rather than read)
+pass  yahoo-news 0700.HK by name   5 headlines about Tencent
+pass  alpaca-bars AAPL             501 bars, newest 2026-10-07 (SIP feed)
+pass  alpaca-news AAPL             8 headlines
+pass  sec-submissions AAPL         4 earnings releases, 4 reports in the last year
+exit 0

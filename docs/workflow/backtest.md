@@ -451,6 +451,61 @@ an out-of-sample registration like OOS-H1-63.
 
 See `docs/research/2026-10-07-pit-lab.md`.
 
+## Pre-registered new anomalies N1–N3 (v8, registered 2026-10-08, before any code)
+
+Every earlier test drew on signals the lab already computed and printed. These three
+are not in the lab's signal list at the time of registration. Each is a published,
+price-only anomaly that the composite does not contain. The point-in-time universe has
+about 500 US names per date, against the sample's 98, so the tests have far more
+power. **A pass ships nothing.**
+
+| Test | Hypothesis | Signal (higher is bullish), at rebalance bar t of the series cut there |
+|---|---|---|
+| **N1 MAX** (Bali, Cakici & Whitelaw 2011, *JFE*) | A stock with an extreme single-day return in the last month underperforms next month | `−max` of the simple daily returns `C[i]/C[i−1]−1` over the last 21 sessions. NaN with fewer than 22 bars or a non-positive close |
+| **N2 IVOL** (Ang, Hodrick, Xing & Zhang 2006, *JF*) | High idiosyncratic volatility underperforms | `−σ` (n−2 dof) of the OLS residuals of the last 63 date-aligned daily log-return pairs (`quant.AlignedReturns`) on the member's own benchmark. NaN with no benchmark, fewer than 63 pairs, or zero benchmark variance |
+| **N3 FIP** (Da, Gurun & Warachka 2014, *RFS*) | Momentum built from many small moves persists more than momentum from a few jumps | `−mom12_1 · ID`, where `ID = sign(mom12_1)·(%down − %up)` over the 231 daily close changes inside mom12-1's own window (bars t−252..t−21). Flat days count only in the denominator. This is the continuous analogue of the paper's PRET × ID sort, and equals `|mom12_1|·(%up − %down)` |
+
+**Disclosure.** The lab already computes `lowvol` (−σ of 63 daily log returns, *total*
+volatility), and its β-adjusted IC21 is printed in
+`docs/research/2026-10-07-evidence/pit-9y.json`. N2 is the market-model *residual* σ,
+which is a different quantity, but the two are correlated, and that is stated wherever
+N2 is quoted.
+
+**Protocol.**
+- **Statistic:** the per-date β-adjusted rank IC at 21 sessions. Per (date, index), it is
+  the Spearman of the signal against `BX[21]`, then averaged across the two indices per
+  date. Newey-West t with `nwLags(21)` = 5 lags.
+- **Sample:** US point-in-time, rebalance Fridays 2017-09-29..2026-09-25. **One run:**
+  `cfr backtest --universe pit --indices sp500,nq100 --years 9 --json`. The universe is
+  the membership history at the commit the run is made from. If the DOW interval is
+  priced by then, that is recorded.
+- **Bar:** t > +2.5 and a positive mean in both halves (median-date split).
+- **Run rules:**
+  - A run that crashes before printing any statistic may be repeated. Any other failure
+    is recorded as failed evidence, not re-run.
+  - No real-data backtest is run between the signals entering the code and this run.
+  - The run also recomputes the in-report C, E and H figures. Any difference from
+    2026-10-07 is recorded with its cause, and none is re-decided.
+- **Holm family: m = 21**, the 18 tests already run plus these 3. The prior p-values are
+  fixed now:
+  - C1 0.0756, C3 0.168, C4 0.255, E1 0.726, E2-1 0.620, E2-3 0.541, E2-off 0.413,
+    E3 1, D1 0.749, D2 0.512, D3 0.0329, H1-21 0.139, H1-63 0.0106, H2-21 0.248,
+    H2-63 0.181. These come from the 2026-10-01 10-year Holm table,
+    `docs/research/2026-10-01-lab-horizon.md`.
+  - PIT-IC10 0.617 and PIT-H1-63 0.0968 come from `pit-9y.json`.
+  - PIT-E1 0.945 is the sign test on 3 of 10 years.
+  - To survive Holm at 5%, the smallest p must be below 0.00238 (t > 2.82). The Holm p
+    is reported, not gated.
+- **Decisions fixed now:**
+  - **Any passes:** the write-up says so with its Holm p. An OOS registration follows
+    on weeks after 2026-09-25, and the signal enters the pre-screen as an inactive,
+    persisted column. Nothing in ranking, selection or exits changes.
+  - **All three fail:** the owner memo moves to option 2. Live runs are suspended by
+    owner decision, and OOS-H1-63 remains the only open question until about 2027-12.
+- **Honest prior.** All three are monthly-horizon effects that are documented to have
+  decayed after publication. Most likely all three fail. The round is meant to close
+  the question with a clean test, not to find a trade.
+
 ## Results
 
 ### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
