@@ -2,6 +2,9 @@ package scoreboard
 
 import (
 	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -220,5 +223,82 @@ func TestPostMortemReplayOfTheRunThatRejectedEveryLesson(t *testing.T) {
 	}
 	if len(pm.Lessons) != want {
 		t.Fatalf("kept %d lessons, want %d; rejected=%v", len(pm.Lessons), want, pm.Rejected)
+	}
+}
+
+// A stored post-mortem says which validator judged it, so a build that enforces
+// other rules can tell its lessons were not checked against them.
+func TestPostMortemRecordsTheValidatorVersion(t *testing.T) {
+	a := attributionWith(t, "Energy", 6)
+	pm, err := ParsePostMortem(`{"n_closed":10,"lessons":[]}`, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm.ValidatorVersion != PostMortemValidatorVersion {
+		t.Fatalf("parsed version %d, want %d", pm.ValidatorVersion, PostMortemValidatorVersion)
+	}
+	dir := t.TempDir()
+	if err := pm.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadPostMortem(dir); got == nil || got.ValidatorVersion != PostMortemValidatorVersion {
+		t.Fatalf("round trip lost the version: %+v", got)
+	}
+	// A file from before the field existed decodes as 0: unrecorded.
+	legacy := `{"computed_at":"2026-10-06T18:10:08Z","n_closed":12,"lessons":[],"rejected":["x"]}`
+	if err := os.WriteFile(filepath.Join(dir, PostMortemFile), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadPostMortem(dir); got == nil || got.ValidatorVersion != 0 {
+		t.Fatalf("legacy file = %+v, want version 0", got)
+	}
+}
+
+// populateEveryCellMap fills every bucket map reachable from v (Attribution's
+// own maps and FillRecord's) with one cell, so a family added to cellList
+// shows up here without this test having to know its field name.
+func populateEveryCellMap(v reflect.Value) {
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		switch {
+		case f.Kind() == reflect.Map && f.Type().Key().Kind() == reflect.String:
+			m := reflect.MakeMap(f.Type())
+			elem := reflect.New(f.Type().Elem()).Elem()
+			if n := elem.FieldByName("N"); n.IsValid() && n.CanSet() {
+				n.SetInt(int64(MinCellN))
+			}
+			m.SetMapIndex(reflect.ValueOf("k"), elem)
+			f.Set(m)
+		case f.Kind() == reflect.Struct && f.CanSet():
+			populateEveryCellMap(f)
+		}
+	}
+}
+
+// The validator version names the cells a lesson may cite. If cellList ever
+// renders another family, or drops one, the stored lessons were judged by other
+// rules and the version has to move with it.
+func TestPostMortemValidatorVersionPinsTheCellFamilies(t *testing.T) {
+	a := &Attribution{NClosed: 35}
+	populateEveryCellMap(reflect.ValueOf(a).Elem())
+
+	seen := map[string]bool{}
+	for _, c := range a.cellList() {
+		family := strings.TrimSuffix(c.labels[0], " "+c.labels[1])
+		if family == c.labels[0] {
+			t.Fatalf("cell %q is not rendered as \"<family> <key>\"", c.labels[0])
+		}
+		seen[family] = true
+	}
+	var got []string
+	for f := range seen {
+		got = append(got, f)
+	}
+	sort.Strings(got)
+
+	want := []string{"agreement", "coverage", "earnings", "entry", "sector", "setup"}
+	if !reflect.DeepEqual(got, want) || PostMortemValidatorVersion != 3 {
+		t.Fatalf("the cells a lesson may name changed: bump PostMortemValidatorVersion and update this pin\n"+
+			"families %v (pinned %v), version %d (pinned 3)", got, want, PostMortemValidatorVersion)
 	}
 }

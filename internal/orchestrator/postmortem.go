@@ -37,6 +37,15 @@ type postMortemResult struct {
 	Report string
 }
 
+// reusablePostMortem reports whether stored lessons may stand in for a fresh
+// draw: judged by this build's validator, and younger than postMortemMaxAge.
+// The check lives here, not in LoadPostMortem, so `cfr postmortem` still shows
+// whatever file is stored.
+func reusablePostMortem(stored *scoreboard.PostMortem) bool {
+	return stored != nil && stored.ValidatorVersion == scoreboard.PostMortemValidatorVersion &&
+		stored.Age() < postMortemMaxAge
+}
+
 // postMortem draws lessons from the pipeline's own closed trades.
 //
 // The split is deliberate and matches every other domain in this system: Go
@@ -53,8 +62,13 @@ type postMortemResult struct {
 func postMortem(ctx context.Context, ch chan<- Event, cfg Config, reg *agents.Registry,
 	p *pool, cheapCLI model.CLI, caps agents.Capabilities, yc marketdata.PriceSource) postMortemResult {
 
-	if stored := scoreboard.LoadPostMortem(cfg.DataDir); stored != nil && stored.Age() < postMortemMaxAge {
+	stored := scoreboard.LoadPostMortem(cfg.DataDir)
+	if reusablePostMortem(stored) {
 		return postMortemResult{PM: stored}
+	}
+	if stored != nil && stored.Age() < postMortemMaxAge {
+		log(ch, fmt.Sprintf("post-mortem: the stored lessons were judged by validator v%d and this build enforces v%d, so they are redrawn",
+			stored.ValidatorVersion, scoreboard.PostMortemValidatorVersion))
 	}
 
 	rctx, cancel := context.WithTimeout(ctx, calibrationRefreshTimeout)

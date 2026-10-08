@@ -396,6 +396,9 @@ The split is the same one every domain in this system uses: **Go counts, the mod
 - **Stored** as `.data/postmortem.json` with the same 24h staleness rule as the calibration,
   copied into `runs/<ts>/`, and written as `runs/<ts>/post-mortem.md` so it appears in the
   reports screen.
+  The file records `validator_version` (`scoreboard.PostMortemValidatorVersion`, the rules
+  that judged its lessons); a stored file whose version differs from the build's, including
+  one written before the field existed (version 0), is redrawn rather than reused.
 
 The surviving lessons reach the Chief as a `### Lessons from N closed ideas` block beside the
 track record. They qualify the base scores inside the existing `chief_adjust_band`; they are

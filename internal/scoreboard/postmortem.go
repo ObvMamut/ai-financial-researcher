@@ -29,6 +29,17 @@ const (
 	MaxLessons = 8
 )
 
+// PostMortemValidatorVersion names the rules ParsePostMortem enforces. A stored
+// post-mortem judged under other rules is redrawn, not reused
+// (internal/orchestrator/postmortem.go). Bump it whenever the cells a lesson
+// may name, or how a lesson is matched, counted or capped, changes.
+//
+//	0: unrecorded — every file written before this field existed.
+//	1: cells matched by their bare bucket key, as first shipped.
+//	2: a24f23e (2026-10-06) — a cell may be named as the table renders it.
+//	3: e9f9276 (2026-10-07) — the earnings-in-hold cells.
+const PostMortemValidatorVersion = 3
+
 // Lesson is one finding about the pipeline's own record: a named cell, its
 // count, what the record shows and what to do differently.
 type Lesson struct {
@@ -49,9 +60,12 @@ type WeightSuggestion struct {
 
 // PostMortem is the parsed, enforced output of the post-mortem agent.
 type PostMortem struct {
-	ComputedAt string   `json:"computed_at"`
-	NClosed    int      `json:"n_closed"`
-	Lessons    []Lesson `json:"lessons"`
+	ComputedAt string `json:"computed_at"`
+	// ValidatorVersion is the PostMortemValidatorVersion that judged Lessons;
+	// 0 means the file predates the field.
+	ValidatorVersion int      `json:"validator_version"`
+	NClosed          int      `json:"n_closed"`
+	Lessons          []Lesson `json:"lessons"`
 	// Rejected lists lessons that were deleted, and why. A post-mortem is the
 	// easiest output in this system to invent — it is a narrative about the
 	// system's own performance, written by the system — so the deletions are
@@ -87,8 +101,9 @@ func ParsePostMortem(tailJSON string, a *Attribution) (*PostMortem, error) {
 		return nil, fmt.Errorf("post-mortem tail: %w", err)
 	}
 	pm := &PostMortem{
-		ComputedAt: time.Now().UTC().Format(time.RFC3339),
-		NClosed:    a.closedCount(),
+		ComputedAt:       time.Now().UTC().Format(time.RFC3339),
+		ValidatorVersion: PostMortemValidatorVersion,
+		NClosed:          a.closedCount(),
 	}
 	cells := a.Cells(MinCellN)
 	counts := a.cellCounts()
