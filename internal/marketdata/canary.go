@@ -187,6 +187,10 @@ func probeAlpacaBars(ctx context.Context, cfg CanaryConfig) CanaryResult {
 		r.Status, r.Detail = CanaryFail, err.Error()
 		return r
 	}
+	if s == nil || len(s.Bars) == 0 {
+		r.Status, r.Detail = CanaryFail, "no bars returned"
+		return r
+	}
 	last := s.Bars[len(s.Bars)-1].Date
 	if d, err := time.Parse("2006-01-02", last); err != nil || cfg.Now.Sub(d) > canaryMaxBarAge {
 		r.Status, r.Detail = CanaryFail, "newest bar "+last+" is stale"
