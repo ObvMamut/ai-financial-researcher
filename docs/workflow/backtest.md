@@ -521,6 +521,15 @@ N2 is quoted.
   decayed after publication. Most likely all three fail. The round is meant to close
   the question with a clean test, not to find a trade.
 
+**Run 2026-10-08: all three fail.**
+- N1 MAX: t 1.66.
+- N2 IVOL: t 2.13.
+- N3 FIP: t 0.45.
+- The smallest Holm p in the 21-test register is 0.333.
+- The "all fail" decision is applied: live runs are suspended.
+
+See `docs/research/2026-10-08-lab-anomalies.md`.
+
 ## Results
 
 ### Run of 2026-09-23 (`.data/backtest/2026-09-23T19-38-26.json`)
@@ -741,6 +750,17 @@ rows. The sample run used 98 and 56 names, 70,803 rows.
 | E1 years positive (net β-adjusted top-5) | 3 of 10 | 4 of 10 | +1 |
 
 All three registered tests fail. The full write-up is `docs/research/2026-10-07-pit-lab.md`.
+
+### Run of 2026-10-08: N1–N3 on the point-in-time US lab (`docs/research/2026-10-08-evidence/`)
+
+| Test | Mean β-adj. IC21 | NW t (5) | n | H1 / H2 | p | Holm p (m = 21) | Result |
+|---|---:|---:|---:|---|---:|---:|---|
+| N1 MAX | +0.0202 | 1.66 | 467 | +0.0322 / +0.0080 | 0.049 | 0.879 | **Fails** |
+| N2 IVOL | +0.0284 | 2.13 | 467 | +0.0357 / +0.0210 | 0.017 | 0.333 | **Fails** |
+| N3 FIP | +0.0062 | 0.45 | 467 | −0.0028 / +0.0153 | 0.328 | 1 | **Fails** |
+
+The register now holds **21 decision tests**. None has passed, and no Holm-adjusted p is below
+0.05. The full write-up is `docs/research/2026-10-08-lab-anomalies.md`.
 
 ## E3: which side carries the result (registered 2026-09-25, before this ran)
 
