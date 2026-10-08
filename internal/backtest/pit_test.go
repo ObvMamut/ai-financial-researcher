@@ -51,8 +51,22 @@ func TestPointInTimeWithTheSampleAsItsHistoryReproducesTheSampleReplay(t *testin
 	if pit.Universe != UniversePIT || pit.Survivorship != PITSurvivorship {
 		t.Errorf("point-in-time result is not labelled: universe %q", pit.Universe)
 	}
+	// The N tests' gating differs by design (run with a register family on
+	// PIT US, comparison on the sample), but their statistics must not.
+	for i, s := range sample.Anomalies.Tests {
+		p := pit.Anomalies.Tests[i]
+		if s.ID != p.ID || s.Mean != p.Mean || s.T != p.T || s.NDates != p.NDates ||
+			s.Halves["H1"] != p.Halves["H1"] || s.Halves["H2"] != p.Halves["H2"] {
+			t.Errorf("%s: sample mean %v t %v n %d halves %v, pit mean %v t %v n %d halves %v",
+				s.ID, s.Mean, s.T, s.NDates, s.Halves, p.Mean, p.T, p.NDates, p.Halves)
+		}
+	}
+	if pit.Anomalies.RegisterFamily.FamilySize != 21 {
+		t.Errorf("point-in-time nq100 run: register family %d, want 21", pit.Anomalies.RegisterFamily.FamilySize)
+	}
 	// Normalise what is supposed to differ, then require byte equality.
 	pit.Universe, pit.Survivorship, pit.FilingsNote = sample.Universe, sample.Survivorship, sample.FilingsNote
+	pit.Anomalies = sample.Anomalies
 	a, _ := json.Marshal(sample)
 	b, _ := json.Marshal(pit)
 	if string(a) != string(b) {

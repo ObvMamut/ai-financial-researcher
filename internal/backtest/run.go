@@ -154,6 +154,12 @@ type Result struct {
 	// Horizon is the v5 block (horizon.go): the pre-registered horizon tests
 	// (H1 and H2), counted in TestsRun.
 	Horizon HorizonReport `json:"horizon"`
+	// Anomalies is the v8 block (anomalies.go): N1–N3, registered on the
+	// point-in-time US universe only. They are outside TestsRun and the
+	// in-report MultipleTesting; on the registered run they carry their own
+	// Holm family over the whole register (m = 21), and on any other run they
+	// are comparisons with no p-value (gateAnomalies).
+	Anomalies AnomalyReport `json:"anomalies"`
 	// TestsRun counts every registered test this run performed — C-series,
 	// E2's paired tests, the E1/E3 decisions, D1–D3 and the v5 horizon tests — so it equals the register in
 	// docs/workflow/backtest.md, one look each per run. E1 counts only at
@@ -353,6 +359,7 @@ func Run(ctx context.Context, loader Loader, uni *universe.Universe, cfg Config)
 	res.Range, res.Unavailable = rng, unavailable
 	res.FilingsNote, res.FilingsUnavailable = filingsNote, filingsUnavailable
 	res.HoldoutNote = holdoutNote
+	gateAnomalies(res, pit, cfg.Indices)
 	if pit {
 		res.Universe, res.Survivorship = UniversePIT, PITSurvivorship
 	}
@@ -477,6 +484,9 @@ func Analyze(recs []Record, series map[string]*quant.Series, replayYears int) *R
 	res.Decisions = []TestResult{e1Decision(res.PerYear, replayYears), e3Decision(res.Sides)}
 	res.USScoped = usScoped(recs, mid)
 	res.Horizon = horizonTests(recs, cells, mid)
+	// N1–N3 are deliberately not in the loop below: their family is the
+	// register's (gateAnomalies, in Run), not this report's.
+	res.Anomalies.Tests = anomalyTests(cells, mid)
 	// One iteration is both the count and the Holm family: a test that did not
 	// run has no p-value and is outside both.
 	var family []*TestResult
@@ -641,6 +651,8 @@ func (r *Result) Text() string {
 	}
 	sb.WriteString("\n")
 
+	writeAnomalies(&sb, r.Anomalies)
+
 	fmt.Fprintf(&sb, "=== Pre-registered tests (%d run in all: the C-series below, E2, the decisions run above, D1–D3 and the v5 tests above; C-series bar: t > +%.1f, positive in both halves and every region) ===\n", r.TestsRun, adoptionT)
 	for _, t := range r.Preregistered {
 		writeTestLine(&sb, t)
@@ -681,6 +693,37 @@ func writeTestLine(sb *strings.Builder, t TestResult) {
 	fmt.Fprintf(sb, "%s mean %+.4f t %.2f (n=%d) | H1 %+.4f H2 %+.4f | US %+.4f EU %+.4f Asia %+.4f → %s\n    %s\n",
 		t.ID, t.Mean, t.T, t.NDates, t.Halves["H1"], t.Halves["H2"],
 		t.Regions["US"], t.Regions["EU"], t.Regions["Asia"], t.Verdict, t.Title)
+}
+
+// writeAnomalies prints the v8 block: one line per N test, then, on the
+// registered run, the register's Holm table. A comparison still prints its
+// statistics, with no p-value; an untestable test prints its verdict.
+func writeAnomalies(sb *strings.Builder, a AnomalyReport) {
+	fmt.Fprintf(sb, "=== v8 anomalies N1–N3 (point-in-time US only; bar: t > +%.1f at nwLags(21), positive in both halves; Holm over the register, m = %d) ===\n",
+		adoptionT, len(priorRegister)+len(anomalySpecs))
+	for _, t := range a.Tests {
+		if t.Status != "run" && t.Status != "comparison" {
+			fmt.Fprintf(sb, "%s %s — %s: %s\n", t.ID, t.Status, t.Title, t.Verdict)
+			continue
+		}
+		fmt.Fprintf(sb, "%s mean %+.4f t %.2f (n=%d; H1 n=%d, H2 n=%d) | H1 %+.4f H2 %+.4f | p %.4f register Holm p %.4f → %s\n    %s\n",
+			t.ID, t.Mean, t.T, t.NDates, t.HalfNDates["H1"], t.HalfNDates["H2"], t.Halves["H1"], t.Halves["H2"],
+			t.P, t.PHolm, t.Verdict, t.Title)
+	}
+	mt := a.RegisterFamily
+	if mt.FamilySize == 0 {
+		sb.WriteString("no register family: the N tests are registered on the point-in-time US universe only\n\n")
+		return
+	}
+	fmt.Fprintf(sb, "register Holm family (%d tests: the 18 prior p-values as registered, plus N1–N3):\n", mt.FamilySize)
+	sig := 0
+	for _, row := range mt.Rows {
+		fmt.Fprintf(sb, "%-9s %-22s t %6.2f  p %.4f  Holm p %.4f\n", row.ID, row.Sided, row.T, row.P, row.PHolm)
+		if float64(row.PHolm) < holmAlpha {
+			sig++
+		}
+	}
+	fmt.Fprintf(sb, "%d of %d register tests have Holm p < %.2f.\n\n", sig, mt.FamilySize, holmAlpha)
 }
 
 // maturedDates counts the distinct rebalance dates on which at least one record

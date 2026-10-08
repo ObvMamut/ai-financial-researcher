@@ -87,7 +87,7 @@ type MultipleTesting struct {
 // sidedness names how a test's p-value was computed.
 func sidedness(t TestResult) string {
 	switch t.ID {
-	case "E1":
+	case "E1", "PIT-E1":
 		return "binomial sign test"
 	case "E3":
 		return "no statistic (p = 1)"
